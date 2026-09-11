@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}TikTok Saved Scanner{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen">
+  <nav class="border-b border-neutral-800 px-6 py-3 flex items-center justify-between">
+    <a href="/dashboard" class="font-semibold tracking-tight text-lg">📌 Saved Scanner</a>
+    <div class="flex gap-4 text-sm text-neutral-400">
+      <a href="/dashboard" class="hover:text-white">Dashboard</a>
+      <a href="/onboarding" class="hover:text-white">Import</a>
+      <a href="/settings" class="hover:text-white">Settings</a>
+    </div>
+  </nav>
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

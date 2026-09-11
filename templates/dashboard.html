@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — TikTok Saved Scanner{% endblock %}
+{% block content %}
+
+{% if imported is not none %}
+<div class="mb-6 bg-emerald-950/40 border border-emerald-800/50 rounded-lg p-3 text-emerald-200 text-sm">
+  Imported {{ imported }} new saved video(s).
+</div>
+{% endif %}
+
+{% if not has_api_key %}
+<div class="mb-6 bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 text-amber-200 text-sm">
+  ⚠️ No Anthropic API key set — processing will fail at the analysis step. Add one in <a href="/settings" class="underline">Settings</a>.
+</div>
+{% endif %}
+
+<div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+  <div class="flex gap-2 text-sm">
+    {% for key, label in [("all","All"), ("unwatched","Unwatched"), ("worth_rewatching","Worth Rewatching"), ("flagged","Flagged ⚠️"), ("archived","Archived")] %}
+    <a href="/dashboard?tab={{ key }}&category={{ category }}&q={{ q }}&sort={{ sort }}"
+       class="px-3 py-1.5 rounded-full border {{ 'bg-violet-600 border-violet-600 text-white' if tab==key else 'border-neutral-700 text-neutral-300 hover:border-neutral-500' }}">
+      {{ label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  <form action="/process/start" method="post" class="flex items-center gap-2">
+    <label class="text-xs text-neutral-400 flex items-center gap-1">
+      <input type="checkbox" name="retry_errors" value="true"> retry errors
+    </label>
+    <button type="submit" id="process-btn" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg"
+      {% if progress.running %}disabled{% endif %}>
+      {% if progress.running %}Processing…{% else %}Process saved videos{% endif %}
+    </button>
+  </form>
+</div>
+
+<div id="progress-bar" class="mb-6 text-sm text-neutral-400">
+  {{ progress.counts.get("done", 0) }}/{{ progress.total }} done
+  &middot; {{ progress.counts.get("pending", 0) }} pending
+  {% if progress.counts.get("error", 0) %} &middot; <span class="text-red-400">{{ progress.counts.get("error", 0) }} errors</span>{% endif %}
+  {% if progress.running %} &middot; <span class="text-violet-400">working on video #{{ progress.current_video_id }}…</span>{% endif %}
+</div>
+<script>
+  {% if progress.running %}
+  (function poll() {
+    fetch("/api/progress").then(r => r.json()).then(p => {
+      if (!p.running) { location.reload(); return; }
+      const bar = document.getElementById("progress-bar");
+      bar.innerHTML = `${p.counts.done || 0}/${p.total} done &middot; ${p.counts.pending || 0} pending` +
+        (p.counts.error ? ` &middot; <span class="text-red-400">${p.counts.error} errors</span>` : "") +
+        ` &middot; <span class="text-violet-400">working on video #${p.current_video_id}…</span>`;
+      setTimeout(poll, 3000);
+    });
+  })();
+  {% endif %}
+</script>
+
+<form action="/dashboard" method="get" class="flex flex-wrap gap-3 mb-6 text-sm">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <select name="category" class="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2">
+    <option value="">All categories</option>
+    {% for c in categories %}
+    <option value="{{ c }}" {{ "selected" if c==category else "" }}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="q" value="{{ q }}" placeholder="Search summaries, captions, tags…"
+         class="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 flex-1 min-w-[200px]">
+  <select name="sort" class="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2">
+    <option value="score" {{ "selected" if sort=="score" else "" }}>Sort: rewatch score</option>
+    <option value="newest_saved" {{ "selected" if sort=="newest_saved" else "" }}>Sort: newest saved</option>
+    <option value="oldest_saved" {{ "selected" if sort=="oldest_saved" else "" }}>Sort: oldest saved</option>
+  </select>
+  <button type="submit" class="bg-neutral-800 hover:bg-neutral-700 rounded-lg px-4 py-2">Filter</button>
+</form>
+
+{% if not videos %}
+<p class="text-neutral-500">Nothing here yet. Import your saves or adjust your filters.</p>
+{% endif %}
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for v in videos %}
+  <a href="/video/{{ v.id }}" class="block bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition">
+    <div class="aspect-[9/16] bg-neutral-800 relative">
+      <img src="/media/thumb/{{ v.id }}" class="w-full h-full object-cover" alt="">
+      {% if v.status.value != "done" %}
+      <span class="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full {{ 'bg-red-600' if v.status.value=='error' else 'bg-neutral-700' }}">
+        {{ v.status.value }}
+      </span>
+      {% endif %}
+      {% if v.needs_verification %}
+      <span class="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-amber-600">⚠️ verify</span>
+      {% endif %}
+      {% if v.worth_rewatching_score %}
+      <span class="absolute bottom-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70">★ {{ v.worth_rewatching_score }}/5</span>
+      {% endif %}
+    </div>
+    <div class="p-3">
+      {% if v.category %}<div class="text-xs text-violet-400 mb-1">{{ v.category }}</div>{% endif %}
+      <p class="text-sm text-neutral-200 line-clamp-3">{{ v.summary or v.caption or "Not processed yet." }}</p>
+      {% if v.watched %}<div class="text-xs text-neutral-500 mt-2">✓ watched</div>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Settings</h1>
+
+<div class="max-w-2xl space-y-6">
+  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
+    <h2 class="font-medium mb-2">Anthropic API key</h2>
+    <p class="text-sm text-neutral-400 mb-3">
+      Status:
+      {% if has_api_key %}
+        <span class="text-emerald-400">configured ✓</span>
+      {% else %}
+        <span class="text-amber-400">not set</span>
+      {% endif %}
+    </p>
+    <p class="text-sm text-neutral-400">
+      For security this is set via an environment file, not through the browser.
+      Copy <code class="bg-neutral-800 px-1 rounded">.env.example</code> to
+      <code class="bg-neutral-800 px-1 rounded">.env</code> in the project folder,
+      add your key from
+      <a href="https://console.anthropic.com/" target="_blank" rel="noopener" class="underline">console.anthropic.com</a>,
+      then restart the app.
+    </p>
+    <p class="text-xs text-neutral-500 mt-2 break-all">{{ env_path }}</p>
+  </div>
+
+  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
+    <h2 class="font-medium mb-2">Relevance threshold</h2>
+    <p class="text-sm text-neutral-400">
+      Videos with a promo code or dated offer older than
+      <strong>{{ stale_threshold_months }} months</strong> are flagged "verify before use".
+      Change <code class="bg-neutral-800 px-1 rounded">STALE_THRESHOLD_MONTHS</code> in
+      <code class="bg-neutral-800 px-1 rounded">.env</code> and restart to adjust.
+    </p>
+  </div>
+
+  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
+    <h2 class="font-medium mb-2">Other options (.env)</h2>
+    <ul class="text-sm text-neutral-400 space-y-1 list-disc list-inside">
+      <li><code class="bg-neutral-800 px-1 rounded">ANALYSIS_MODEL</code> — Claude model used for summarization</li>
+      <li><code class="bg-neutral-800 px-1 rounded">WHISPER_MODEL</code> — local transcription model size (tiny/base/small/medium)</li>
+      <li><code class="bg-neutral-800 px-1 rounded">DELETE_VIDEO_AFTER_PROCESS</code> — free up disk space after analysis</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}

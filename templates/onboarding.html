@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Import your TikTok data{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-2">Import your Saved videos</h1>
+<p class="text-neutral-400 mb-8 max-w-2xl">
+  TikTok doesn't offer an API for reading your Saved/Favorites list, so the
+  reliable (and ToS-friendly) way in is your own official data export.
+</p>
+
+<div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6 mb-8 max-w-2xl">
+  <h2 class="font-medium mb-3">1. Request your data from TikTok</h2>
+  <ol class="list-decimal list-inside space-y-2 text-neutral-300 text-sm">
+    <li>Open the TikTok app → <strong>Profile → Menu (☰) → Settings and privacy</strong></li>
+    <li>Go to <strong>Account → Download your data</strong></li>
+    <li>Request a file in <strong>JSON</strong> format (not TXT — JSON keeps the save dates)</li>
+    <li>TikTok takes anywhere from a few minutes to a few days to prepare it — you'll get a notification when it's ready</li>
+    <li>Download the <code>.zip</code> and unzip it; look for a file like <code>user_data_tiktok.json</code></li>
+  </ol>
+</div>
+
+<div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6 max-w-2xl">
+  <h2 class="font-medium mb-3">2. Upload it here</h2>
+  <p class="text-sm text-neutral-400 mb-4">
+    This file never leaves your machine except for the short transcript/caption
+    text sent to Claude for summarization once you start processing.
+  </p>
+  <form action="/onboarding/upload" method="post" enctype="multipart/form-data" class="flex items-center gap-3">
+    <input type="file" name="file" accept=".json,.txt" required
+           class="text-sm text-neutral-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-violet-600 file:text-white file:cursor-pointer">
+    <button type="submit" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
+      Import
+    </button>
+  </form>
+</div>
+
+{% if not has_api_key %}
+<div class="mt-8 max-w-2xl bg-amber-950/40 border border-amber-800/50 rounded-xl p-4 text-amber-200 text-sm">
+  ⚠️ No Anthropic API key configured yet. Copy <code>.env.example</code> to <code>.env</code>
+  and add your key before you start processing videos — see <a href="/settings" class="underline">Settings</a>.
+</div>
+{% endif %}
+{% endblock %}
