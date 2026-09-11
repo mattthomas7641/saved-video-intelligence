@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: tiktok-saved-scanner
+    env: docker
+    plan: starter
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANALYSIS_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: WHISPER_MODEL
+        value: base
+      - key: STALE_THRESHOLD_MONTHS
+        value: "3"
+      - key: DELETE_VIDEO_AFTER_PROCESS
+        value: "true"
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1

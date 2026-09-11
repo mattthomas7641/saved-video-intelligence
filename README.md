@@ -4,9 +4,18 @@ Go through your entire TikTok Saved/Favorites list, transcribe + summarize each
 video, categorize it, score whether it's worth rewatching, and flag anything
 with a promo code or dated offer that might be stale.
 
-Runs entirely on your own Mac. Nothing is scraped live from TikTok — it works
-from your own official TikTok data export, which is the only reliable and
-ToS-compliant way to get your Saved list.
+Runs entirely on your own machine (or your own server). Nothing is scraped
+live from TikTok — it works from your own official TikTok data export, which
+is the only reliable and ToS-compliant way to get your Saved list.
+
+**This is a self-hosted, single-user app, by design.** There's no central
+service you sign up for — you (or anyone else who wants this) run your own
+private copy, against your own TikTok export, with your own Anthropic API
+key. That keeps it cheap (a few dollars in API usage for a few hundred
+videos), keeps your data yours, and avoids the much bigger legal/ToS exposure
+a centralized service that downloads *other people's* TikTok content on their
+behalf would carry. If you want to host it somewhere other than your own
+Mac, see **Deploy your own copy** below.
 
 ## How it works
 
@@ -87,6 +96,39 @@ where it left off if you stop and restart the app.
 - Downloaded video files are deleted after processing by default (keeps
   disk usage small); set `DELETE_VIDEO_AFTER_PROCESS=false` in `.env` if you
   want to keep them.
+
+## Deploy your own copy
+
+Prefer not to install Homebrew/Python locally? Use Docker — it bundles
+ffmpeg and tesseract for you.
+
+```bash
+cp .env.example .env   # add your ANTHROPIC_API_KEY
+docker compose up --build
+```
+
+Then open `http://localhost:8787`.
+
+### Host it on a server instead of your Mac
+
+The Docker image runs anywhere Docker does — a spare machine, a VPS, or a
+PaaS like Render or Railway. One-click option for Render:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mattthomas7641/tiktok-saved-scanner)
+
+It'll ask for your `ANTHROPIC_API_KEY` during setup. A couple of things to
+know before you do this:
+
+- **This app has no login screen.** Anyone with the URL can use it and see
+  your saved videos. If you deploy it somewhere public, put it behind your
+  host's access control / a basic-auth proxy, or keep it on a private
+  network.
+- **Whisper transcription is CPU-heavy.** Free hosting tiers will be slow or
+  may time out on longer videos — a small paid instance handles it fine.
+- Processing still downloads each video from TikTok server-side, so it
+  should only be used against **your own** export — not repurposed into a
+  shared service that downloads other users' TikTok content, which is a much
+  higher-risk use of `yt-dlp` against TikTok's terms.
 
 ## Project layout
 
