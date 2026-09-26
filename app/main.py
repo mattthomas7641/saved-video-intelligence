@@ -30,6 +30,31 @@ def _split_summary(text: str | None) -> tuple[str, str]:
 
 templates.env.filters["headline"] = lambda t: _split_summary(t)[0]
 templates.env.filters["rest"] = lambda t: _split_summary(t)[1]
+_CAT_ICONS = {
+    "Tech / AI / Coding": "code", "Career / Job Search": "briefcase",
+    "Finance / Money / Deals": "dollar", "Business / Side Hustle": "trending",
+    "Education / Learning": "cap", "Book / Media Recommendation": "book",
+    "Motivation / Advice": "bulb", "News / Commentary": "news",
+    "Recipe / Cooking": "utensils", "Home / DIY / Life Hack": "wrench",
+    "Fitness / Health": "heart", "Beauty / Fashion": "sparkles",
+    "Travel": "plane", "Product Review / Shopping": "bag",
+    "Comedy / Entertainment": "smile", "Sports / Gaming": "trophy",
+    "Music / Art / Creative": "music", "Other": "grid",
+}
+_GROUP_ICONS = {
+    "Tech & Career": "code", "Money & Business": "dollar", "Learning & Ideas": "bulb",
+    "Food & Home": "home", "Health & Style": "heart", "Travel & Shopping": "plane",
+    "Fun & Culture": "smile", "Other": "grid",
+}
+_GROUP_SLUGS = {
+    "Tech & Career": "tech", "Money & Business": "money", "Learning & Ideas": "learn",
+    "Food & Home": "home", "Health & Style": "health", "Travel & Shopping": "travel",
+    "Fun & Culture": "fun", "Other": "other",
+}
+templates.env.filters["cat_icon"] = lambda c: _CAT_ICONS.get(c, "grid")
+templates.env.filters["group_icon"] = lambda g: _GROUP_ICONS.get(g, "grid")
+templates.env.filters["gslug"] = lambda g: _GROUP_SLUGS.get(g, "other")
+templates.env.filters["cat_slug"] = lambda c: _GROUP_SLUGS.get(group_of(c), "other")
 templates.env.filters["short_date"] = lambda d: d.strftime("%b %-d, %y") if d else "—"
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
@@ -226,7 +251,9 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
             return ((v.worth_rewatching_score or 0), recency(v))
         for g in tree:
             members = [v for v in live if group_of(v.category) == g["name"]]
-            g = {**g, "best": max(members, key=best_key) if members else None}
+            g = {**g, "best": max(members, key=best_key) if members else None,
+                 "worth": len([v for v in members if (v.worth_rewatching_score or 0) >= 4]),
+                 "flagged": len([v for v in members if v.needs_verification])}
             panels.append(g)
         top_picks = sorted([v for v in live if (v.worth_rewatching_score or 0) >= 4], key=best_key, reverse=True)[:8]
 

@@ -24,7 +24,7 @@
     </div>
     {% endif %}
   </div>
-  <div class="cell c-topic">{{ v.category or "—" }}</div>
+  <div class="cell topic c-topic {{ "tint-" ~ (v.category|cat_slug) if v.category }}">{% if v.category %}<span class="ci">{{ icon(v.category|cat_icon) }}</span>{% endif %}<span>{{ v.category or "—" }}</span></div>
   <div class="cell faint c-creator">{% if v.author %}@{{ v.author }}{% else %}—{% endif %}</div>
   <div class="cell faint c-date num">{{ v.saved_date|short_date }}</div>
   <div class="c-rating">{% if v.worth_rewatching_score %}{{ dots(v.worth_rewatching_score) }}{% else %}<span class="cell faint">—</span>{% endif %}</div>
@@ -70,15 +70,15 @@
       <h2>Browse by topic</h2>
       <div class="tree">
         <a class="all" href="{{ href(group='', category='', theme='', q='', show='all') }}" {% if not group %}aria-current="page"{% endif %}>
-          <span>All topics</span><span class="count num">{{ "{:,}".format(stats.processed - stats.archived) }}</span>
+          <span class="gi tint-other">{{ icon("grid") }}</span><span>All topics</span><span class="count num">{{ "{:,}".format(stats.processed - stats.archived) }}</span>
         </a>
         {% for g in tree %}
         <details {% if group == g.name %}open{% endif %}>
-          <summary><span class="chev">{{ icon("chev") }}</span><span>{{ g.name }}</span><span class="count num">{{ g.count }}</span></summary>
+          <summary><span class="gi tint-{{ g.name|gslug }}">{{ icon(g.name|group_icon) }}</span><span>{{ g.name }}</span><span class="count num">{{ g.count }}</span><span class="chev">{{ icon("chev") }}</span></summary>
           <div class="sub">
-            <a href="{{ href(group=g.name) }}" {% if group == g.name and not category %}aria-current="page"{% endif %}><span>All {{ g.name }}</span></a>
+            <a class="tint-{{ g.name|gslug }}" href="{{ href(group=g.name) }}" {% if group == g.name and not category %}aria-current="page"{% endif %}><span class="ci">{{ icon("library") }}</span><span>All {{ g.name }}</span></a>
             {% for c, n in g.cats %}
-            <a href="{{ href(category=c) }}" {% if category == c %}aria-current="page"{% endif %}><span>{{ c }}</span><span class="count num">{{ n }}</span></a>
+            <a class="tint-{{ c|cat_slug }}" href="{{ href(category=c) }}" {% if category == c %}aria-current="page"{% endif %}><span class="ci">{{ icon(c|cat_icon) }}</span><span>{{ c }}</span><span class="count num">{{ n }}</span></a>
             {% endfor %}
           </div>
         </details>
@@ -116,7 +116,7 @@
       <p>Three quick steps. Saved Scanner reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
       <ol class="steps">
         <li class="step {{ 'done' if setup.key else 'current' }}">
-          <span class="mark">{% if setup.key %}{{ icon("check") }}{% else %}1{% endif %}</span>
+          <span class="mark">{% if setup.key %}{{ icon("check") }}{% else %}{{ icon("key") }}{% endif %}</span>
           <div>
             <h3>Connect Claude</h3>
             {% if setup.key %}
@@ -136,7 +136,7 @@
         </li>
 
         <li class="step {{ 'done' if setup.imported else ('current' if setup.key else '') }}">
-          <span class="mark">{% if setup.imported %}{{ icon("check") }}{% else %}2{% endif %}</span>
+          <span class="mark">{% if setup.imported %}{{ icon("check") }}{% else %}{{ icon("upload") }}{% endif %}</span>
           <div>
             <h3>Import your saved videos</h3>
             {% if setup.imported %}
@@ -160,7 +160,7 @@
         </li>
 
         <li class="step {{ 'done' if setup.analyzed else ('current' if setup.key and setup.imported else 'locked') }}">
-          <span class="mark">{% if setup.analyzed %}{{ icon("check") }}{% else %}3{% endif %}</span>
+          <span class="mark">{% if setup.analyzed %}{{ icon("check") }}{% else %}{{ icon("sparkles") }}{% endif %}</span>
           <div>
             <h3>Analyze a first batch</h3>
             <p>Start small to see how it works. Ten videos takes a few minutes, and this page fills in as each one finishes.</p>
@@ -201,14 +201,14 @@
     </div>
 
     <nav class="tabs" aria-label="Views">
-      {% for key, label, n, alert in [
-        ("processed", "Everything", stats.processed - stats.archived, false),
-        ("worth_rewatching", "Worth rewatching", stats.worth, false),
-        ("flagged", "May be expired", stats.flagged, true),
-        ("unwatched", "Not revisited", stats.unwatched, false),
-        ("archived", "Archived", stats.archived, false),
-        ("queue", "Waiting &amp; errors", stats.queue, false)] %}
-      <a href="{{ href(tab=key, show='') }}" class="{{ 'alert' if alert and n }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label|safe }} <span class="n num">{{ "{:,}".format(n) }}</span></a>
+      {% for key, label, ico, n, alert in [
+        ("processed", "Everything", "library", stats.processed - stats.archived, false),
+        ("worth_rewatching", "Worth rewatching", "star", stats.worth, false),
+        ("flagged", "May be expired", "alert", stats.flagged, true),
+        ("unwatched", "Not revisited", "eye", stats.unwatched, false),
+        ("archived", "Archived", "archive", stats.archived, false),
+        ("queue", "Waiting &amp; errors", "inbox", stats.queue, false)] %}
+      <a href="{{ href(tab=key, show='') }}" class="{{ 'alert' if alert and n }}" {% if tab == key %}aria-current="page"{% endif %}>{{ icon(ico) }}<span>{{ label|safe }}</span> <span class="n num">{{ "{:,}".format(n) }}</span></a>
       {% endfor %}
     </nav>
 
@@ -216,7 +216,7 @@
     <div class="drill">
       <span class="lead">{{ drill_label }}</span>
       {% for kind, name, n in drill %}
-      <a class="chip" href="{{ href(**{kind: name}) }}" {% if (kind == 'theme' and theme|lower == name|lower) or (kind == 'category' and category == name) %}aria-current="true"{% endif %}>{{ name }} <span class="n num">{{ n }}</span></a>
+      <a class="chip {{ ('tint-' ~ (name|cat_slug)) if kind == 'category' else (('tint-' ~ (name|gslug)) if kind == 'group' else '') }}" href="{{ href(**{kind: name}) }}" {% if (kind == 'theme' and theme|lower == name|lower) or (kind == 'category' and category == name) %}aria-current="true"{% endif %}>{% if kind == 'category' %}<span class="ci">{{ icon(name|cat_icon) }}</span>{% elif kind == 'group' %}<span class="ci">{{ icon(name|group_icon) }}</span>{% endif %}{{ name }} <span class="n num">{{ n }}</span></a>
       {% endfor %}
       {% if theme %}<a class="chip" href="{{ href(theme='') }}">Clear theme</a>{% endif %}
     </div>
@@ -227,11 +227,18 @@
       <div class="panels">
         {% for g in panels %}
         <article class="panel">
-          <header><h2><a href="{{ href(group=g.name) }}">{{ g.name }}</a></h2><span class="total num">{{ g.count }} video{{ "" if g.count == 1 else "s" }}</span></header>
+          <header>
+            <span class="gi lg tint-{{ g.name|gslug }}">{{ icon(g.name|group_icon) }}</span>
+            <div class="ttl"><h2><a href="{{ href(group=g.name) }}">{{ g.name }}</a></h2><span class="total num">{{ g.count }} video{{ "" if g.count == 1 else "s" }}</span></div>
+          </header>
           <ul>
-            {% for c, n in g.cats[:5] %}<li><a href="{{ href(category=c) }}"><span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
+            {% for c, n in g.cats[:5] %}<li><a class="tint-{{ c|cat_slug }}" href="{{ href(category=c) }}"><span><span class="ci">{{ icon(c|cat_icon) }}</span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
             {% if g.cats|length > 5 %}<li><a href="{{ href(group=g.name) }}"><span>+ {{ g.cats|length - 5 }} more categories</span><span></span></a></li>{% endif %}
           </ul>
+          <div class="stats">
+            <span title="Worth rewatching">{{ icon("star") }}<span class="num">{{ g.worth }}</span></span>
+            {% if g.flagged %}<span class="warn" title="May be expired">{{ icon("alert") }}<span class="num">{{ g.flagged }}</span></span>{% endif %}
+          </div>
           {% if g.best %}
           <div class="best">Top pick
             <a href="/video/{{ g.best.id }}">{{ (g.best.summary or g.best.caption or "")|headline }}</a>
@@ -247,6 +254,7 @@
 
     {% elif not videos %}
       <div class="empty">
+        <span class="big">{% if q or theme %}{{ icon("search") }}{% elif tab == "flagged" %}{{ icon("alert") }}{% elif tab == "archived" %}{{ icon("archive") }}{% else %}{{ icon("inbox") }}{% endif %}</span>
         {% if q or theme %}
           <h2>No matches</h2>
           <p>Nothing here matches {% if q %}“{{ q }}”{% else %}that theme{% endif %}. Try fewer words, or step back up.</p>

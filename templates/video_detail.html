@@ -28,7 +28,7 @@
   <article>
     <div class="meta" style="margin-top:0">
       {% if video.author %}<span>@{{ video.author }}</span><span class="sep"></span>{% endif %}
-      {% if video.category %}<span>{{ video.category }}</span><span class="sep"></span>{% endif %}
+      {% if video.category %}<span class="tint-{{ video.category|cat_slug }}" style="display:inline-flex;gap:6px;align-items:center"><span class="ci">{{ icon(video.category|cat_icon) }}</span>{{ video.category }}</span><span class="sep"></span>{% endif %}
       <span>Saved {{ video.saved_date|fmt_date }}</span>
       {% if video.upload_date %}<span class="sep"></span><span>Posted {{ video.upload_date|fmt_date }}</span>{% endif %}
     </div>
