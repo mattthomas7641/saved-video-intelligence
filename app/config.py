@@ -22,16 +22,20 @@ STALE_THRESHOLD_MONTHS = int(os.environ.get("STALE_THRESHOLD_MONTHS", "3"))
 DELETE_VIDEO_AFTER_PROCESS = os.environ.get("DELETE_VIDEO_AFTER_PROCESS", "true").strip().lower() != "false"
 
 CATEGORIES = [
+    "Tech / AI / Coding",
+    "Career / Job Search",
+    "Finance / Money / Deals",
+    "Business / Side Hustle",
     "Recipe / Cooking",
     "Product Review / Shopping",
     "Travel",
     "Fitness / Health",
     "Beauty / Fashion",
+    "Home / DIY / Life Hack",
+    "Education / Learning",
     "Comedy / Entertainment",
-    "Tutorial / How-To",
-    "Life Hack",
     "News / Commentary",
-    "Music",
+    "Music / Art / Creative",
     "Motivation / Advice",
     "Book / Media Recommendation",
     "Other",

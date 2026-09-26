@@ -65,25 +65,50 @@ async def onboarding_upload(file: UploadFile = File(...)):
     return RedirectResponse(f"/dashboard?imported={added}", status_code=303)
 
 
+PER_PAGE = 20
+
+
 @app.get("/dashboard")
-def dashboard(request: Request, tab: str = "all", category: str = "", q: str = "",
-              sort: str = "score", imported: int | None = None):
+def dashboard(request: Request, tab: str = "processed", category: str = "", q: str = "",
+              sort: str = "score", page: int = 1, imported: int | None = None):
+    from collections import Counter
+    from urllib.parse import urlencode
+
     session = get_session()
     try:
-        videos = session.exec(select(Video)).all()
+        all_videos = session.exec(select(Video)).all()
     finally:
         session.close()
 
-    if tab == "unwatched":
-        videos = [v for v in videos if not v.watched and not v.archived]
-    elif tab == "worth_rewatching":
-        videos = [v for v in videos if (v.worth_rewatching_score or 0) >= 4 and not v.archived]
-    elif tab == "flagged":
-        videos = [v for v in videos if v.needs_verification and not v.archived]
+    done = [v for v in all_videos if v.status == Status.DONE]
+    live = [v for v in done if not v.archived]
+    scores = [v.worth_rewatching_score for v in done if v.worth_rewatching_score]
+    stats = {
+        "total": len(all_videos),
+        "processed": len(done),
+        "queue": len([v for v in all_videos if v.status != Status.DONE]),
+        "errors": len([v for v in all_videos if v.status == Status.ERROR]),
+        "worth": len([v for v in live if (v.worth_rewatching_score or 0) >= 4]),
+        "flagged": len([v for v in live if v.needs_verification]),
+        "unwatched": len([v for v in live if not v.watched]),
+        "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
+    }
+    category_counts = Counter(v.category for v in live if v.category)
+    tag_counts = Counter(t.strip() for v in live for t in (v.tags or "").split(",") if t.strip())
+
+    if tab == "queue":
+        videos = [v for v in all_videos if v.status != Status.DONE]
     elif tab == "archived":
-        videos = [v for v in videos if v.archived]
+        videos = [v for v in done if v.archived]
+    elif tab == "worth_rewatching":
+        videos = [v for v in live if (v.worth_rewatching_score or 0) >= 4]
+    elif tab == "flagged":
+        videos = [v for v in live if v.needs_verification]
+    elif tab == "unwatched":
+        videos = [v for v in live if not v.watched]
     else:
-        videos = [v for v in videos if not v.archived]
+        tab = "processed"
+        videos = live
 
     if category:
         videos = [v for v in videos if v.category == category]
@@ -102,14 +127,29 @@ def dashboard(request: Request, tab: str = "all", category: str = "", q: str = "
     elif sort == "oldest_saved":
         videos.sort(key=lambda v: v.saved_date or v.created_at)
 
+    total_results = len(videos)
+    pages = max(1, -(-total_results // PER_PAGE))
+    page = min(max(page, 1), pages)
+    videos = videos[(page - 1) * PER_PAGE: page * PER_PAGE]
+
+    current = {"tab": tab, "category": category, "q": q, "sort": sort, "page": page}
+
+    def qs(**overrides):
+        merged = {**current, **overrides}
+        if "page" not in overrides:
+            merged["page"] = 1
+        return urlencode({k: v for k, v in merged.items() if v not in ("", None)})
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "videos": videos,
-        "tab": tab,
-        "category": category,
-        "q": q,
-        "sort": sort,
+        "tab": tab, "category": category, "q": q, "sort": sort,
+        "page": page, "pages": pages, "total_results": total_results,
         "categories": CATEGORIES,
+        "category_counts": category_counts.most_common(),
+        "top_tags": tag_counts.most_common(14),
+        "stats": stats,
+        "qs": qs,
         "imported": imported,
         "progress": worker.progress_summary(),
         "has_api_key": bool(ANTHROPIC_API_KEY),
@@ -196,5 +236,5 @@ def media_thumb(video_id: int):
     finally:
         session.close()
     if video and video.thumbnail_path and Path(video.thumbnail_path).exists():
-        return FileResponse(video.thumbnail_path)
+        return FileResponse(video.thumbnail_path, media_type="image/jpeg")
     return FileResponse(str(BASE_DIR / "static" / "placeholder.svg"))

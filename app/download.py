@@ -24,7 +24,7 @@ def download_video(url: str, video_id: int) -> DownloadResult:
     thumb_template = str(THUMBS_DIR / f"{video_id}.%(ext)s")
 
     ydl_opts = {
-        "outtmpl": out_template,
+        "outtmpl": {"default": out_template, "thumbnail": thumb_template},
         "format": "mp4/best",
         "writethumbnail": True,
         "quiet": True,
