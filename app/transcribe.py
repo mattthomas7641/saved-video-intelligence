@@ -12,5 +12,10 @@ def _get_model():
 
 def transcribe(video_path: str) -> str:
     model = _get_model()
-    segments, _info = model.transcribe(video_path, beam_size=5, vad_filter=True)
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    try:
+        segments, _info = model.transcribe(video_path, beam_size=5, vad_filter=True)
+        return " ".join(seg.text.strip() for seg in segments).strip()
+    except ValueError:
+        # No usable audio (silent clip, photo slideshow, music only): faster-whisper
+        # fails language detection. Treat as no speech; caption/OCR still get analyzed.
+        return ""
