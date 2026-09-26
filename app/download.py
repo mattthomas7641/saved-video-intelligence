@@ -33,7 +33,12 @@ def download_video(url: str, video_id: int) -> DownloadResult:
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+        try:
+            info = ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as e:
+            if "No video formats" not in str(e):
+                raise
+            return _photo_post_fallback(ydl, url, video_id)
 
     video_path = Path(ydl.prepare_filename(info))
     if not video_path.exists():
@@ -63,4 +68,38 @@ def download_video(url: str, video_id: int) -> DownloadResult:
         hashtags=hashtags,
         upload_date=upload_date,
         duration_seconds=info.get("duration"),
+    )
+
+
+def _photo_post_fallback(ydl, url: str, video_id: int) -> DownloadResult:
+    """Photo/slideshow posts have no video stream. Keep the metadata + a
+    thumbnail so the caption and hashtags can still be analyzed."""
+    import urllib.request
+
+    info = ydl.extract_info(url, download=False, process=False)
+    thumb_path = None
+    thumbs = info.get("thumbnails") or []
+    if thumbs:
+        try:
+            dest = THUMBS_DIR / f"{video_id}.jpg"
+            urllib.request.urlretrieve(thumbs[0]["url"], dest)
+            thumb_path = str(dest)
+        except Exception:  # noqa: BLE001
+            thumb_path = None
+
+    upload_date = None
+    if info.get("upload_date"):
+        try:
+            upload_date = datetime.strptime(info["upload_date"], "%Y%m%d")
+        except ValueError:
+            pass
+
+    return DownloadResult(
+        video_path=None,
+        thumbnail_path=thumb_path,
+        author=info.get("uploader") or info.get("channel"),
+        caption=info.get("description") or info.get("title"),
+        hashtags=",".join(info.get("tags") or []),
+        upload_date=upload_date,
+        duration_seconds=None,
     )
