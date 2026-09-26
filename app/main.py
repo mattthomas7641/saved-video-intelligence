@@ -16,6 +16,22 @@ app = FastAPI(title="TikTok Saved Scanner")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _split_summary(text: str | None) -> tuple[str, str]:
+    """First sentence becomes the headline; everything after it is the body."""
+    text = (text or "").strip()
+    if not text:
+        return "", ""
+    for i, ch in enumerate(text):
+        if ch in ".!?" and i >= 20 and (i + 1 == len(text) or text[i + 1] == " "):
+            return text[: i + 1], text[i + 2:].strip()
+    return text, ""
+
+
+templates.env.filters["headline"] = lambda t: _split_summary(t)[0]
+templates.env.filters["rest"] = lambda t: _split_summary(t)[1]
+templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
+
 init_db()
 
 
@@ -91,10 +107,10 @@ def dashboard(request: Request, tab: str = "processed", category: str = "", q: s
         "worth": len([v for v in live if (v.worth_rewatching_score or 0) >= 4]),
         "flagged": len([v for v in live if v.needs_verification]),
         "unwatched": len([v for v in live if not v.watched]),
+        "archived": len([v for v in done if v.archived]),
         "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
     }
     category_counts = Counter(v.category for v in live if v.category)
-    tag_counts = Counter(t.strip() for v in live for t in (v.tags or "").split(",") if t.strip())
 
     if tab == "queue":
         videos = [v for v in all_videos if v.status != Status.DONE]
@@ -112,6 +128,8 @@ def dashboard(request: Request, tab: str = "processed", category: str = "", q: s
 
     if category:
         videos = [v for v in videos if v.category == category]
+
+    tag_counts = Counter(t.strip() for v in videos for t in (v.tags or "").split(",") if t.strip())
 
     if q:
         ql = q.lower()
@@ -132,6 +150,13 @@ def dashboard(request: Request, tab: str = "processed", category: str = "", q: s
     page = min(max(page, 1), pages)
     videos = videos[(page - 1) * PER_PAGE: page * PER_PAGE]
 
+    view_names = {
+        "processed": "Everything analyzed", "worth_rewatching": "Worth rewatching",
+        "flagged": "May be expired", "unwatched": "Not revisited yet",
+        "archived": "Archived", "queue": "Waiting & errors",
+    }
+    heading = category or view_names.get(tab, "Library")
+
     current = {"tab": tab, "category": category, "q": q, "sort": sort, "page": page}
 
     def qs(**overrides):
@@ -145,9 +170,10 @@ def dashboard(request: Request, tab: str = "processed", category: str = "", q: s
         "videos": videos,
         "tab": tab, "category": category, "q": q, "sort": sort,
         "page": page, "pages": pages, "total_results": total_results,
+        "heading": heading,
         "categories": CATEGORIES,
         "category_counts": category_counts.most_common(),
-        "top_tags": tag_counts.most_common(14),
+        "top_tags": tag_counts.most_common(12),
         "stats": stats,
         "qs": qs,
         "imported": imported,
@@ -167,7 +193,7 @@ def video_detail(request: Request, video_id: int):
 
 
 @app.post("/video/{video_id}/watched")
-def toggle_watched(video_id: int):
+def toggle_watched(video_id: int, next: str = Form("")):
     session = get_session()
     try:
         video = session.get(Video, video_id)
@@ -176,11 +202,11 @@ def toggle_watched(video_id: int):
         session.commit()
     finally:
         session.close()
-    return RedirectResponse(f"/video/{video_id}", status_code=303)
+    return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
 
 
 @app.post("/video/{video_id}/archive")
-def toggle_archive(video_id: int):
+def toggle_archive(video_id: int, next: str = Form("")):
     session = get_session()
     try:
         video = session.get(Video, video_id)
@@ -189,7 +215,7 @@ def toggle_archive(video_id: int):
         session.commit()
     finally:
         session.close()
-    return RedirectResponse(f"/video/{video_id}", status_code=303)
+    return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
 
 
 @app.post("/video/{video_id}/reprocess")

@@ -1,126 +1,94 @@
 {% extends "base.html" %}
-{% block title %}{{ video.author or "Video" }} — TikTok Saved Scanner{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ (video.summary or video.caption or "Video")|headline if video else "Not found" }} · Saved Scanner{% endblock %}
 {% block content %}
+<a class="back" href="/dashboard">{{ icon("back") }} Back to library</a>
 {% if not video %}
-<p>Not found.</p>
+  <div class="empty"><h2>That video isn't in your library</h2><p>It may have been removed when the database was reset.</p><a class="btn" href="/dashboard">Go to library</a></div>
 {% else %}
-<a href="/dashboard" class="text-sm text-neutral-400 hover:text-white">&larr; Back to dashboard</a>
-
-<div class="mt-4 grid md:grid-cols-[280px_1fr] gap-8">
+<div class="detail">
   <div>
-    <div class="aspect-[9/16] bg-neutral-800 rounded-xl overflow-hidden mb-3">
-      <img src="/media/thumb/{{ video.id }}" class="w-full h-full object-cover" alt="">
-    </div>
-    <a href="{{ video.tiktok_url }}" target="_blank" rel="noopener"
-       class="block text-center bg-neutral-800 hover:bg-neutral-700 rounded-lg py-2 text-sm mb-2">
-      Open on TikTok ↗
-    </a>
-    <div class="flex gap-2">
-      <form action="/video/{{ video.id }}/watched" method="post" class="flex-1">
-        <button class="w-full bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-lg py-2 text-sm">
-          {{ "✓ Watched" if video.watched else "Mark watched" }}
-        </button>
+    <div class="poster"><img src="/media/thumb/{{ video.id }}" alt=""></div>
+    <div class="stack">
+      <a class="btn btn-primary" href="{{ video.tiktok_url }}" target="_blank" rel="noopener">{{ icon("external") }} Watch on TikTok</a>
+      <form action="/video/{{ video.id }}/watched" method="post">
+        <button class="btn" style="width:100%" type="submit">{{ icon("eye") }} {{ "Mark as not revisited" if video.watched else "Mark as revisited" }}</button>
       </form>
-      <form action="/video/{{ video.id }}/archive" method="post" class="flex-1">
-        <button class="w-full bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-lg py-2 text-sm">
-          {{ "Unarchive" if video.archived else "Archive" }}
-        </button>
+      <form action="/video/{{ video.id }}/archive" method="post">
+        <button class="btn" style="width:100%" type="submit">{{ icon("archive") }} {{ "Restore from archive" if video.archived else "Archive" }}</button>
       </form>
+      {% if video.status.value in ("error", "pending") %}
+      <form action="/video/{{ video.id }}/reprocess" method="post">
+        <button class="btn" style="width:100%" type="submit">{{ icon("refresh") }} Try analyzing again</button>
+      </form>
+      {% endif %}
     </div>
-    {% if video.status.value == "error" %}
-    <form action="/video/{{ video.id }}/reprocess" method="post" class="mt-2">
-      <button class="w-full bg-red-900/50 border border-red-700 hover:bg-red-900 rounded-lg py-2 text-sm text-red-200">
-        Retry processing
-      </button>
-    </form>
-    {% endif %}
   </div>
 
-  <div>
-    <div class="flex items-center gap-2 mb-2">
-      {% if video.category %}<span class="text-xs bg-violet-600/20 text-violet-300 px-2 py-1 rounded-full">{{ video.category }}</span>{% endif %}
-      <span class="text-xs bg-neutral-800 text-neutral-400 px-2 py-1 rounded-full">{{ video.status.value }}</span>
-      {% if video.needs_verification %}
-      <span class="text-xs bg-amber-600/20 text-amber-300 px-2 py-1 rounded-full">⚠️ verify before use</span>
-      {% endif %}
-      {% if video.worth_rewatching_score %}
-      <span class="text-xs bg-neutral-800 px-2 py-1 rounded-full">★ {{ video.worth_rewatching_score }}/5</span>
-      {% endif %}
+  <article>
+    <div class="meta" style="margin-top:0">
+      {% if video.author %}<span>@{{ video.author }}</span><span class="sep"></span>{% endif %}
+      {% if video.category %}<span>{{ video.category }}</span><span class="sep"></span>{% endif %}
+      <span>Saved {{ video.saved_date|fmt_date }}</span>
+      {% if video.upload_date %}<span class="sep"></span><span>Posted {{ video.upload_date|fmt_date }}</span>{% endif %}
     </div>
 
-    <h1 class="text-xl font-semibold mb-1">{{ video.author or "Unknown creator" }}</h1>
-    <p class="text-sm text-neutral-500 mb-4">
-      Saved {{ video.saved_date.strftime("%b %d, %Y") if video.saved_date else "unknown" }}
-      {% if video.upload_date %} &middot; posted {{ video.upload_date.strftime("%b %d, %Y") }}{% endif %}
-    </p>
+    <h1 style="margin-top:14px">{{ (video.summary or video.caption or video.tiktok_url)|headline }}</h1>
+    {% set rest = (video.summary or "")|rest %}
+    {% if rest %}<p class="lede">{{ rest }}</p>{% endif %}
 
-    {% if video.status.value == "error" %}
-    <div class="bg-red-950/40 border border-red-800/50 rounded-lg p-3 text-red-300 text-sm mb-4">
-      Error: {{ video.error_message }}
-    </div>
-    {% endif %}
-
-    {% if video.summary %}
-    <div class="mb-6">
-      <h2 class="text-sm font-medium text-neutral-400 mb-1">Summary</h2>
-      <p class="text-neutral-200">{{ video.summary }}</p>
-    </div>
-    {% endif %}
-
-    {% if video.worth_rewatching_reason %}
-    <div class="mb-6">
-      <h2 class="text-sm font-medium text-neutral-400 mb-1">Why this score</h2>
-      <p class="text-neutral-200">{{ video.worth_rewatching_reason }}</p>
+    {% if video.worth_rewatching_score %}
+    <div class="section">
+      <h2>Worth rewatching?</h2>
+      <p style="display:flex;gap:12px;align-items:center">
+        <span class="rating" role="img" aria-label="{{ video.worth_rewatching_score }} out of 5">
+          {% for i in range(1, 6) %}<i class="{{ 'on' if i <= video.worth_rewatching_score }}"></i>{% endfor %}
+        </span>
+        <span class="num">{{ video.worth_rewatching_score }} of 5</span>
+      </p>
+      {% if video.worth_rewatching_reason %}<p style="margin-top:8px;color:var(--ink-2)">{{ video.worth_rewatching_reason }}</p>{% endif %}
     </div>
     {% endif %}
 
     {% if video.needs_verification %}
-    <div class="mb-6 bg-amber-950/30 border border-amber-800/40 rounded-lg p-4">
-      <h2 class="text-sm font-medium text-amber-300 mb-1">⚠️ This may be outdated</h2>
-      <p class="text-sm text-amber-200">
-        {% if video.promo_code_text %}Promo code mentioned: <code>{{ video.promo_code_text }}</code>.{% endif %}
-        {% if video.offer_deadline_text %} Offer/date referenced: {{ video.offer_deadline_text }}.{% endif %}
-        This was saved a while ago — double-check it's still valid before using it.
-      </p>
+    <div class="callout">
+      <strong>{{ icon("alert") }} This may be out of date</strong>
+      {% if video.promo_code_text %}Promo code mentioned: <code>{{ video.promo_code_text }}</code>. {% endif %}
+      {% if video.offer_deadline_text %}Deadline or date: {{ video.offer_deadline_text }}. {% endif %}
+      You saved this a while ago, so check that it still applies before you use it.
+    </div>
+    {% endif %}
+
+    {% if video.status.value == "error" %}
+    <div class="callout" style="background:var(--danger-soft);color:var(--danger)"><strong>Analysis failed</strong>{{ video.error_message }}</div>
+    {% endif %}
+
+    {% if video.key_facts %}
+    <div class="section">
+      <h2>Key details</h2>
+      <ul>{% for f in video.key_facts.split(",") %}<li>{{ f.strip() }}</li>{% endfor %}</ul>
     </div>
     {% endif %}
 
     {% if video.tags %}
-    <div class="mb-6 flex flex-wrap gap-2">
-      {% for t in video.tags.split(",") %}<span class="text-xs bg-neutral-800 px-2 py-1 rounded-full">#{{ t }}</span>{% endfor %}
-    </div>
-    {% endif %}
-
-    {% if video.key_facts %}
-    <div class="mb-6">
-      <h2 class="text-sm font-medium text-neutral-400 mb-1">Key facts / action items</h2>
-      <ul class="list-disc list-inside text-neutral-200 text-sm space-y-1">
-        {% for f in video.key_facts.split(",") %}<li>{{ f }}</li>{% endfor %}
-      </ul>
+    <div class="section">
+      <h2>Themes</h2>
+      <div class="themes" style="margin:0">
+        {% for t in video.tags.split(",") %}<a class="chip" href="/dashboard?q={{ t.strip()|urlencode }}">{{ t.strip() }}</a>{% endfor %}
+      </div>
     </div>
     {% endif %}
 
     {% if video.caption %}
-    <div class="mb-6">
-      <h2 class="text-sm font-medium text-neutral-400 mb-1">Original caption</h2>
-      <p class="text-neutral-400 text-sm">{{ video.caption }}</p>
-    </div>
+    <div class="section"><h2>Original caption</h2><p style="color:var(--ink-2)">{{ video.caption }}</p></div>
     {% endif %}
-
     {% if video.transcript %}
-    <details class="mb-6">
-      <summary class="text-sm font-medium text-neutral-400 cursor-pointer">Full transcript</summary>
-      <p class="text-neutral-400 text-sm mt-2 whitespace-pre-wrap">{{ video.transcript }}</p>
-    </details>
+    <div class="section"><details><summary>Full transcript</summary><p>{{ video.transcript }}</p></details></div>
     {% endif %}
-
     {% if video.ocr_text %}
-    <details class="mb-6">
-      <summary class="text-sm font-medium text-neutral-400 cursor-pointer">On-screen text (OCR)</summary>
-      <p class="text-neutral-400 text-sm mt-2 whitespace-pre-wrap">{{ video.ocr_text }}</p>
-    </details>
+    <div class="section"><details><summary>Text seen on screen</summary><p>{{ video.ocr_text }}</p></details></div>
     {% endif %}
-  </div>
+  </article>
 </div>
 {% endif %}
 {% endblock %}

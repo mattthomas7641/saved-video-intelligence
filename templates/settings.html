@@ -1,47 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Settings{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}Settings · Saved Scanner{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-6">Settings</h1>
+<h1 style="font:500 var(--fs-2xl)/1.1 var(--serif);letter-spacing:-0.02em;margin-bottom:24px">Settings</h1>
 
-<div class="max-w-2xl space-y-6">
-  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
-    <h2 class="font-medium mb-2">Anthropic API key</h2>
-    <p class="text-sm text-neutral-400 mb-3">
-      Status:
-      {% if has_api_key %}
-        <span class="text-emerald-400">configured ✓</span>
-      {% else %}
-        <span class="text-amber-400">not set</span>
-      {% endif %}
-    </p>
-    <p class="text-sm text-neutral-400">
-      For security this is set via an environment file, not through the browser.
-      Copy <code class="bg-neutral-800 px-1 rounded">.env.example</code> to
-      <code class="bg-neutral-800 px-1 rounded">.env</code> in the project folder,
-      add your key from
-      <a href="https://console.anthropic.com/" target="_blank" rel="noopener" class="underline">console.anthropic.com</a>,
-      then restart the app.
-    </p>
-    <p class="text-xs text-neutral-500 mt-2 break-all">{{ env_path }}</p>
-  </div>
+<section class="plain-card">
+  <h2>Anthropic API key</h2>
+  <p style="margin-bottom:10px">
+    {% if has_api_key %}<span class="tag-info" style="background:var(--accent-soft);color:var(--accent)">{{ icon("check") }} Connected</span>
+    {% else %}<span class="tag-warn">{{ icon("alert") }} Not set</span>{% endif %}
+  </p>
+  <p>The key lives in a file, not in the browser. Copy <code>.env.example</code> to <code>.env</code> in the project folder, add your key from
+    <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>, then restart the app.</p>
+</section>
 
-  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
-    <h2 class="font-medium mb-2">Relevance threshold</h2>
-    <p class="text-sm text-neutral-400">
-      Videos with a promo code or dated offer older than
-      <strong>{{ stale_threshold_months }} months</strong> are flagged "verify before use".
-      Change <code class="bg-neutral-800 px-1 rounded">STALE_THRESHOLD_MONTHS</code> in
-      <code class="bg-neutral-800 px-1 rounded">.env</code> and restart to adjust.
-    </p>
-  </div>
+<section class="plain-card">
+  <h2>Expiry warnings</h2>
+  <p>Videos with a promo code or deadline that you saved more than <strong class="num">{{ stale_threshold_months }} months</strong> ago are marked “May be expired”. Change <code>STALE_THRESHOLD_MONTHS</code> in <code>.env</code> to adjust.</p>
+</section>
 
-  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
-    <h2 class="font-medium mb-2">Other options (.env)</h2>
-    <ul class="text-sm text-neutral-400 space-y-1 list-disc list-inside">
-      <li><code class="bg-neutral-800 px-1 rounded">ANALYSIS_MODEL</code> — Claude model used for summarization</li>
-      <li><code class="bg-neutral-800 px-1 rounded">WHISPER_MODEL</code> — local transcription model size (tiny/base/small/medium)</li>
-      <li><code class="bg-neutral-800 px-1 rounded">DELETE_VIDEO_AFTER_PROCESS</code> — free up disk space after analysis</li>
-    </ul>
-  </div>
-</div>
+<section class="plain-card">
+  <h2>Other options</h2>
+  <ul style="padding-left:1.1em;display:grid;gap:6px;margin:0;color:var(--ink-2)">
+    <li><code>ANALYSIS_MODEL</code>: the Claude model used to summarize</li>
+    <li><code>WHISPER_MODEL</code>: speech-to-text size (tiny, base, small, medium)</li>
+    <li><code>DELETE_VIDEO_AFTER_PROCESS</code>: free disk space after each video</li>
+  </ul>
+</section>
 {% endblock %}
