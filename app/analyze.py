@@ -3,7 +3,7 @@ import json
 
 from anthropic import Anthropic
 
-from app.config import ANTHROPIC_API_KEY, ANALYSIS_MODEL, CATEGORIES
+from app.config import get_api_key, ANALYSIS_MODEL, CATEGORIES, normalize_category
 
 _TOOL_SCHEMA = {
     "name": "record_analysis",
@@ -42,7 +42,7 @@ _TOOL_SCHEMA = {
 
 class AnalysisResult:
     def __init__(self, **kwargs):
-        self.category = kwargs.get("category")
+        self.category = normalize_category(kwargs.get("category"))
         self.summary = kwargs.get("summary")
         self.tags = kwargs.get("tags") or []
         self.worth_rewatching_score = kwargs.get("worth_rewatching_score")
@@ -56,10 +56,11 @@ class AnalysisResult:
 
 
 def analyze(caption: str, hashtags: str, author: str, transcript: str, ocr_text: str) -> AnalysisResult:
-    if not ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
+    api_key = get_api_key()
+    if not api_key:
+        raise RuntimeError("No Anthropic API key. Add one in Settings.")
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic(api_key=api_key)
 
     content = f"""Here is everything extracted from one saved TikTok video:
 
