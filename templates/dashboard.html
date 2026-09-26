@@ -1,159 +1,200 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — TikTok Saved Scanner{% endblock %}
-{% block content %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ heading }} · Saved Scanner{% endblock %}
 
-{% if imported is not none %}
-<div class="mb-4 bg-emerald-950/40 border border-emerald-800/50 rounded-lg p-3 text-emerald-200 text-sm">
-  Imported {{ imported }} new saved video(s).
-</div>
-{% endif %}
-{% if not has_api_key %}
-<div class="mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 text-amber-200 text-sm">
-  ⚠️ No Anthropic API key set — analysis will fail. See <a href="/settings" class="underline">Settings</a>.
-</div>
-{% endif %}
+{% block body %}
+<div class="shell">
 
-<!-- Stats strip -->
-<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-    <div class="text-2xl font-semibold">{{ stats.processed }}<span class="text-sm text-neutral-500 font-normal"> / {{ stats.total }}</span></div>
-    <div class="text-xs text-neutral-400 mt-1">analyzed</div>
-    <div class="h-1 bg-neutral-800 rounded mt-2"><div class="h-1 bg-violet-500 rounded" style="width: {{ (stats.processed / stats.total * 100) if stats.total else 0 }}%"></div></div>
-  </div>
-  <a href="/dashboard?{{ qs(tab='worth_rewatching') }}" class="bg-neutral-900 border border-neutral-800 hover:border-neutral-600 rounded-xl p-4">
-    <div class="text-2xl font-semibold text-emerald-400">{{ stats.worth }}</div>
-    <div class="text-xs text-neutral-400 mt-1">worth rewatching (4–5★)</div>
-  </a>
-  <a href="/dashboard?{{ qs(tab='flagged') }}" class="bg-neutral-900 border border-neutral-800 hover:border-neutral-600 rounded-xl p-4">
-    <div class="text-2xl font-semibold text-amber-400">{{ stats.flagged }}</div>
-    <div class="text-xs text-neutral-400 mt-1">may be expired</div>
-  </a>
-  <a href="/dashboard?{{ qs(tab='unwatched') }}" class="bg-neutral-900 border border-neutral-800 hover:border-neutral-600 rounded-xl p-4">
-    <div class="text-2xl font-semibold">{{ stats.unwatched }}</div>
-    <div class="text-xs text-neutral-400 mt-1">not revisited yet</div>
-  </a>
-  <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-    <div class="text-2xl font-semibold">{{ stats.avg_score if stats.avg_score else "–" }}</div>
-    <div class="text-xs text-neutral-400 mt-1">avg score</div>
-  </div>
+  <aside class="sidebar">
+    <a href="/dashboard" class="brand">Saved Scanner<small>Your TikTok saves, sorted out</small></a>
+
+    <nav class="nav-group" aria-label="Views">
+      <h2>Views</h2>
+      <ul class="nav-list">
+        {% for key, label, ico, n, alert in [
+          ("processed", "Everything analyzed", "library", stats.processed, false),
+          ("worth_rewatching", "Worth rewatching", "star", stats.worth, false),
+          ("flagged", "May be expired", "alert", stats.flagged, true),
+          ("unwatched", "Not revisited yet", "eye", stats.unwatched, false),
+          ("archived", "Archived", "archive", stats.archived, false),
+          ("queue", "Waiting &amp; errors", "inbox", stats.queue, false)] %}
+        <li>
+          <a class="nav-link{{ ' alert' if alert and n }}" href="/dashboard?tab={{ key }}"
+             {% if tab == key and not category %}aria-current="page"{% endif %}>
+            {{ icon(ico) }}<span>{{ label|safe }}</span><span class="count num">{{ "{:,}".format(n) }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    {% if category_counts %}
+    <nav class="nav-group" aria-label="Topics">
+      <h2>Topics</h2>
+      <ul class="nav-list">
+        {% for name, n in category_counts %}
+        <li>
+          <a class="nav-link" href="/dashboard?tab=processed&category={{ name|urlencode }}"
+             {% if category == name %}aria-current="page"{% endif %}>
+            <span>{{ name }}</span><span class="count num">{{ n }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+
+    <section class="processing" aria-label="Analysis progress">
+      <div>
+        <strong class="num" style="color:var(--ink)">{{ "{:,}".format(stats.processed) }}</strong> of
+        <span class="num">{{ "{:,}".format(stats.total) }}</span> analyzed
+      </div>
+      <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="{{ stats.total }}" aria-valuenow="{{ stats.processed }}">
+        <span style="width: {{ (stats.processed / stats.total * 100) if stats.total else 0 }}%"></span>
+      </div>
+      {% if progress.running %}
+        <div>Working on the next video…</div>
+      {% endif %}
+      <form action="/process/start" method="post" class="batch">
+        <div class="row">
+          <input class="field num" type="number" name="limit" min="1" value="10" aria-label="How many videos to analyze">
+          <button class="btn btn-primary" type="submit" {% if progress.running %}disabled{% endif %}>
+            {{ icon("play") }} {% if progress.running %}Analyzing…{% else %}Analyze next{% endif %}
+          </button>
+        </div>
+        <label class="retry"><input class="check" type="checkbox" name="retry_errors" value="true"> Retry failed videos first</label>
+      </form>
+    </section>
+  </aside>
+
+  <main class="main">
+    {% if imported is not none %}
+    <div class="notice">{{ icon("check") }}<span>Imported {{ "{:,}".format(imported) }} saved videos. Choose how many to analyze from the panel on the left.</span></div>
+    {% endif %}
+    {% if not has_api_key %}
+    <div class="notice warn">{{ icon("alert") }}<span>No Anthropic API key found, so analysis will fail. See <a href="/settings">Settings</a>.</span></div>
+    {% endif %}
+    {% if stats.errors and tab != "queue" %}
+    <div class="notice warn">{{ icon("alert") }}<span>{{ stats.errors }} video{{ "" if stats.errors == 1 else "s" }} failed to process. <a href="/dashboard?tab=queue">See what went wrong</a>.</span></div>
+    {% endif %}
+
+    <header class="page-head">
+      <div>
+        <h1>{{ heading }}</h1>
+        <p class="sub num">{{ "{:,}".format(total_results) }} video{{ "" if total_results == 1 else "s" }}{% if q %} matching “{{ q }}”{% endif %}</p>
+      </div>
+      <form class="toolbar" action="/dashboard" method="get" role="search">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="category" value="{{ category }}">
+        <label class="search">{{ icon("search") }}
+          <input class="field" type="search" name="q" value="{{ q }}" placeholder="Search summaries, tags, creators" aria-label="Search">
+        </label>
+        <select class="field" name="sort" aria-label="Sort by" onchange="this.form.submit()">
+          <option value="score" {{ "selected" if sort=="score" }}>Best first</option>
+          <option value="newest_saved" {{ "selected" if sort=="newest_saved" }}>Newest saved</option>
+          <option value="oldest_saved" {{ "selected" if sort=="oldest_saved" }}>Oldest saved</option>
+        </select>
+      </form>
+    </header>
+
+    {% if top_tags and tab != "queue" %}
+    <div class="themes" aria-label="Themes">
+      <span class="lead">Themes</span>
+      {% for t, n in top_tags %}
+      <a class="chip" href="/dashboard?{{ qs(q=t) }}" {% if q|lower == t|lower %}aria-current="true"{% endif %}>{{ t }}</a>
+      {% endfor %}
+      {% if q %}<a class="chip" href="/dashboard?{{ qs(q='') }}">Clear search</a>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if not videos %}
+    <div class="empty">
+      {% if tab == "processed" and not total_results and not q and not category %}
+        <h2>Nothing analyzed yet</h2>
+        <p>Pick a small number in the panel on the left (10 is a good start) and choose <strong>Analyze next</strong>. Each video is summarized and sorted into a topic, and this page fills in as they finish.</p>
+      {% elif q %}
+        <h2>No matches for “{{ q }}”</h2>
+        <p>Try a shorter word, or clear the search to see everything in this view.</p>
+        <a class="btn" href="/dashboard?{{ qs(q='') }}">Clear search</a>
+      {% elif tab == "flagged" %}
+        <h2>Nothing looks expired</h2>
+        <p>Videos with promo codes or deadlines that you saved a while ago will show up here.</p>
+      {% elif tab == "archived" %}
+        <h2>Nothing archived</h2>
+        <p>Archive a video from its row to tuck it away without deleting it.</p>
+      {% else %}
+        <h2>Nothing here yet</h2>
+        <p>There are no videos in this view right now.</p>
+      {% endif %}
+    </div>
+    {% else %}
+    <ol class="list">
+      {% for v in videos %}
+      <li class="entry">
+        <a class="stretch" href="/video/{{ v.id }}" aria-label="Open: {{ (v.summary or v.caption or 'video')|headline }}"></a>
+        <div class="thumb"><img src="/media/thumb/{{ v.id }}" loading="lazy" alt=""></div>
+
+        <div>
+          <h3>{{ (v.summary or v.caption or v.tiktok_url)|headline }}</h3>
+          {% set rest = (v.summary or "")|rest %}
+          {% if rest %}<p class="body">{{ rest }}</p>{% endif %}
+          {% if v.worth_rewatching_reason %}<p class="why">{{ v.worth_rewatching_reason }}</p>{% endif %}
+          {% if v.error_message %}<p class="why" style="color:var(--danger)">{{ v.error_message }}</p>{% endif %}
+
+          <div class="meta">
+            {% if v.author %}<span>@{{ v.author }}</span><span class="sep"></span>{% endif %}
+            {% if v.category %}<span>{{ v.category }}</span><span class="sep"></span>{% endif %}
+            <span>Saved {{ v.saved_date|fmt_date }}</span>
+            {% if v.needs_verification %}<span class="tag-warn">{{ icon("alert") }} May be expired</span>
+            {% elif v.has_promo_code %}<span class="tag-info">{{ icon("tag") }} Promo code</span>{% endif %}
+            {% if v.status.value != "done" %}
+              <span class="{{ 'tag-err' if v.status.value == 'error' else 'tag-info' }}">{{ v.status.value|capitalize }}</span>
+            {% endif %}
+            {% if v.watched %}<span class="tag-info">{{ icon("check") }} Revisited</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="side">
+          {% if v.worth_rewatching_score %}
+          <span class="rating" role="img" aria-label="{{ v.worth_rewatching_score }} out of 5">
+            {% for i in range(1, 6) %}<i class="{{ 'on' if i <= v.worth_rewatching_score }}"></i>{% endfor %}
+          </span>
+          {% endif %}
+          <div class="actions">
+            <form action="/video/{{ v.id }}/watched" method="post">
+              <input type="hidden" name="next" value="{{ request.url.path }}?{{ request.url.query }}">
+              <button class="btn btn-quiet" type="submit" title="{{ 'Mark as not revisited' if v.watched else 'Mark as revisited' }}">{{ icon("eye") }}</button>
+            </form>
+            <form action="/video/{{ v.id }}/archive" method="post">
+              <input type="hidden" name="next" value="{{ request.url.path }}?{{ request.url.query }}">
+              <button class="btn btn-quiet" type="submit" title="{{ 'Restore' if v.archived else 'Archive' }}">{{ icon("archive") }}</button>
+            </form>
+          </div>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+
+    {% if pages > 1 %}
+    <nav class="pager" aria-label="Pages">
+      {% if page > 1 %}<a class="btn" href="/dashboard?{{ qs(page=page-1) }}">{{ icon("back") }} Previous</a>{% endif %}
+      <span class="num">Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a class="btn" href="/dashboard?{{ qs(page=page+1) }}">Next</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% endif %}
+  </main>
 </div>
 
-<!-- Processing controls -->
-<div class="flex flex-wrap items-center justify-between gap-3 mb-2">
-  <div id="progress-bar" class="text-sm text-neutral-400">
-    {{ stats.queue }} in queue
-    {% if stats.errors %} &middot; <a href="/dashboard?tab=queue" class="text-red-400 underline">{{ stats.errors }} errors</a>{% endif %}
-    {% if progress.running %} &middot; <span class="text-violet-400">working on video #{{ progress.current_video_id }}…</span>{% endif %}
-  </div>
-  <form action="/process/start" method="post" class="flex items-center gap-2">
-    <input type="number" name="limit" min="1" value="10" title="How many videos to process (blank = all)"
-           class="w-16 bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm">
-    <label class="text-xs text-neutral-400 flex items-center gap-1">
-      <input type="checkbox" name="retry_errors" value="true"> retry errors
-    </label>
-    <button type="submit" class="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg"
-      {% if progress.running %}disabled{% endif %}>
-      {% if progress.running %}Processing…{% else %}Process next batch{% endif %}
-    </button>
-  </form>
-</div>
+{% if progress.running %}
 <script>
-  {% if progress.running %}
   (function poll() {
     fetch("/api/progress").then(r => r.json()).then(p => {
       if (!p.running) { location.reload(); return; }
-      setTimeout(poll, 3000);
+      setTimeout(poll, 4000);
     });
-    // refresh the list periodically so new results appear
-    setTimeout(() => location.reload(), 30000);
+    setTimeout(() => location.reload(), 45000);
   })();
-  {% endif %}
 </script>
-
-<!-- Tabs -->
-<div class="flex flex-wrap gap-2 text-sm my-5">
-  {% for key, label in [("processed","All analyzed"), ("worth_rewatching","Worth rewatching"), ("flagged","⚠️ Flagged"), ("unwatched","Unwatched"), ("queue","Queue / errors"), ("archived","Archived")] %}
-  <a href="/dashboard?{{ qs(tab=key, category='') }}"
-     class="px-3 py-1.5 rounded-full border {{ 'bg-violet-600 border-violet-600 text-white' if tab==key else 'border-neutral-700 text-neutral-300 hover:border-neutral-500' }}">{{ label }}</a>
-  {% endfor %}
-</div>
-
-<!-- Category + tag chips -->
-{% if tab != "queue" and category_counts %}
-<div class="mb-3 flex flex-wrap gap-2 text-xs">
-  {% if category %}<a href="/dashboard?{{ qs(category='') }}" class="px-2.5 py-1 rounded-full bg-violet-600 text-white">✕ {{ category }}</a>{% endif %}
-  {% for name, n in category_counts %}{% if name != category %}
-  <a href="/dashboard?{{ qs(category=name) }}" class="px-2.5 py-1 rounded-full border border-neutral-700 text-neutral-300 hover:border-neutral-500">{{ name }} <span class="text-neutral-500">{{ n }}</span></a>
-  {% endif %}{% endfor %}
-</div>
-{% endif %}
-{% if top_tags and tab != "queue" %}
-<div class="mb-5 flex flex-wrap gap-1.5 text-xs">
-  {% for t, n in top_tags %}
-  <a href="/dashboard?{{ qs(q=t) }}" class="px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 hover:text-white">#{{ t }}</a>
-  {% endfor %}
-</div>
-{% endif %}
-
-<!-- Search + sort -->
-<form action="/dashboard" method="get" class="flex flex-wrap gap-3 mb-4 text-sm">
-  <input type="hidden" name="tab" value="{{ tab }}">
-  <input type="hidden" name="category" value="{{ category }}">
-  <input type="text" name="q" value="{{ q }}" placeholder="Search summaries, captions, tags, creators…"
-         class="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 flex-1 min-w-[200px]">
-  <select name="sort" onchange="this.form.submit()" class="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2">
-    <option value="score" {{ "selected" if sort=="score" else "" }}>Best score first</option>
-    <option value="newest_saved" {{ "selected" if sort=="newest_saved" else "" }}>Newest saved</option>
-    <option value="oldest_saved" {{ "selected" if sort=="oldest_saved" else "" }}>Oldest saved</option>
-  </select>
-  <button type="submit" class="bg-neutral-800 hover:bg-neutral-700 rounded-lg px-4 py-2">Search</button>
-  {% if q %}<a href="/dashboard?{{ qs(q='') }}" class="self-center text-neutral-400 underline">clear "{{ q }}"</a>{% endif %}
-</form>
-
-<div class="text-xs text-neutral-500 mb-3">{{ total_results }} result{{ "" if total_results == 1 else "s" }}</div>
-
-{% if not videos %}
-<p class="text-neutral-500 py-8">Nothing here. {% if tab == "processed" %}Click <strong>Process next batch</strong> to analyze some videos.{% endif %}</p>
-{% endif %}
-
-<!-- Result rows -->
-<div class="space-y-3">
-  {% for v in videos %}
-  <a href="/video/{{ v.id }}" class="flex gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 hover:border-neutral-600 transition">
-    <div class="w-16 shrink-0 aspect-[9/16] bg-neutral-800 rounded-lg overflow-hidden">
-      <img src="/media/thumb/{{ v.id }}" loading="lazy" class="w-full h-full object-cover" alt="">
-    </div>
-    <div class="min-w-0 flex-1">
-      <div class="flex flex-wrap items-center gap-2 mb-1 text-xs">
-        {% if v.worth_rewatching_score %}
-        <span class="px-2 py-0.5 rounded-full {{ 'bg-emerald-600/20 text-emerald-300' if v.worth_rewatching_score >= 4 else ('bg-neutral-800 text-neutral-300' if v.worth_rewatching_score == 3 else 'bg-neutral-800 text-neutral-500') }}">★ {{ v.worth_rewatching_score }}/5</span>
-        {% endif %}
-        {% if v.category %}<span class="text-violet-400">{{ v.category }}</span>{% endif %}
-        {% if v.author %}<span class="text-neutral-500">@{{ v.author }}</span>{% endif %}
-        {% if v.needs_verification %}<span class="px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-300">⚠️ verify</span>{% endif %}
-        {% if v.has_promo_code %}<span class="px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300">🏷 promo</span>{% endif %}
-        {% if v.status.value != "done" %}<span class="px-2 py-0.5 rounded-full {{ 'bg-red-600/30 text-red-300' if v.status.value=='error' else 'bg-neutral-800 text-neutral-400' }}">{{ v.status.value }}</span>{% endif %}
-        {% if v.watched %}<span class="text-neutral-500">✓ revisited</span>{% endif %}
-      </div>
-      <p class="text-sm text-neutral-100 line-clamp-2">{{ v.summary or v.caption or v.tiktok_url }}</p>
-      {% if v.worth_rewatching_reason %}<p class="text-xs text-neutral-500 mt-1 line-clamp-1">{{ v.worth_rewatching_reason }}</p>{% endif %}
-      {% if v.error_message %}<p class="text-xs text-red-400 mt-1 line-clamp-1">{{ v.error_message }}</p>{% endif %}
-      {% if v.key_facts %}
-      <div class="flex flex-wrap gap-1 mt-2">
-        {% for f in v.key_facts.split(",")[:4] %}<span class="text-[11px] bg-neutral-800 text-neutral-400 px-1.5 py-0.5 rounded">{{ f.strip() }}</span>{% endfor %}
-      </div>
-      {% endif %}
-    </div>
-  </a>
-  {% endfor %}
-</div>
-
-<!-- Pagination -->
-{% if pages > 1 %}
-<div class="flex items-center justify-center gap-3 mt-6 text-sm">
-  {% if page > 1 %}<a href="/dashboard?{{ qs(page=page-1) }}" class="px-3 py-1.5 rounded-lg border border-neutral-700 hover:border-neutral-500">← Prev</a>{% endif %}
-  <span class="text-neutral-400">Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a href="/dashboard?{{ qs(page=page+1) }}" class="px-3 py-1.5 rounded-lg border border-neutral-700 hover:border-neutral-500">Next →</a>{% endif %}
-</div>
 {% endif %}
 {% endblock %}

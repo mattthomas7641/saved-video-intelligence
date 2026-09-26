@@ -1,42 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Import your TikTok data{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}Import · Saved Scanner{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-2">Import your Saved videos</h1>
-<p class="text-neutral-400 mb-8 max-w-2xl">
-  TikTok doesn't offer an API for reading your Saved/Favorites list, so the
-  reliable (and ToS-friendly) way in is your own official data export.
-</p>
+<header class="page-head" style="display:block">
+  <h1 style="font:500 var(--fs-2xl)/1.1 var(--serif);letter-spacing:-0.02em">Import your saved videos</h1>
+  <p class="sub" style="max-width:56ch">TikTok has no way to read your Saved list directly, so we start from your own data export. It stays on this computer.</p>
+</header>
 
-<div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6 mb-8 max-w-2xl">
-  <h2 class="font-medium mb-3">1. Request your data from TikTok</h2>
-  <ol class="list-decimal list-inside space-y-2 text-neutral-300 text-sm">
-    <li>Open the TikTok app → <strong>Profile → Menu (☰) → Settings and privacy</strong></li>
-    <li>Go to <strong>Account → Download your data</strong></li>
-    <li>Request a file in <strong>JSON</strong> format (not TXT — JSON keeps the save dates)</li>
-    <li>TikTok takes anywhere from a few minutes to a few days to prepare it — you'll get a notification when it's ready</li>
-    <li>Download the <code>.zip</code> and unzip it; look for a file like <code>user_data_tiktok.json</code></li>
+<section class="plain-card">
+  <h2>1. Ask TikTok for your data</h2>
+  <ol>
+    <li>In the TikTok app, open <strong>Profile → menu → Settings and privacy → Account → Download your data</strong>.</li>
+    <li>Choose <strong>JSON</strong> as the file format, then request the data.</li>
+    <li>When it's ready (minutes to a few days), download it and unzip. You want <code>user_data_tiktok.json</code>.</li>
   </ol>
-</div>
+</section>
 
-<div class="bg-neutral-900 border border-neutral-800 rounded-xl p-6 max-w-2xl">
-  <h2 class="font-medium mb-3">2. Upload it here</h2>
-  <p class="text-sm text-neutral-400 mb-4">
-    This file never leaves your machine except for the short transcript/caption
-    text sent to Claude for summarization once you start processing.
-  </p>
-  <form action="/onboarding/upload" method="post" enctype="multipart/form-data" class="flex items-center gap-3">
-    <input type="file" name="file" accept=".json,.txt" required
-           class="text-sm text-neutral-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-violet-600 file:text-white file:cursor-pointer">
-    <button type="submit" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
-      Import
-    </button>
+<section class="plain-card">
+  <h2>2. Upload it here</h2>
+  <p style="margin-bottom:16px">Only the links to your saved videos are used. Re-importing is safe: videos you already have are skipped.</p>
+  <form action="/onboarding/upload" method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input class="field" type="file" name="file" accept=".json,.txt" required>
+    <button class="btn btn-primary" type="submit">{{ icon("upload") }} Import</button>
   </form>
-</div>
+</section>
 
 {% if not has_api_key %}
-<div class="mt-8 max-w-2xl bg-amber-950/40 border border-amber-800/50 rounded-xl p-4 text-amber-200 text-sm">
-  ⚠️ No Anthropic API key configured yet. Copy <code>.env.example</code> to <code>.env</code>
-  and add your key before you start processing videos — see <a href="/settings" class="underline">Settings</a>.
-</div>
+<div class="notice warn" style="max-width:640px;margin-top:16px">{{ icon("alert") }}<span>No Anthropic API key yet. Add it before analyzing videos: see <a href="/settings">Settings</a>.</span></div>
 {% endif %}
 {% endblock %}
