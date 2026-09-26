@@ -6,12 +6,18 @@
 
 <section class="plain-card">
   <h2>Anthropic API key</h2>
-  <p style="margin-bottom:10px">
+  <p style="margin-bottom:12px">
     {% if has_api_key %}<span class="tag-info" style="background:var(--accent-soft);color:var(--accent)">{{ icon("check") }} Connected</span>
     {% else %}<span class="tag-warn">{{ icon("alert") }} Not set</span>{% endif %}
   </p>
-  <p>The key lives in a file, not in the browser. Copy <code>.env.example</code> to <code>.env</code> in the project folder, add your key from
-    <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>, then restart the app.</p>
+  <form action="/settings/key" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input type="hidden" name="next" value="/settings">
+    <input class="field" style="flex:1;min-width:240px" type="password" name="key" placeholder="{{ 'Paste a new key to replace it' if has_api_key else 'Paste your key (starts with sk-ant-)' }}" autocomplete="off" aria-label="Anthropic API key" required>
+    <button class="btn btn-primary" type="submit">Save key</button>
+  </form>
+  {% if key_status == "saved" %}<p style="margin-top:10px;color:var(--accent)">Saved.</p>{% endif %}
+  {% if key_status == "invalid" %}<p style="margin-top:10px;color:var(--danger)">That key was rejected. Check that you copied all of it.</p>{% endif %}
+  <p style="margin-top:12px">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. It’s stored only on this computer, in the <code>data</code> folder.</p>
 </section>
 
 <section class="plain-card">
