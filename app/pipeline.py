@@ -33,19 +33,21 @@ def process_video(session: Session, video: Video) -> None:
         video.status = Status.DOWNLOADED
         _touch(session, video)
 
-        if not video.local_video_path or not Path(video.local_video_path).exists():
-            raise RuntimeError("Download did not produce a video file.")
+        if video.local_video_path and Path(video.local_video_path).exists():
+            # 2. Transcribe
+            video.status = Status.TRANSCRIBING
+            _touch(session, video)
+            video.transcript = transcribe_mod.transcribe(video.local_video_path)
 
-        # 2. Transcribe
-        video.status = Status.TRANSCRIBING
-        _touch(session, video)
-        video.transcript = transcribe_mod.transcribe(video.local_video_path)
-
-        # 3. OCR (best-effort, never fatal)
-        try:
-            video.ocr_text = ocr_mod.extract_on_screen_text(video.local_video_path, video.duration_seconds)
-        except Exception as e:  # noqa: BLE001
-            log.warning("OCR failed for video %s: %s", video.id, e)
+            # 3. OCR (best-effort, never fatal)
+            try:
+                video.ocr_text = ocr_mod.extract_on_screen_text(video.local_video_path, video.duration_seconds)
+            except Exception as e:  # noqa: BLE001
+                log.warning("OCR failed for video %s: %s", video.id, e)
+                video.ocr_text = ""
+        else:
+            # Photo/slideshow post: no video or audio, analyze the caption alone.
+            video.transcript = ""
             video.ocr_text = ""
 
         video.status = Status.TRANSCRIBED
