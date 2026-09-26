@@ -25,7 +25,8 @@ def download_video(url: str, video_id: int) -> DownloadResult:
 
     ydl_opts = {
         "outtmpl": {"default": out_template, "thumbnail": thumb_template},
-        "format": "mp4/best",
+        # Prefer H.264: TikTok's HEVC (bytevc1) variants sometimes arrive without an audio track.
+        "format": "download/best[vcodec=h264]/best",
         "writethumbnail": True,
         "quiet": True,
         "no_warnings": True,
