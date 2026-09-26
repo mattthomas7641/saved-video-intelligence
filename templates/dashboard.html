@@ -25,12 +25,14 @@
   </div>
 
   <form action="/process/start" method="post" class="flex items-center gap-2">
+    <input type="number" name="limit" min="1" value="10" title="How many videos to process (blank = all)"
+           class="w-16 bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm">
     <label class="text-xs text-neutral-400 flex items-center gap-1">
       <input type="checkbox" name="retry_errors" value="true"> retry errors
     </label>
     <button type="submit" id="process-btn" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg"
       {% if progress.running %}disabled{% endif %}>
-      {% if progress.running %}Processing…{% else %}Process saved videos{% endif %}
+      {% if progress.running %}Processing…{% else %}Process next batch{% endif %}
     </button>
   </form>
 </div>

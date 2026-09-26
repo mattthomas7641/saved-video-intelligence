@@ -167,8 +167,9 @@ def reprocess(video_id: int):
 
 
 @app.post("/process/start")
-def process_start(retry_errors: bool = Form(False)):
-    worker.start_processing(retry_errors=retry_errors)
+def process_start(retry_errors: bool = Form(False), limit: str = Form("")):
+    n = int(limit) if limit.strip().isdigit() and int(limit) > 0 else None
+    worker.start_processing(retry_errors=retry_errors, limit=n)
     return RedirectResponse("/dashboard", status_code=303)
 
 

@@ -12,7 +12,8 @@ import re
 from datetime import datetime
 from typing import Iterable
 
-TIKTOK_URL_RE = re.compile(r"https?://(?:www\.)?tiktok\.com/\S+", re.IGNORECASE)
+TIKTOK_URL_RE = re.compile(r"https?://(?:[\w-]+\.)?tiktok(?:v)?\.com/\S+", re.IGNORECASE)
+VIDEO_ID_RE = re.compile(r"/video/(\d{8,})")
 
 DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S",
@@ -47,9 +48,21 @@ def _walk(obj, path=""):
 
 def _extract_link(entry: dict) -> str | None:
     for key in ("Link", "link", "url", "URL", "Url"):
-        if key in entry and isinstance(entry[key], str) and "tiktok.com" in entry[key]:
-            return entry[key]
+        v = entry.get(key)
+        if isinstance(v, str) and re.search(r"tiktok(?:v)?\.com", v):
+            return v
     return None
+
+
+def _normalize(url: str) -> str | None:
+    """Only video links are useful; map tiktokv.com/share/video/ID (and other
+    share formats) to a canonical URL yt-dlp understands. Sounds, hashtags,
+    effects etc. return None."""
+    m = VIDEO_ID_RE.search(url)
+    if not m:
+        return None
+    user = re.search(r"tiktok(?:v)?\.com/(@[\w.\-]+)/video/", url)
+    return f"https://www.tiktok.com/{user.group(1) if user else '@_'}/video/{m.group(1)}"
 
 
 def _extract_date(entry: dict):
@@ -75,14 +88,14 @@ def parse_export(file_bytes: bytes) -> list[dict]:
         parsed_json = None
 
     def _classify(path: str) -> str | None:
-        # Walk path segments outer-to-inner so the containing section's name
-        # (e.g. "Like List") wins over an inner list key that happens to
-        # contain "Favorite" in its name (TikTok's own "ItemFavoriteList").
-        for segment in path.lower().split("."):
-            if "like" in segment:
-                return "like"
-            if "favorite" in segment:
-                return "favorite"
+        # Match section names precisely: TikTok nests everything under
+        # "Likes and Favorites", and lists like "ItemFavoriteList" live inside
+        # "Like List", so loose substring matching mixes sections together.
+        lowered = path.lower()
+        if "favorite video" in lowered:
+            return "favorite"
+        if "like list" in lowered:
+            return "like"
         return None
 
     if parsed_json is not None:
@@ -103,14 +116,16 @@ def parse_export(file_bytes: bytes) -> list[dict]:
         chosen = favorite_entries if favorite_entries else like_entries
         for entry in chosen:
             link = _extract_link(entry)
-            if link:
-                results.setdefault(link, _extract_date(entry))
+            url = _normalize(link) if link else None
+            if url:
+                results.setdefault(url, _extract_date(entry))
 
     # Fall back to (or supplement with) plain URL scraping for TXT-style exports
     # or JSON we couldn't confidently parse.
     if not results:
         for match in TIKTOK_URL_RE.finditer(text):
-            url = match.group(0).rstrip(").,\"'")
-            results.setdefault(url, None)
+            url = _normalize(match.group(0).rstrip(").,\"'"))
+            if url:
+                results.setdefault(url, None)
 
     return [{"tiktok_url": url, "saved_date": date} for url, date in results.items()]
