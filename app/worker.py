@@ -23,7 +23,7 @@ def current_video_id() -> int | None:
     return _current_video_id
 
 
-def start_processing(retry_errors: bool = False) -> bool:
+def start_processing(retry_errors: bool = False, limit: int | None = None) -> bool:
     """Kick off background processing if not already running. Returns True if started."""
     global _running
     with _lock:
@@ -31,25 +31,29 @@ def start_processing(retry_errors: bool = False) -> bool:
             return False
         _running = True
 
-    thread = threading.Thread(target=_run_loop, args=(retry_errors,), daemon=True)
+    thread = threading.Thread(target=_run_loop, args=(retry_errors, limit), daemon=True)
     thread.start()
     return True
 
 
-def _run_loop(retry_errors: bool) -> None:
+def _run_loop(retry_errors: bool, limit: int | None) -> None:
     global _running, _current_video_id
     try:
         session = get_session()
         try:
             statuses = [Status.PENDING] + ([Status.ERROR] if retry_errors else [])
-            while True:
+            processed = 0
+            seen: set[int] = set()
+            while limit is None or processed < limit:
                 video = session.exec(
-                    select(Video).where(Video.status.in_(statuses)).order_by(Video.id)
+                    select(Video).where(Video.status.in_(statuses), Video.id.not_in(seen)).order_by(Video.id)
                 ).first()
                 if not video:
                     break
                 _current_video_id = video.id
+                seen.add(video.id)
                 process_video(session, video)
+                processed += 1
         finally:
             session.close()
     except Exception:  # noqa: BLE001
