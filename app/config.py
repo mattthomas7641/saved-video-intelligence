@@ -39,6 +39,7 @@ ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key(
 ANALYSIS_MODEL = os.environ.get("ANALYSIS_MODEL", "claude-haiku-4-5-20251001").strip()
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base").strip()
 STALE_THRESHOLD_MONTHS = int(os.environ.get("STALE_THRESHOLD_MONTHS", "3"))
+DEFAULT_WORKERS = int(os.environ.get("WORKERS", "4"))
 DELETE_VIDEO_AFTER_PROCESS = os.environ.get("DELETE_VIDEO_AFTER_PROCESS", "true").strip().lower() != "false"
 
 # Broad groups -> categories. Claude assigns a category to each video; the group

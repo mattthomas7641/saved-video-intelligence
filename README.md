@@ -85,6 +85,15 @@ dashboard to start the pipeline. It processes one video at a time in the
 background — you can keep using the dashboard while it runs, and it resumes
 where it left off if you stop and restart the app.
 
+## Analyzing thousands of videos
+
+Open **Analyze all** in the top bar. The work is split so the slow part is free:
+
+1. **Collect** (free, on your Mac): download, transcribe and read on-screen text, several videos at once (default 4). Roughly 12 seconds of work per video, so about 6 hours for 7,000 videos at 4 at a time. It backs off automatically if TikTok pushes back.
+2. **Analyze** (uses Claude credit): either the **Batch API** (half price, results usually within an hour or two) or **live**. Set a spending cap; the newest saves are analyzed first, so a capped run covers what you saved most recently.
+
+Measured cost per video with the default Haiku model: about $0.0027 live, $0.0014 via batch. Everything is saved as it goes, so you can stop and resume at any time. To keep a Mac awake for a long run: `caffeinate -dims`.
+
 ## Notes on cost/time
 
 - Transcription runs locally — free, but CPU-bound. Expect roughly

@@ -6,11 +6,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
-from app.config import BASE_DIR, get_api_key, save_api_key, STALE_THRESHOLD_MONTHS, GROUPS, group_of
+from app.config import BASE_DIR, get_api_key, save_api_key, STALE_THRESHOLD_MONTHS, GROUPS, group_of, DEFAULT_WORKERS
 from app.db import init_db, get_session
 from app.models import Video, Status
 from app.ingest import parse_export
-from app import worker
+from app import worker, batch
 
 app = FastAPI(title="TikTok Saved Scanner")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -59,6 +59,8 @@ templates.env.filters["short_date"] = lambda d: d.strftime("%b %-d, %y") if d el
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
 init_db()
+worker.recover_stuck()
+batch.start_poller()
 
 
 def _video_count() -> int:
@@ -331,8 +333,74 @@ def reprocess(video_id: int):
 @app.post("/process/start")
 def process_start(retry_errors: bool = Form(False), limit: str = Form("")):
     n = int(limit) if limit.strip().isdigit() and int(limit) > 0 else None
-    worker.start_processing(retry_errors=retry_errors, limit=n)
+    worker.start_job("full", limit=n, retry_errors=retry_errors)
     return RedirectResponse("/dashboard", status_code=303)
+
+
+# ---------------- bulk: analyze everything ----------------
+def _bulk_counts() -> dict:
+    p = worker.progress_summary()["counts"]
+    return {
+        "total": sum(p.values()), "done": p["done"], "collected": p["transcribed"],
+        "submitted": p["submitted"], "pending": p["pending"], "errors": p["error"],
+        "working": p["downloading"] + p["downloaded"] + p["transcribing"] + p["analyzing"],
+    }
+
+
+def _optional_int(text: str) -> int | None:
+    return int(text) if text.strip().isdigit() and int(text) > 0 else None
+
+
+def _optional_money(text: str) -> float | None:
+    try:
+        value = float(text.strip().lstrip("$"))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+@app.get("/bulk")
+def bulk_page(request: Request, msg: str = ""):
+    return templates.TemplateResponse("bulk.html", {
+        "request": request, "counts": _bulk_counts(), "job": worker.job_status(), "msg": msg,
+        "cost_live": batch.observed_cost(False) or 0.0026, "cost_batch": batch.observed_cost(True) or batch.DEFAULT_BATCH_COST,
+        "default_workers": DEFAULT_WORKERS, "has_api_key": bool(get_api_key()),
+    })
+
+
+@app.get("/api/bulk")
+def api_bulk():
+    return {"counts": _bulk_counts(), "job": worker.job_status()}
+
+
+@app.post("/bulk/collect")
+def bulk_collect(limit: str = Form(""), workers: int = Form(DEFAULT_WORKERS), retry_errors: bool = Form(False)):
+    started = worker.start_job("collect", limit=_optional_int(limit), workers=workers, retry_errors=retry_errors)
+    return RedirectResponse("/bulk" + ("" if started else "?msg=A+job+is+already+running."), status_code=303)
+
+
+@app.post("/bulk/analyze")
+def bulk_analyze(method: str = Form("batch"), limit: str = Form(""), cap: str = Form(""), workers: int = Form(DEFAULT_WORKERS)):
+    n, cap_usd = _optional_int(limit), _optional_money(cap)
+    if method == "live":
+        started = worker.start_job("analyze", limit=n, workers=workers, cap_usd=cap_usd)
+        return RedirectResponse("/bulk" + ("" if started else "?msg=A+job+is+already+running."), status_code=303)
+    result = batch.submit(n, cap_usd)
+    from urllib.parse import quote_plus
+    note = f"Sent {result['count']:,} videos to the Batch API (about ${result['estimate']:.2f})." if result["ok"] else result["error"]
+    return RedirectResponse(f"/bulk?msg={quote_plus(note)}", status_code=303)
+
+
+@app.post("/bulk/check-batches")
+def bulk_check_batches():
+    done = batch.poll_once()
+    return RedirectResponse(f"/bulk?msg={done}+videos+finished+in+the+batch." if done else "/bulk?msg=Nothing+new+yet.", status_code=303)
+
+
+@app.post("/bulk/stop")
+def bulk_stop():
+    worker.stop_job()
+    return RedirectResponse("/bulk", status_code=303)
 
 
 @app.get("/api/progress")
