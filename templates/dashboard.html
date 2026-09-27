@@ -94,6 +94,7 @@
         <span style="width: {{ (stats.processed / stats.total * 100) if stats.total else 0 }}%"></span>
       </div>
       {% if stats.total %}{{ estimate_form("rail", progress.running) }}{% endif %}
+      <a href="/bulk" class="btn" style="justify-content:flex-start">{{ icon("trending") }} Analyze everything</a>
       <div style="display:flex;gap:14px"><a href="/onboarding">Import</a><a href="/settings">Settings</a></div>
     </section>
     {% else %}
@@ -289,7 +290,7 @@
     const input = f.querySelector("input[name=limit]"), out = f.querySelector("[data-out]");
     const update = () => {
       const n = Math.max(1, parseInt(input.value) || 0);
-      const cost = n * 0.0032, mins = Math.max(1, Math.round(n * 20 / 60));
+      const cost = n * 0.0026, mins = Math.max(1, Math.round(n * 12 / 4 / 60));
       out.textContent = `About ${cost < 0.1 ? "$" + cost.toFixed(2) : "$" + cost.toFixed(cost < 10 ? 2 : 0)} and ${mins < 90 ? mins + " min" : (mins / 60).toFixed(1) + " hr"}`;
     };
     input.addEventListener("input", update); update();

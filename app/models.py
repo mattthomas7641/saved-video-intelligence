@@ -14,6 +14,7 @@ class Status(str, Enum):
     TRANSCRIBED = "transcribed"
     ANALYZING = "analyzing"
     DONE = "done"
+    SUBMITTED = "submitted"  # sent to the Batch API, waiting for results
     ERROR = "error"
 
 
@@ -49,6 +50,12 @@ class Video(SQLModel, table=True):
     offer_deadline_text: Optional[str] = None
     mentions_link_in_bio: bool = False
     key_facts: Optional[str] = None  # comma-separated
+
+    # Analysis usage/cost (for spend tracking)
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    batch_id: Optional[str] = None
 
     # Derived
     needs_verification: bool = False  # heuristic relevance flag

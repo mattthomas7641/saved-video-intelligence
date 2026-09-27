@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Analyze everything · Saved Scanner{% endblock %}
+{% block content %}
+<div class="bulk">
+  <h1>Analyze everything</h1>
+  <p class="lede">Two phases, so the slow part costs nothing. <strong>Collect</strong> reads each video on your Mac (free). <strong>Analyze</strong> has Claude sort and summarize what was collected, and you control how much to spend.</p>
+
+  {% if msg %}<div class="notice">{{ icon("check") }}<span>{{ msg }}</span></div>{% endif %}
+  {% if not has_api_key %}<div class="notice warn">{{ icon("alert") }}<span>No API key yet, so you can collect but not analyze. <a href="/settings">Add one in Settings</a>.</span></div>{% endif %}
+
+  <section class="plain-card" aria-label="Progress">
+    <div class="stack-meter" id="meter" role="img" aria-label="Progress">
+      {% set t = counts.total or 1 %}
+      <span class="seg-done" data-k="done" style="width: {{ counts.done / t * 100 }}%"></span>
+      <span class="seg-collected" data-k="collected" style="width: {{ counts.collected / t * 100 }}%"></span>
+      <span class="seg-submitted" data-k="submitted" style="width: {{ counts.submitted / t * 100 }}%"></span>
+      <span class="seg-error" data-k="errors" style="width: {{ counts.errors / t * 100 }}%"></span>
+    </div>
+    <div class="legend">
+      <span><i class="seg-done"></i><b class="num" data-n="done">{{ "{:,}".format(counts.done) }}</b> analyzed</span>
+      <span><i class="seg-collected"></i><b class="num" data-n="collected">{{ "{:,}".format(counts.collected) }}</b> collected, waiting for Claude</span>
+      <span><i class="seg-submitted"></i><b class="num" data-n="submitted">{{ "{:,}".format(counts.submitted) }}</b> in a batch</span>
+      <span><i style="background:var(--line-strong)"></i><b class="num" data-n="pending">{{ "{:,}".format(counts.pending + counts.working) }}</b> not started</span>
+      <span><i class="seg-error"></i><b class="num" data-n="errors">{{ "{:,}".format(counts.errors) }}</b> failed</span>
+    </div>
+  </section>
+
+  <section class="plain-card" aria-live="polite">
+    <div class="live">
+      <div class="status"><span class="pulse {{ 'on' if job.running }}" id="pulse"></span><span id="livetext">{% if job.running %}Working…{% else %}Nothing running{% endif %}</span></div>
+      <form action="/bulk/stop" method="post" id="stopform" {% if not job.running %}hidden{% endif %}><button class="btn" type="submit">Stop after current videos</button></form>
+    </div>
+    <p class="hint" id="livesub"></p>
+  </section>
+
+  <div class="two">
+    <section class="plain-card">
+      <h2>1. Collect <span style="color:var(--ink-3);font-family:var(--sans);font-size:var(--fs-sm)">free</span></h2>
+      <p>Downloads each video, transcribes the speech and reads on-screen text, all on your Mac. Runs several at once.</p>
+      <form action="/bulk/collect" method="post" data-collect>
+        <div class="formrow">
+          <label>How many
+            <select class="field" name="limit" id="c-limit">
+              <option value="">All remaining ({{ "{:,}".format(counts.pending) }})</option>
+              <option value="100">100</option><option value="500">500</option><option value="1000">1,000</option>
+            </select></label>
+          <label>At once
+            <select class="field" name="workers" id="c-workers">
+              {% for w in range(1, 7) %}<option value="{{ w }}" {{ "selected" if w == default_workers }}>{{ w }}</option>{% endfor %}
+            </select></label>
+        </div>
+        <p class="hint">Estimated time: <span class="est" id="c-eta"></span>. More at once is faster, but TikTok may slow you down; the app backs off automatically if it does.</p>
+        <label class="retry" style="display:flex;gap:6px;align-items:center;margin:10px 0;color:var(--ink-3)"><input class="check" type="checkbox" name="retry_errors" value="true"> Retry failed videos too</label>
+        <button class="btn btn-primary" type="submit" {% if job.running or not counts.pending %}disabled{% endif %}>{{ icon("play") }} Start collecting</button>
+      </form>
+    </section>
+
+    <section class="plain-card">
+      <h2>2. Analyze <span style="color:var(--ink-3);font-family:var(--sans);font-size:var(--fs-sm)">uses Claude credit</span></h2>
+      <p><strong class="num">{{ "{:,}".format(counts.collected) }}</strong> collected videos are ready.</p>
+      <form action="/bulk/analyze" method="post" data-analyze>
+        <div class="choice">
+          <label><input type="radio" name="method" value="batch" checked>
+            <span><strong>Half-price batch (recommended)</strong><small>About $<span data-cost="batch"></span> per 1,000. Results arrive within a few hours, usually much sooner.</small></span></label>
+          <label><input type="radio" name="method" value="live">
+            <span><strong>Live</strong><small>About $<span data-cost="live"></span> per 1,000. Results appear as it goes.</small></span></label>
+        </div>
+        <div class="formrow">
+          <label>Spending cap ($)<input class="field num" type="number" name="cap" id="a-cap" min="0.1" step="0.1" value="5.00"></label>
+          <input type="hidden" name="workers" value="{{ default_workers }}">
+        </div>
+        <p class="hint" id="a-est"></p>
+        <button class="btn btn-primary" type="submit" style="margin-top:10px" {% if job.running or not counts.collected or not has_api_key %}disabled{% endif %}>{{ icon("sparkles") }} Analyze collected videos</button>
+      </form>
+      {% if counts.submitted %}
+      <form action="/bulk/check-batches" method="post" style="margin-top:14px"><button class="btn" type="submit">{{ icon("refresh") }} Check batch now ({{ "{:,}".format(counts.submitted) }} waiting)</button></form>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="plain-card">
+    <h2>Keeping it running</h2>
+    <ul style="margin:0;padding-left:1.1em;display:grid;gap:6px;color:var(--ink-2)">
+      <li>Leave Docker Desktop open. If your Mac sleeps, the work pauses and picks up again when it wakes.</li>
+      <li>To keep the Mac awake for a long run, open Terminal and run this, leaving the window open:<pre class="cmd">caffeinate -dims</pre></li>
+      <li>Everything is saved as it goes. Stopping, restarting or a crash loses at most the videos in progress.</li>
+      <li>The newest saves are processed first, so a partial run covers what you saved most recently.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+  const PER = { live: {{ cost_live }}, batch: {{ cost_batch }} };
+  const pending = {{ counts.pending }}, collected = {{ counts.collected }};
+  const fmtTime = s => s < 90 ? Math.max(1, Math.round(s)) + " sec" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " hours";
+
+  function updateCollect() {
+    const lim = parseInt(document.getElementById("c-limit").value) || pending;
+    const w = parseInt(document.getElementById("c-workers").value) || 1;
+    document.getElementById("c-eta").textContent = "about " + fmtTime(Math.min(lim, pending) * 12 / w);
+  }
+  function updateAnalyze() {
+    const method = document.querySelector("input[name=method]:checked").value;
+    const cap = parseFloat(document.getElementById("a-cap").value) || 0;
+    const per = PER[method];
+    const affordable = Math.floor(cap / per), n = Math.min(collected, affordable);
+    document.querySelectorAll("[data-cost]").forEach(el => el.textContent = (PER[el.dataset.cost] * 1000).toFixed(2));
+    document.getElementById("a-est").innerHTML = collected === 0 ? "Collect some videos first."
+      : n >= collected ? `All <b>${collected.toLocaleString()}</b> would cost about <b>$${(collected * per).toFixed(2)}</b>.`
+      : `Your cap covers about <b>${n.toLocaleString()}</b> of ${collected.toLocaleString()} (newest first). The rest would need about $${((collected - n) * per).toFixed(2)} more.`;
+  }
+  document.querySelectorAll("#c-limit, #c-workers").forEach(e => e.addEventListener("change", updateCollect));
+  document.querySelectorAll("input[name=method], #a-cap").forEach(e => e.addEventListener("input", updateAnalyze));
+  updateCollect(); updateAnalyze();
+
+  // live status
+  let wasRunning = {{ 'true' if job.running else 'false' }};
+  function paint(d) {
+    const c = d.counts, t = c.total || 1, j = d.job || {};
+    for (const k of ["done", "collected", "submitted", "errors"]) {
+      document.querySelector(`#meter [data-k=${k}]`).style.width = (c[k] / t * 100) + "%";
+      document.querySelector(`[data-n=${k}]`).textContent = c[k].toLocaleString();
+    }
+    document.querySelector("[data-n=pending]").textContent = (c.pending + c.working).toLocaleString();
+    const label = { collect: "Collecting", analyze: "Analyzing", full: "Collecting and analyzing" }[j.mode] || "Working";
+    document.getElementById("pulse").classList.toggle("on", !!j.running);
+    document.getElementById("stopform").hidden = !j.running;
+    let text = "Nothing running", sub = "";
+    if (j.running) {
+      text = `${label}: ${j.finished.toLocaleString()} of ${j.queued.toLocaleString()}` + (j.stopping ? " (stopping…)" : "");
+      sub = (j.rate_per_min ? `${j.rate_per_min} videos a minute` + (j.eta_seconds ? `, about ${fmtTime(j.eta_seconds)} left` : "") : "Getting started…")
+          + (j.spent ? ` · $${j.spent.toFixed(3)} spent so far` : "")
+          + (j.throttled_for ? ` · TikTok asked us to slow down; resuming in ${j.throttled_for}s` : "");
+    } else if (j.active) {
+      text = `Last run: ${j.finished.toLocaleString()} done` + (j.failed ? `, ${j.failed} failed` : "");
+      sub = j.reason || "";
+    }
+    document.getElementById("livetext").textContent = text;
+    document.getElementById("livesub").textContent = sub;
+    if (wasRunning && !j.running) { setTimeout(() => location.reload(), 800); }
+    wasRunning = !!j.running;
+  }
+  (function poll() { fetch("/api/bulk").then(r => r.json()).then(paint).catch(() => {}).finally(() => setTimeout(poll, 3000)); })();
+</script>
+{% endblock %}
