@@ -82,26 +82,56 @@ def _require_playwright():
         ) from e
 
 
+_SESSION_COOKIES = {"sessionid", "sid_tt", "sid_guard"}
+
+
 def login() -> None:
-    """Open a real, visible browser so you can log into TikTok by hand. Saves
-    cookies/local-storage to AUTH_STATE_PATH on close. Run this on the host
-    (not inside a headless container) since it needs a real display."""
+    """Open a real, visible browser so you can log into TikTok by hand. Detects
+    a successful login by watching for TikTok's own session cookies (not by
+    watching one tab's URL — TikTok's login can finish in a popup or a second
+    tab, e.g. Google/Apple sign-in or a QR code, which a single-tab URL check
+    would never notice). Saves the session and closes the browser itself once
+    it sees you're logged in — you don't need to close anything by hand.
+    Run this on the host (not inside a headless container); it needs a real
+    display."""
     sync_playwright = _require_playwright()
-    print("Opening a browser window. Log into TikTok, open your profile, and confirm you can see your "
-          "Favorites tab, then close the window.")
+    print("Opening a browser window. Log into TikTok however you like, then open your profile and "
+          "confirm you can see your Favorites tab. I'll detect it and close the window myself — "
+          "just wait for 'Saved session' here rather than closing it yourself.", flush=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
         page.goto("https://www.tiktok.com/login")
-        print("Waiting for you to finish logging in (checking every few seconds)...")
+
+        print("Waiting for a logged-in session (checking every couple seconds)...", flush=True)
+        logged_in = False
         for _ in range(600):  # up to ~20 minutes
             time.sleep(2)
-            if "login" not in page.url:
+            try:
+                cookie_names = {c["name"] for c in context.cookies()}
+            except Exception:
+                break  # browser/window was closed before we saw a login
+            if cookie_names & _SESSION_COOKIES:
+                logged_in = True
                 break
-        context.storage_state(path=str(AUTH_STATE_PATH))
-        print(f"Saved session to {AUTH_STATE_PATH}")
-        browser.close()
+
+        if not logged_in:
+            print("Didn't detect a logged-in session before the window closed (or this timed out). "
+                  "Run `python -m app.scraper login` again and wait for 'Saved session' before doing "
+                  "anything else — don't close the window yourself.", flush=True)
+            return
+
+        try:
+            context.storage_state(path=str(AUTH_STATE_PATH))
+        except Exception as e:
+            print(f"Logged in, but couldn't save the session in time: {e}. Try again.", flush=True)
+            return
+        print(f"Saved session to {AUTH_STATE_PATH}", flush=True)
+        try:
+            browser.close()
+        except Exception:
+            pass
 
 
 def _click_favorites_tab(page):
