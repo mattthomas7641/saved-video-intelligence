@@ -109,6 +109,14 @@ input[type="number"].field { width: 68px; padding: 8px 10px; }
 .brand { font: 500 var(--fs-lg)/1.1 var(--serif); letter-spacing: -0.01em; padding: 0 8px; text-decoration: none; }
 
 .rail h2 { font: 500 var(--fs-xs)/1 var(--sans); color: var(--ink-3); padding: 0 8px 6px; }
+.nav-link {
+  display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 6px;
+  text-decoration: none; color: var(--ink-2); font-size: var(--fs-sm); font-weight: 500;
+  border: 1px solid var(--line); background: var(--surface);
+  transition: border-color 150ms var(--ease), color 150ms var(--ease);
+}
+.nav-link:hover { border-color: var(--ink-3); color: var(--ink); }
+.nav-link .count { margin-left: auto; font-size: var(--fs-xs); color: var(--warn); background: var(--warn-soft); padding: 1px 6px; border-radius: 999px; }
 .tree { display: grid; gap: 1px; }
 .tree details { border-radius: 6px; }
 .tree summary, .tree .all {

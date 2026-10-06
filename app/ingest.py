@@ -129,3 +129,29 @@ def parse_export(file_bytes: bytes) -> list[dict]:
                 results.setdefault(url, None)
 
     return [{"tiktok_url": url, "saved_date": date} for url, date in results.items()]
+
+
+def insert_new_videos(session, entries: list[dict]) -> int:
+    """Shared dedup-insert used by both the export-upload path and the daily
+    sync path: skip anything whose tiktok_url is already known, insert the rest
+    as PENDING. Returns how many new rows were added."""
+    from app.models import Video  # local import: avoids a circular import with models/db
+
+    added = 0
+    for entry in entries:
+        url = entry.get("tiktok_url")
+        if not url:
+            continue
+        existing = session.exec(_video_by_url(url)).first()
+        if existing:
+            continue
+        session.add(Video(tiktok_url=url, saved_date=entry.get("saved_date")))
+        added += 1
+    session.commit()
+    return added
+
+
+def _video_by_url(url: str):
+    from sqlmodel import select
+    from app.models import Video
+    return select(Video).where(Video.tiktok_url == url)

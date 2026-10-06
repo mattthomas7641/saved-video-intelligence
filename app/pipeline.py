@@ -5,10 +5,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.config import DELETE_VIDEO_AFTER_PROCESS
-from app.models import Video, Status
+from app.models import Video, Status, Action, ActionType, ActionStatus
 from app import download as download_mod
 from app import transcribe as transcribe_mod
 from app import ocr as ocr_mod
@@ -70,7 +70,22 @@ def collect_video(session: Session, video: Video, should_stop=lambda: False) -> 
         _touch(session, video)
 
 
-def apply_analysis(video: Video, analysis: analyze_mod.AnalysisResult, batch: bool = False) -> float:
+def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.AnalysisResult) -> None:
+    """Idempotent: one Action per video, created the first time analysis flags it actionable."""
+    if not analysis.is_actionable:
+        return
+    existing = session.exec(select(Action.id).where(Action.video_id == video.id)).first()
+    if existing:
+        return
+    session.add(Action(
+        video_id=video.id,
+        action_type=ActionType(analysis.action_type),
+        status=ActionStatus.QUEUED,
+        brief=analysis.action_brief,
+    ))
+
+
+def apply_analysis(session: Session, video: Video, analysis: analyze_mod.AnalysisResult, batch: bool = False) -> float:
     video.category = analysis.category
     video.summary = analysis.summary
     video.tags = ",".join(analysis.tags)
@@ -91,6 +106,7 @@ def apply_analysis(video: Video, analysis: analyze_mod.AnalysisResult, batch: bo
     video.batch_id = None
     video.status = Status.DONE
     video.error_message = None
+    _queue_action_if_new(session, video, analysis)
     return video.cost_usd
 
 
@@ -99,7 +115,7 @@ def analyze_video(session: Session, video: Video) -> float:
     video.status = Status.ANALYZING
     _touch(session, video)
     try:
-        cost = apply_analysis(video, analyze_mod.analyze_video(video))
+        cost = apply_analysis(session, video, analyze_mod.analyze_video(video))
     except analyze_mod.FatalAnalysisError:
         video.status = Status.TRANSCRIBED  # nothing is wrong with the video; keep it for later
         _touch(session, video)

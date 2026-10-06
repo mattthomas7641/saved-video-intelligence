@@ -70,3 +70,36 @@ class Video(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ActionType(str, Enum):
+    SKILL = "skill"      # a tool/technique/snippet worth adopting
+    PROJECT = "project"  # a buildable project/agent shown in the video
+    JOB = "job"          # a job posting worth tracking/applying to
+
+
+class ActionStatus(str, Enum):
+    QUEUED = "queued"
+    IN_PROGRESS = "in_progress"
+    DRAFTED = "drafted"          # PR opened, or resume/cover letter written
+    NEEDS_INPUT = "needs_input"  # agent got stuck or needs a decision from you
+    DONE = "done"
+    DISMISSED = "dismissed"
+    FAILED = "failed"
+
+
+class Action(SQLModel, table=True):
+    """One actionable thing a saved video pointed at. Kept separate from Video
+    so this fast-iterating workflow doesn't require altering the core table."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    video_id: int = Field(foreign_key="video.id", index=True)
+
+    action_type: ActionType
+    status: ActionStatus = Field(default=ActionStatus.QUEUED)
+
+    brief: Optional[str] = None    # JSON: what to do (project spec / skill / company+role+url)
+    result: Optional[str] = None   # JSON: PR url, or {resume_path, cover_letter_path, ...}
+    error_message: Optional[str] = None
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

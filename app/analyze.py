@@ -23,9 +23,35 @@ _TOOL_SCHEMA = {
             "offer_deadline_text": {"type": "string"},
             "mentions_link_in_bio": {"type": "boolean"},
             "key_facts": {"type": "array", "items": {"type": "string"}, "maxItems": 4, "description": "Product, book or place names; ingredients."},
+            "is_actionable": {
+                "type": "boolean",
+                "description": (
+                    "True only if this video gives enough concrete detail to actually act on, as one of: "
+                    "(1) SKILL - a specific, reusable technique/tool/command/prompt the viewer could directly apply "
+                    "(not vague advice or a 'tips' list with no specifics); "
+                    "(2) PROJECT - a software/agentic project demoed with enough detail (stack, steps, approach) "
+                    "that a first version could actually be scaffolded (not just 'I built an app' with no how); "
+                    "(3) JOB - the video itself is an open invitation to apply: a specific company+role being "
+                    "actively offered, with some way to act on it (a link, 'DM to apply', 'comment for the form', "
+                    "an email, etc). NOT a hiring manager describing their general criteria/what they look for, "
+                    "NOT 'here's how hiring works at my company', NOT interview tips or career advice - those "
+                    "describe hiring, they don't offer a specific role to apply to. "
+                    "When in doubt whether a JOB video gives an actual way to apply, mark it not actionable. "
+                    "Default to false - most saved videos are entertainment or general advice with nothing concrete to act on."
+                ),
+            },
+            "action_type": {"type": "string", "enum": ["skill", "project", "job"], "description": "Required if is_actionable is true; omit/ignore otherwise."},
+            "action_brief": {
+                "type": "string",
+                "description": (
+                    "Required if is_actionable is true. For skill: the specific technique and how to use it. "
+                    "For project: a short build spec (what it does, suggested stack/approach). "
+                    "For job: 'Company | Role | any URL or application info mentioned, or none given'."
+                ),
+            },
         },
         "required": ["category", "summary", "tags", "worth_rewatching_score", "worth_rewatching_reason",
-                     "has_promo_code", "has_dated_offer", "mentions_link_in_bio", "key_facts"],
+                     "has_promo_code", "has_dated_offer", "mentions_link_in_bio", "key_facts", "is_actionable"],
     },
 }
 
@@ -57,6 +83,9 @@ class AnalysisResult:
         self.offer_deadline_text = kwargs.get("offer_deadline_text")
         self.mentions_link_in_bio = bool(kwargs.get("mentions_link_in_bio"))
         self.key_facts = kwargs.get("key_facts") or []
+        self.is_actionable = bool(kwargs.get("is_actionable")) and bool(kwargs.get("action_type"))
+        self.action_type = kwargs.get("action_type") if self.is_actionable else None
+        self.action_brief = kwargs.get("action_brief") if self.is_actionable else None
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
 
