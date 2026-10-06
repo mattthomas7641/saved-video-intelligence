@@ -5,37 +5,36 @@ small, directly testable script with a persisted login session, so "does the
 saved session survive unattended, across a real day-gap" can be checked by
 hand (see the plan's Phase 2 verification) instead of trusted blind.
 
-DOM notes (verified live against tiktok.com while writing this, anonymously —
-re-check against the real Favorites tab once you've logged in, since this
-confirms the *shape* of the page but not the authenticated-only parts):
-  - Profile tabs (Videos/Reposts/Favorites/Liked) are client-side `<p role="tab"
-    data-e2e="...-tab">` elements, NOT separate URLs — there is no `/favorites`
+DOM notes (confirmed live, logged in as the account owner, during Phase 2
+verification — not guessed):
+  - Profile tabs (Videos/Short dramas/Reposts/Favorites/Liked) are client-side
+    `<p role="tab">` elements, NOT separate URLs — there's no `/favorites`
     route to navigate straight to. The scraper clicks the tab instead.
-  - The tab naming convention observed anonymously is "videos-tab",
-    "drama-tab", "repost-tab", "liked-tab" — "favorites-tab" is the one we
-    can't see without being logged in as the account owner (Favorites is
-    always private). If that guess is wrong, FIRST_RUN_CHECKLIST below tells
-    you how to fix it in one place.
-  - A private/locked tab for the viewer renders a `[data-e2e*="lock"]` marker
-    instead of a video grid (confirmed on a logged-out view of Liked videos).
-    The scraper treats that as an error, not an empty result, so a real
-    permissions problem doesn't silently look like "no new saves".
+  - Every other tab carries a `data-e2e="...-tab"` attribute (videos-tab,
+    drama-tab, repost-tab, liked-tab) - **Favorites does not**. It has to be
+    found by its accessible role+name ("tab" named "Favorites"), not by a
+    data-e2e selector, which is why an earlier version of this script guessed
+    wrong. `page.get_by_role("tab", name="Favorites", exact=True)` is what
+    actually works.
+  - Headless Chromium with default settings got served a degraded profile
+    page (generic public tab set, a "Something went wrong" content error,
+    no Favorites tab at all) even with a valid logged-in session - consistent
+    with TikTok treating stock headless automation as suspicious. Basic
+    countermeasures (a real desktop user-agent, `navigator.webdriver` patched
+    out, `--disable-blink-features=AutomationControlled`) reliably fixed it
+    in testing. This is inherently adversarial and could stop working if
+    TikTok tightens detection further - that's the fragility you accepted
+    when choosing this approach over the export-file alternative.
 
 Setup (once, interactively, on the host):
     python -m app.scraper login
 
 Then the daily agent calls scrape_new_saves() via POST /api/sync/tiktok.
 
-FIRST_RUN_CHECKLIST — do this before trusting any schedule (see the plan's
-Phase 2 verification):
-  1. Run `python -m app.scraper login`, log in, close the window.
-  2. Run `python -m app.scraper` (no args) and read the output. If it raises
-     SelectorMismatch or FavoritesLocked, open the browser pane yourself,
-     log into tiktok.com, open your profile, and read the live DOM — the
-     exact element to fix is named in the error. Update _FAVORITES_TAB_SELECTORS
-     below.
-  3. Re-run a few hours later, then the next day, to confirm the saved
-     session still works unattended (not just right after logging in).
+If TikTok changes its markup again, scrape_new_saves() raises SelectorMismatch
+or FavoritesLocked naming the specific thing that didn't match - open the
+browser pane yourself, log into tiktok.com, open your own profile, and read
+the live DOM to find the fix, the same way this version was grounded.
 """
 import json
 import re
@@ -44,15 +43,12 @@ import time
 
 from app.config import DATA_DIR
 
+_DESKTOP_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+
 AUTH_STATE_PATH = DATA_DIR / "tiktok_auth_state.json"
 HOME_URL = "https://www.tiktok.com/"
 
-# Tried in order; TikTok's exact attribute for this tab is unconfirmed (see module docstring).
-_FAVORITES_TAB_SELECTORS = [
-    '[data-e2e="favorites-tab"]',
-    '[data-e2e="favourite-tab"]',
-    'p[role="tab"]:has-text("Favorites")',
-]
 _VIDEO_LINK_SELECTOR = "a[href*='/video/']"
 _LOCK_SELECTOR = '[data-e2e*="lock"]'
 
@@ -135,19 +131,18 @@ def login() -> None:
 
 
 def _click_favorites_tab(page):
-    for selector in _FAVORITES_TAB_SELECTORS:
-        locator = page.locator(selector).first
-        try:
-            if locator.count() and locator.is_visible():
-                locator.click()
-                return
-        except Exception:  # noqa: BLE001 - try the next selector
-            continue
-    raise SelectorMismatch(
-        "Couldn't find a Favorites tab on the profile page with any known selector "
-        f"({_FAVORITES_TAB_SELECTORS}). TikTok likely changed its markup — inspect the live page "
-        "DOM and update _FAVORITES_TAB_SELECTORS in app/scraper.py."
-    )
+    # Unlike the other profile tabs, Favorites carries no data-e2e attribute
+    # (confirmed live) - found by accessible role+name instead, which is also
+    # the more change-resistant choice since it doesn't depend on a generated
+    # CSS class or an attribute TikTok may add later.
+    try:
+        page.get_by_role("tab", name="Favorites", exact=True).click(timeout=15000)
+    except Exception as e:
+        raise SelectorMismatch(
+            "Couldn't find/click a tab named 'Favorites' on the profile page. TikTok likely changed "
+            "its markup or served a degraded page - inspect the live DOM and update "
+            "_click_favorites_tab in app/scraper.py."
+        ) from e
 
 
 def scrape_new_saves(max_scrolls: int = 12, scroll_pause: float = 1.5) -> list[dict]:
@@ -161,24 +156,56 @@ def scrape_new_saves(max_scrolls: int = 12, scroll_pause: float = 1.5) -> list[d
 
     sync_playwright = _require_playwright()
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(storage_state=str(AUTH_STATE_PATH))
+        # The basic automation countermeasures below (see module docstring) were
+        # necessary in testing - without them TikTok served a degraded page with
+        # no Favorites tab at all, even with a valid logged-in session.
+        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        context = browser.new_context(
+            storage_state=str(AUTH_STATE_PATH), viewport={"width": 1280, "height": 900},
+            user_agent=_DESKTOP_UA, locale="en-US",
+        )
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = context.new_page()
 
-        page.goto(HOME_URL, wait_until="domcontentloaded", timeout=30000)
-        profile_link = page.locator('[data-e2e="nav-profile"]').first
-        if not profile_link.count():
-            browser.close()
-            raise SelectorMismatch("Couldn't find the profile nav link on the logged-in homepage.")
-        profile_link.click()
-        page.wait_for_load_state("domcontentloaded", timeout=15000)
+        # Getting to a clean, fully-rendered Favorites tab is empirically
+        # inconsistent run to run (observed in testing: identical code
+        # succeeded on one attempt and got a degraded/bot-suspicious page on
+        # the next) - retry with a fresh navigation before treating it as a
+        # real failure, rather than raising on the first flaky attempt.
+        last_error: Exception | None = None
+        reached_favorites = False
+        for attempt in range(3):
+            try:
+                # networkidle (not domcontentloaded): this is a heavily
+                # client-rendered page, and the nav isn't in the initial HTML -
+                # domcontentloaded fires before TikTok's JS has painted it,
+                # which otherwise looks exactly like a genuinely missing
+                # selector.
+                page.goto(HOME_URL, wait_until="networkidle", timeout=30000)
+                page.locator('[data-e2e="nav-profile"]').first.click(timeout=15000)
+                page.wait_for_load_state("networkidle", timeout=15000)
 
-        if "login" in page.url:
-            browser.close()
-            raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+                if "login" in page.url:
+                    browser.close()
+                    raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
 
-        _click_favorites_tab(page)
-        page.wait_for_timeout(1200)
+                _click_favorites_tab(page)
+                page.wait_for_timeout(1200)
+                reached_favorites = True
+                break
+            except NotLoggedIn:
+                raise
+            except Exception as e:  # noqa: BLE001 - genuinely flaky; retry before giving up
+                last_error = e
+                page.wait_for_timeout(2000)
+
+        if not reached_favorites:
+            browser.close()
+            raise SelectorMismatch(
+                f"Couldn't reach a working Favorites tab after 3 attempts (last error: {last_error}). "
+                "This page is inconsistent run to run - try again, and if it keeps failing, open the "
+                "browser pane yourself and check what's actually rendering."
+            ) from last_error
 
         if page.locator(_LOCK_SELECTOR).count():
             browser.close()
