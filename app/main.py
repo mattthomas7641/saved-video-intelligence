@@ -1,15 +1,19 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, Header, HTTPException, Body
+from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
-from app.config import BASE_DIR, get_api_key, save_api_key, STALE_THRESHOLD_MONTHS, GROUPS, group_of, DEFAULT_WORKERS
+from app.config import (
+    BASE_DIR, get_api_key, save_api_key, STALE_THRESHOLD_MONTHS, GROUPS, group_of, DEFAULT_WORKERS,
+    get_agent_token, regenerate_agent_token, get_action_settings, save_action_settings,
+    get_resume_text, save_resume_text, JOBS_DIR,
+)
 from app.db import init_db, get_session
-from app.models import Video, Status
-from app.ingest import parse_export
+from app.models import Video, Status, Action, ActionType, ActionStatus
+from app.ingest import parse_export, insert_new_videos
 from app import worker, batch
 
 app = FastAPI(title="TikTok Saved Scanner")
@@ -91,16 +95,7 @@ async def onboarding_upload(file: UploadFile = File(...)):
 
     session = get_session()
     try:
-        added = 0
-        for entry in entries:
-            existing = session.exec(
-                select(Video).where(Video.tiktok_url == entry["tiktok_url"])
-            ).first()
-            if existing:
-                continue
-            session.add(Video(tiktok_url=entry["tiktok_url"], saved_date=entry["saved_date"]))
-            added += 1
-        session.commit()
+        added = insert_new_videos(session, entries)
     finally:
         session.close()
 
@@ -259,6 +254,13 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
             panels.append(g)
         top_picks = sorted([v for v in live if (v.worth_rewatching_score or 0) >= 4], key=best_key, reverse=True)[:8]
 
+    action_session = get_session()
+    try:
+        action_queue_count = len(action_session.exec(
+            select(Action.id).where(Action.status == ActionStatus.QUEUED)).all())
+    finally:
+        action_session.close()
+
     key_ok = bool(get_api_key())
     setup = {
         "key": key_ok, "imported": stats["total"] > 0, "analyzed": stats["processed"] > 0,
@@ -274,6 +276,7 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
         "view_names": VIEW_NAMES, "stats": stats, "href": href,
         "setup": setup, "show_setup": show_setup,
         "next_url": request.url.path + ("?" + request.url.query if request.url.query else ""),
+        "action_queue_count": action_queue_count,
         "imported": imported,
         "progress": worker.progress_summary(),
         "has_api_key": key_ok,
@@ -408,6 +411,227 @@ def api_progress():
     return worker.progress_summary()
 
 
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+# ---------------- daily agent: machine-to-machine routes ----------------
+# Everything below requires the bearer token. These are the only authenticated
+# routes in the app; your own browser use of the dashboard above is untouched.
+def require_agent_token(authorization: str = Header(default="")):
+    expected = f"Bearer {get_agent_token()}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="Missing or invalid agent token. See Settings.")
+
+
+@app.post("/api/ingest/links", dependencies=[Depends(require_agent_token)])
+def api_ingest_links(entries: list[dict] = Body(...)):
+    """entries: [{"tiktok_url": str, "saved_date": "2026-01-01T00:00:00"|null}, ...].
+    Safe to call with everything currently visible on the Saved page every time —
+    already-known URLs are silently skipped."""
+    from datetime import datetime as dt
+    parsed = []
+    for e in entries:
+        url = (e.get("tiktok_url") or "").strip()
+        if not url:
+            continue
+        saved_date = None
+        if e.get("saved_date"):
+            try:
+                saved_date = dt.fromisoformat(e["saved_date"])
+            except ValueError:
+                saved_date = None
+        parsed.append({"tiktok_url": url, "saved_date": saved_date})
+    session = get_session()
+    try:
+        added = insert_new_videos(session, parsed)
+    finally:
+        session.close()
+    return {"seen": len(parsed), "added": added}
+
+
+@app.post("/api/sync/tiktok", dependencies=[Depends(require_agent_token)])
+def api_sync_tiktok(start_processing: bool = True):
+    """One call covering the whole free half of the pipeline: scrape your Saved
+    page (if a login session has been set up), ingest anything new, then kick
+    off the existing collect+analyze job so results are ready by the time the
+    agent asks for the action queue."""
+    from app import scraper
+    try:
+        links = scraper.scrape_new_saves()
+    except scraper.NotLoggedIn:
+        return JSONResponse(status_code=409, content={
+            "error": "No TikTok login session saved yet. Run `python -m app.scraper login` on the host once, "
+                     "then retry.",
+        })
+    except Exception as e:  # noqa: BLE001 - scraping is inherently fragile; report, don't crash the agent run
+        return JSONResponse(status_code=502, content={"error": f"TikTok scrape failed: {e}"[:500]})
+
+    session = get_session()
+    try:
+        added = insert_new_videos(session, links)
+    finally:
+        session.close()
+
+    started = False
+    if start_processing and (added or worker.progress_summary()["counts"]["pending"]):
+        started = worker.start_job("full", retry_errors=False)
+    return {"scraped": len(links), "added": added, "processing_started": started,
+            "job": worker.job_status()}
+
+
+@app.get("/api/actions/queue", dependencies=[Depends(require_agent_token)])
+def api_actions_queue():
+    session = get_session()
+    try:
+        rows = session.exec(select(Action).where(Action.status == ActionStatus.QUEUED).order_by(Action.created_at)).all()
+        out = []
+        for a in rows:
+            video = session.get(Video, a.video_id)
+            out.append({
+                "action_id": a.id, "video_id": a.video_id, "action_type": a.action_type.value,
+                "brief": a.brief, "tiktok_url": video.tiktok_url if video else None,
+                "category": video.category if video else None, "summary": video.summary if video else None,
+                "author": video.author if video else None,
+            })
+        return {"queue": out, "settings": get_action_settings()}
+    finally:
+        session.close()
+
+
+@app.post("/api/actions/{action_id}", dependencies=[Depends(require_agent_token)])
+def api_action_update(action_id: int, body: dict = Body(...)):
+    status_in = body.get("status")
+    if status_in not in [s.value for s in ActionStatus]:
+        raise HTTPException(status_code=400, detail="Invalid or missing status.")
+    session = get_session()
+    try:
+        action = session.get(Action, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="No such action.")
+        action.status = ActionStatus(status_in)
+        if "result" in body:
+            import json as _json
+            action.result = _json.dumps(body["result"]) if not isinstance(body["result"], str) else body["result"]
+        if "error_message" in body:
+            action.error_message = (body["error_message"] or "")[:500] or None
+        from datetime import datetime as dt
+        action.updated_at = dt.utcnow()
+        session.add(action)
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+# ---------------- Actions / Jobs dashboard views ----------------
+@app.get("/actions")
+def actions_page(request: Request):
+    session = get_session()
+    try:
+        rows = session.exec(select(Action).order_by(Action.updated_at.desc())).all()
+        items = []
+        for a in rows:
+            if a.action_type == ActionType.JOB:
+                continue
+            video = session.get(Video, a.video_id)
+            items.append({"action": a, "video": video})
+    finally:
+        session.close()
+    grouped = {}
+    for item in items:
+        grouped.setdefault(item["action"].status.value, []).append(item)
+    return templates.TemplateResponse("actions.html", {
+        "request": request, "grouped": grouped,
+        "status_order": [s.value for s in ActionStatus],
+        "settings": get_action_settings(),
+    })
+
+
+@app.get("/jobs")
+def jobs_page(request: Request):
+    session = get_session()
+    try:
+        rows = session.exec(
+            select(Action).where(Action.action_type == ActionType.JOB).order_by(Action.updated_at.desc())).all()
+        items = [{"action": a, "video": session.get(Video, a.video_id)} for a in rows]
+    finally:
+        session.close()
+    return templates.TemplateResponse("jobs.html", {
+        "request": request, "items": items, "has_resume": bool(get_resume_text()),
+        "settings": get_action_settings(),
+    })
+
+
+@app.post("/actions/{action_id}/dismiss")
+def action_dismiss(action_id: int, next: str = Form("/actions")):
+    session = get_session()
+    try:
+        action = session.get(Action, action_id)
+        if action:
+            action.status = ActionStatus.DISMISSED
+            session.add(action)
+            session.commit()
+    finally:
+        session.close()
+    return RedirectResponse(next if next.startswith("/") else "/actions", status_code=303)
+
+
+@app.post("/actions/{action_id}/requeue")
+def action_requeue(action_id: int, next: str = Form("/actions")):
+    session = get_session()
+    try:
+        action = session.get(Action, action_id)
+        if action:
+            action.status = ActionStatus.QUEUED
+            action.error_message = None
+            session.add(action)
+            session.commit()
+    finally:
+        session.close()
+    return RedirectResponse(next if next.startswith("/") else "/actions", status_code=303)
+
+
+@app.post("/jobs/{action_id}/mark-applied")
+def job_mark_applied(action_id: int):
+    """You confirming you personally submitted the application. The agent never sets this."""
+    session = get_session()
+    try:
+        action = session.get(Action, action_id)
+        if action:
+            action.status = ActionStatus.DONE
+            session.add(action)
+            session.commit()
+    finally:
+        session.close()
+    return RedirectResponse("/jobs", status_code=303)
+
+
+@app.post("/settings/resume")
+async def settings_resume(file: UploadFile | None = File(None), text: str = Form("")):
+    content = text.strip()
+    if file is not None and file.filename:
+        content = (await file.read()).decode("utf-8", errors="ignore")
+    if content:
+        save_resume_text(content)
+    return RedirectResponse("/settings?key=resume_saved", status_code=303)
+
+
+@app.post("/settings/actions")
+def settings_actions(skill_enabled: bool = Form(False), project_enabled: bool = Form(False),
+                      job_enabled: bool = Form(False), agent_paused: bool = Form(False)):
+    save_action_settings(skill_enabled=skill_enabled, project_enabled=project_enabled,
+                          job_enabled=job_enabled, agent_paused=agent_paused)
+    return RedirectResponse("/settings?key=actions_saved", status_code=303)
+
+
+@app.post("/settings/regenerate-token")
+def settings_regenerate_token():
+    regenerate_agent_token()
+    return RedirectResponse("/settings?key=token_rotated", status_code=303)
+
+
 @app.post("/settings/key")
 def settings_key(key: str = Form(""), next: str = Form("/settings")):
     """Validate the key with a free token-count call, then store it in data/secrets.json."""
@@ -437,6 +661,9 @@ def settings_page(request: Request, key: str = ""):
         "has_api_key": bool(get_api_key()),
         "stale_threshold_months": STALE_THRESHOLD_MONTHS,
         "env_path": str(BASE_DIR / ".env"),
+        "agent_token": get_agent_token(),
+        "action_settings": get_action_settings(),
+        "resume_text": get_resume_text(),
     })
 
 

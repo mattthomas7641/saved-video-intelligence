@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Ideas · Saved Scanner{% endblock %}
+{% block content %}
+<header class="page-head" style="display:block">
+  <h1 style="font:500 var(--fs-2xl)/1.1 var(--serif);letter-spacing:-0.02em">Ideas worth building</h1>
+  <p class="sub" style="max-width:62ch">
+    When a saved video teaches a specific skill or demos a buildable project, it lands here. Nothing on this
+    page writes code by itself yet — that's the daily agent, which isn't turned on until you register its
+    schedule (see the plan). For now this is where queued and completed items will show once it is.
+  </p>
+</header>
+
+{% if settings.agent_paused %}
+<div class="notice warn">{{ icon("alert") }}<span>The daily agent is paused in Settings. Queued ideas will sit here until you unpause it.</span></div>
+{% endif %}
+{% if not settings.skill_enabled or not settings.project_enabled %}
+<div class="notice warn">{{ icon("alert") }}<span>
+  {% if not settings.skill_enabled and not settings.project_enabled %}Skill and project detection are both off in Settings.
+  {% elif not settings.skill_enabled %}Skill detection is off in Settings.
+  {% else %}Project detection is off in Settings.{% endif %}
+</span></div>
+{% endif %}
+
+{% for status in status_order %}
+  {% if grouped.get(status) %}
+  <section class="plain-card">
+    <h2 style="display:flex;align-items:center;gap:8px;text-transform:capitalize">
+      {{ status.replace("_", " ") }} <span style="color:var(--ink-3);font-family:var(--sans);font-weight:400;font-size:var(--fs-sm)">({{ grouped[status]|length }})</span>
+    </h2>
+    <div style="display:grid;gap:10px;margin-top:12px">
+      {% for item in grouped[status] %}
+      {% set a = item.action %}{% set v = item.video %}
+      <div style="display:flex;gap:14px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)">
+        <div class="thumb" style="width:44px;flex:none"><img src="/media/thumb/{{ v.id if v else 0 }}" alt=""></div>
+        <div style="min-width:0;flex:1">
+          <div class="meta" style="margin:0 0 4px">
+            <span class="tag-info">{{ icon("sparkles" if a.action_type.value == "skill" else "code") }} {{ a.action_type.value|capitalize }}</span>
+            {% if v %}<a href="/video/{{ v.id }}" style="color:var(--ink-3)">source video →</a>{% endif %}
+          </div>
+          <p style="margin:0">{{ a.brief or "(no detail captured)" }}</p>
+          {% if a.error_message %}<p style="margin-top:6px;color:var(--danger)" class="hint">{{ a.error_message }}</p>{% endif %}
+          {% if a.result %}<p style="margin-top:6px" class="hint">{{ a.result }}</p>{% endif %}
+        </div>
+        <div style="display:flex;gap:6px;flex:none">
+          {% if a.status.value in ("queued", "needs_input", "failed") %}
+          <form action="/actions/{{ a.id }}/dismiss" method="post"><button class="btn btn-quiet" type="submit" title="Dismiss">{{ icon("archive") }}</button></form>
+          {% endif %}
+          {% if a.status.value in ("dismissed", "failed", "needs_input") %}
+          <form action="/actions/{{ a.id }}/requeue" method="post"><button class="btn btn-quiet" type="submit" title="Queue again">{{ icon("refresh") }}</button></form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+{% endfor %}
+
+{% if not grouped %}
+<div class="empty">
+  <span class="big">{{ icon("sparkles") }}</span>
+  <h2>Nothing queued yet</h2>
+  <p>Skill and project ideas from your saved videos will show up here as they're analyzed.</p>
+</div>
+{% endif %}
+{% endblock %}

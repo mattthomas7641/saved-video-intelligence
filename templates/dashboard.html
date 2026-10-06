@@ -64,6 +64,10 @@
 <div class="shell">
   <aside class="rail">
     <a href="/dashboard" class="brand">Saved Scanner</a>
+    <nav style="display:flex;gap:4px" aria-label="Sections">
+      <a class="nav-link" href="/actions" style="flex:1">{{ icon("sparkles") }}<span>Ideas</span>{% if action_queue_count %}<span class="count num">{{ action_queue_count }}</span>{% endif %}</a>
+      <a class="nav-link" href="/jobs" style="flex:1">{{ icon("briefcase") }}<span>Jobs</span></a>
+    </nav>
 
     {% if stats.processed %}
     <nav aria-label="Topics">

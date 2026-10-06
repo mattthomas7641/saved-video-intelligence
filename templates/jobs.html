@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Jobs · Saved Scanner{% endblock %}
+{% block content %}
+<header class="page-head" style="display:block">
+  <h1 style="font:500 var(--fs-2xl)/1.1 var(--serif);letter-spacing:-0.02em">Job leads from your saves</h1>
+  <p class="sub" style="max-width:62ch">
+    Videos about an actual hiring post land here. The agent (once its daily schedule is turned on) can draft a
+    tailored resume and cover letter for you to review — it will never submit a real application. That step is
+    always yours.
+  </p>
+</header>
+
+{% if not has_resume %}
+<div class="notice warn">{{ icon("alert") }}<span>No base resume on file yet, so drafts can't be tailored. Add one in <a href="/settings">Settings</a>.</span></div>
+{% endif %}
+{% if not settings.job_enabled %}
+<div class="notice warn">{{ icon("alert") }}<span>Job detection is off in Settings.</span></div>
+{% endif %}
+
+{% if not items %}
+<div class="empty">
+  <span class="big">{{ icon("briefcase") }}</span>
+  <h2>No job leads yet</h2>
+  <p>When a saved video is an actual hiring post, it'll show up here with a drafted application for you to review.</p>
+</div>
+{% else %}
+<div style="display:grid;gap:14px">
+  {% for item in items %}
+  {% set a = item.action %}{% set v = item.video %}
+  <section class="plain-card">
+    <div class="meta" style="margin:0 0 8px">
+      <span class="tag-info">{{ a.status.value.replace("_"," ")|capitalize }}</span>
+      {% if v %}<a href="/video/{{ v.id }}" style="color:var(--ink-3)">source video →</a>{% endif %}
+    </div>
+    <p style="margin:0 0 10px">{{ a.brief or "(no detail captured)" }}</p>
+
+    {% if a.result %}
+    <details style="margin-bottom:10px"><summary>Drafted materials</summary>
+      <pre style="white-space:pre-wrap;background:var(--sidebar);border:1px solid var(--line);border-radius:7px;padding:12px;margin-top:8px;font:400 0.85rem/1.5 var(--sans)">{{ a.result }}</pre>
+    </details>
+    {% endif %}
+    {% if a.error_message %}<p style="color:var(--danger)" class="hint">{{ a.error_message }}</p>{% endif %}
+
+    {% if a.status.value not in ("done", "dismissed") %}
+    <div style="display:flex;gap:8px">
+      <form action="/jobs/{{ a.id }}/mark-applied" method="post"><button class="btn btn-primary" type="submit">{{ icon("check") }} I applied myself</button></form>
+      <form action="/actions/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="/jobs"><button class="btn btn-quiet" type="submit">Not interested</button></form>
+    </div>
+    {% else %}
+    <span class="hint">{{ "You marked this applied." if a.status.value == "done" else "Dismissed." }}</span>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

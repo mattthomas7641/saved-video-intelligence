@@ -86,7 +86,7 @@ def poll_once() -> int:
                         continue
                     if entry.result.type == "succeeded":
                         try:
-                            apply_analysis(video, parse_message(entry.result.message), batch=True)
+                            apply_analysis(session, video, parse_message(entry.result.message), batch=True)
                             applied += 1
                         except Exception as e:  # noqa: BLE001
                             video.status, video.error_message = Status.TRANSCRIBED, f"Batch parse failed: {e}"[:500]

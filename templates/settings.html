@@ -21,6 +21,41 @@
 </section>
 
 <section class="plain-card">
+  <h2>Daily agent</h2>
+  <p style="margin-bottom:10px">Controls for the (not-yet-scheduled) daily pipeline that detects and acts on skill/project/job videos.</p>
+  <form action="/settings/actions" method="post" style="display:grid;gap:10px;margin-bottom:14px">
+    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="skill_enabled" value="true" {{ "checked" if action_settings.skill_enabled }}> Detect skill/technique videos</label>
+    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="project_enabled" value="true" {{ "checked" if action_settings.project_enabled }}> Detect "build this" project videos</label>
+    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="job_enabled" value="true" {{ "checked" if action_settings.job_enabled }}> Detect job-posting videos</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--warn)"><input class="check" type="checkbox" name="agent_paused" value="true" {{ "checked" if action_settings.agent_paused }}> Pause the daily agent entirely</label>
+    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+  </form>
+  {% if key_status == "actions_saved" %}<p style="color:var(--accent);margin-bottom:10px">Saved.</p>{% endif %}
+
+  <p style="margin-bottom:8px">Agent access token — the daily agent sends this to prove it's allowed to call the sync/action endpoints. Your own use of this dashboard never needs it.</p>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <code style="word-break:break-all">{{ agent_token }}</code>
+    <form action="/settings/regenerate-token" method="post" onsubmit="return confirm('This invalidates the current token. Any already-configured agent will need the new one.')">
+      <button class="btn" type="submit">{{ icon("refresh") }} Regenerate</button>
+    </form>
+  </div>
+  {% if key_status == "token_rotated" %}<p style="color:var(--accent);margin-top:8px">New token generated.</p>{% endif %}
+</section>
+
+<section class="plain-card">
+  <h2>Job application materials</h2>
+  <p style="margin-bottom:10px">A base resume the agent tailors from when drafting a job application. Plain text or Markdown — stored only on this computer, never committed to the public repo.</p>
+  <form action="/settings/resume" method="post" enctype="multipart/form-data" style="display:grid;gap:10px">
+    <textarea class="field" name="text" rows="6" placeholder="Paste your resume as text, or upload a file below">{{ resume_text }}</textarea>
+    <div style="display:flex;gap:10px;align-items:center">
+      <input class="field" type="file" name="file" accept=".txt,.md">
+      <button class="btn btn-primary" type="submit">Save resume</button>
+    </div>
+  </form>
+  {% if key_status == "resume_saved" %}<p style="color:var(--accent);margin-top:8px">Saved.</p>{% endif %}
+</section>
+
+<section class="plain-card">
   <h2>Expiry warnings</h2>
   <p>Videos with a promo code or deadline that you saved more than <strong class="num">{{ stale_threshold_months }} months</strong> ago are marked “May be expired”. Change <code>STALE_THRESHOLD_MONTHS</code> in <code>.env</code> to adjust.</p>
 </section>

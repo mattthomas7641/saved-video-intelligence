@@ -4,9 +4,12 @@ Go through your entire TikTok Saved/Favorites list, transcribe + summarize each
 video, categorize it, score whether it's worth rewatching, and flag anything
 with a promo code or dated offer that might be stale.
 
-Runs entirely on your own machine (or your own server). Nothing is scraped
-live from TikTok — it works from your own official TikTok data export, which
-is the only reliable and ToS-compliant way to get your Saved list.
+Runs entirely on your own machine (or your own server). You can feed it from
+your own official TikTok data export (ToS-compliant, but manual — see
+**How it works**), or opt into an optional daily sync that reads your Saved
+page directly using your own logged-in session (see **Daily agent**, below —
+this one does scrape TikTok, against their terms, and you have to set it up
+deliberately; it's off by default).
 
 **This is a self-hosted, single-user app, by design.** There's no central
 service you sign up for — you (or anyone else who wants this) run your own
@@ -84,6 +87,45 @@ through uploading your export, then click **Process saved videos** on the
 dashboard to start the pipeline. It processes one video at a time in the
 background — you can keep using the dashboard while it runs, and it resumes
 where it left off if you stop and restart the app.
+
+## Daily agent (optional, not yet scheduled)
+
+Beyond summarizing, the app can detect when a saved video points at something
+to actually *do* — a skill/technique to adopt, a project to build, or a job
+to apply to — and queue it as an `Action`. A separately-scheduled daily
+routine can then pick up that queue and do real work: draft-PR a built
+version of a project idea, or draft a tailored resume/cover letter for a job
+lead. **Submitting a real job application is never automated** — that step
+is always yours, by design, not just by default.
+
+This ships in two parts, deliberately not turned all the way on yet:
+
+- **Built and working now**: action detection (part of the normal analysis
+  step, no extra cost), the Ideas (`/actions`) and Jobs (`/jobs`) pages, and
+  the authenticated `/api/*` routes a future scheduled agent will call.
+- **Built but needs your one-time setup**: `app/scraper.py` reads your Saved
+  page using a logged-in session you create yourself:
+  ```bash
+  source .venv/bin/activate
+  python -m app.scraper login
+  ```
+  This opens a real, visible browser — log into TikTok there yourself (this
+  app never sees or handles your TikTok credentials), confirm you can see
+  your Favorites tab, then close the window. It saves the session to
+  `data/tiktok_auth_state.json` (gitignored). Run `python -m app.scraper`
+  afterward to confirm it can read your saved links; if it raises
+  `SelectorMismatch`, TikTok's page structure didn't match what the script
+  expects — see the checklist in `app/scraper.py`'s docstring.
+- **Not yet done**: actually registering a daily schedule. That's a
+  deliberate, separate step — only worth doing once you've confirmed the
+  login session survives unattended across a real day's gap, and reviewed
+  one full manual dry run by hand.
+
+Settings has toggles to disable skill/project/job detection individually, a
+pause switch for the whole agent, and where to paste a base resume for job
+tailoring. Two different costs are involved once this runs for real: the
+app's own Anthropic key (for detection, already spend-capped) and whatever
+the daily agent session itself spends doing the actual drafting/building.
 
 ## Analyzing thousands of videos
 

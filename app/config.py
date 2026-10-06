@@ -1,6 +1,7 @@
 """App configuration loaded from environment / .env."""
 import json
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,26 +14,87 @@ VIDEOS_DIR = DATA_DIR / "videos"
 THUMBS_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "db.sqlite3"
 
-for d in (DATA_DIR, VIDEOS_DIR, THUMBS_DIR):
+RESUME_DIR = DATA_DIR / "resume"
+JOBS_DIR = DATA_DIR / "jobs"
+
+for d in (DATA_DIR, VIDEOS_DIR, THUMBS_DIR, RESUME_DIR, JOBS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 SECRETS_PATH = DATA_DIR / "secrets.json"
+RESUME_PATH = RESUME_DIR / "base_resume.md"
+RESUME_PROFILE_PATH = RESUME_DIR / "profile.json"
+
+
+def _load_secrets() -> dict:
+    try:
+        return json.loads(SECRETS_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_secret(key: str, value) -> None:
+    data = _load_secrets()
+    data[key] = value
+    SECRETS_PATH.write_text(json.dumps(data))
+    os.chmod(SECRETS_PATH, 0o600)
 
 
 def get_api_key() -> str:
     """Key saved from the in-app Settings page wins; falls back to the environment."""
-    try:
-        saved = json.loads(SECRETS_PATH.read_text()).get("ANTHROPIC_API_KEY", "").strip()
-        if saved:
-            return saved
-    except (OSError, ValueError):
-        pass
+    saved = _load_secrets().get("ANTHROPIC_API_KEY", "").strip()
+    if saved:
+        return saved
     return os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
 
 def save_api_key(key: str) -> None:
-    SECRETS_PATH.write_text(json.dumps({"ANTHROPIC_API_KEY": key.strip()}))
-    os.chmod(SECRETS_PATH, 0o600)
+    _save_secret("ANTHROPIC_API_KEY", key.strip())
+
+
+def get_agent_token() -> str:
+    """Bearer token the daily agent uses to call the machine-to-machine /api/* routes.
+    Generated once on first use and persisted; never required for your own browser use
+    of the dashboard, which hits unauthenticated routes exactly as before."""
+    token = _load_secrets().get("AGENT_TOKEN", "").strip()
+    if not token:
+        token = secrets.token_urlsafe(32)
+        _save_secret("AGENT_TOKEN", token)
+    return token
+
+
+def regenerate_agent_token() -> str:
+    token = secrets.token_urlsafe(32)
+    _save_secret("AGENT_TOKEN", token)
+    return token
+
+
+def get_action_settings() -> dict:
+    """Per-action-type on/off toggles + the global daily-agent pause switch."""
+    s = _load_secrets().get("ACTION_SETTINGS", {})
+    return {
+        "skill_enabled": s.get("skill_enabled", True),
+        "project_enabled": s.get("project_enabled", True),
+        "job_enabled": s.get("job_enabled", True),
+        "agent_paused": s.get("agent_paused", False),
+    }
+
+
+def save_action_settings(**updates) -> dict:
+    current = get_action_settings()
+    current.update({k: v for k, v in updates.items() if v is not None})
+    _save_secret("ACTION_SETTINGS", current)
+    return current
+
+
+def get_resume_text() -> str:
+    try:
+        return RESUME_PATH.read_text()
+    except OSError:
+        return ""
+
+
+def save_resume_text(text: str) -> None:
+    RESUME_PATH.write_text(text)
 
 
 ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key()
