@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app import batch, worker
 from app.config import (
@@ -24,9 +24,22 @@ from app.config import (
     save_resume_text,
     save_trusted_sender,
 )
-from app.db import get_session, init_db
+from app.db import get_db, init_db
 from app.ingest import insert_new_videos, parse_export
 from app.models import Action, ActionStatus, ActionType, Status, Video
+from app.schemas import (
+    ActionsQueueResponse,
+    ActionUpdateRequest,
+    ActionUpdateResponse,
+    BulkStatusResponse,
+    HealthResponse,
+    IngestLinkEntry,
+    IngestLinksResponse,
+    ProgressResponse,
+    QueuedAction,
+    SyncErrorResponse,
+    SyncInboxResponse,
+)
 
 app = FastAPI(title="TikTok Saved Scanner")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -79,14 +92,6 @@ worker.recover_stuck()
 batch.start_poller()
 
 
-def _video_count() -> int:
-    session = get_session()
-    try:
-        return len(session.exec(select(Video.id)).all())
-    finally:
-        session.close()
-
-
 @app.get("/")
 def root():
     return RedirectResponse("/dashboard")
@@ -101,16 +106,10 @@ def onboarding(request: Request):
 
 
 @app.post("/onboarding/upload")
-async def onboarding_upload(file: UploadFile = File(...)):
+async def onboarding_upload(file: UploadFile = File(...), session: Session = Depends(get_db)):
     content = await file.read()
     entries = parse_export(content)
-
-    session = get_session()
-    try:
-        added = insert_new_videos(session, entries)
-    finally:
-        session.close()
-
+    added = insert_new_videos(session, entries)
     return RedirectResponse(f"/dashboard?imported={added}", status_code=303)
 
 
@@ -124,17 +123,13 @@ FILTER_KEYS = ("tab", "group", "category", "theme", "q", "sort", "show", "page")
 
 
 @app.get("/dashboard")
-def dashboard(request: Request, tab: str = "processed", group: str = "", category: str = "",
-              theme: str = "", q: str = "", sort: str = "score", show: str = "", page: int = 1,
-              imported: int | None = None):
+def dashboard(request: Request, session: Session = Depends(get_db), tab: str = "processed", group: str = "",
+              category: str = "", theme: str = "", q: str = "", sort: str = "score", show: str = "",
+              page: int = 1, imported: int | None = None):
     from collections import Counter, defaultdict
     from urllib.parse import urlencode
 
-    session = get_session()
-    try:
-        all_videos = session.exec(select(Video)).all()
-    finally:
-        session.close()
+    all_videos = session.exec(select(Video)).all()
 
     if tab not in VIEW_NAMES:
         tab = "processed"
@@ -205,6 +200,7 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
         videos = [v for v in videos if tl in [t.strip().lower() for t in (v.tags or "").split(",")]]
     if q:
         ql = q.lower()
+
         def matches(v: Video) -> bool:
             haystack = " ".join(filter(None, [v.summary, v.caption, v.tags, v.key_facts, v.author, v.category]))
             return ql in haystack.lower()
@@ -266,12 +262,7 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
             panels.append(g)
         top_picks = sorted([v for v in live if (v.worth_rewatching_score or 0) >= 4], key=best_key, reverse=True)[:8]
 
-    action_session = get_session()
-    try:
-        action_queue_count = len(action_session.exec(
-            select(Action.id).where(Action.status == ActionStatus.QUEUED)).all())
-    finally:
-        action_session.close()
+    action_queue_count = len(session.exec(select(Action.id).where(Action.status == ActionStatus.QUEUED)).all())
 
     key_ok = bool(get_api_key())
     setup = {
@@ -296,52 +287,36 @@ def dashboard(request: Request, tab: str = "processed", group: str = "", categor
 
 
 @app.get("/video/{video_id}")
-def video_detail(request: Request, video_id: int):
-    session = get_session()
-    try:
-        video = session.get(Video, video_id)
-    finally:
-        session.close()
+def video_detail(request: Request, video_id: int, session: Session = Depends(get_db)):
+    video = session.get(Video, video_id)
     return templates.TemplateResponse("video_detail.html", {"request": request, "video": video})
 
 
 @app.post("/video/{video_id}/watched")
-def toggle_watched(video_id: int, next: str = Form("")):
-    session = get_session()
-    try:
-        video = session.get(Video, video_id)
-        video.watched = not video.watched
-        session.add(video)
-        session.commit()
-    finally:
-        session.close()
+def toggle_watched(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
+    video = session.get(Video, video_id)
+    video.watched = not video.watched
+    session.add(video)
+    session.commit()
     return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
 
 
 @app.post("/video/{video_id}/archive")
-def toggle_archive(video_id: int, next: str = Form("")):
-    session = get_session()
-    try:
-        video = session.get(Video, video_id)
-        video.archived = not video.archived
-        session.add(video)
-        session.commit()
-    finally:
-        session.close()
+def toggle_archive(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
+    video = session.get(Video, video_id)
+    video.archived = not video.archived
+    session.add(video)
+    session.commit()
     return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
 
 
 @app.post("/video/{video_id}/reprocess")
-def reprocess(video_id: int):
-    session = get_session()
-    try:
-        video = session.get(Video, video_id)
-        video.status = Status.PENDING
-        video.error_message = None
-        session.add(video)
-        session.commit()
-    finally:
-        session.close()
+def reprocess(video_id: int, session: Session = Depends(get_db)):
+    video = session.get(Video, video_id)
+    video.status = Status.PENDING
+    video.error_message = None
+    session.add(video)
+    session.commit()
     return RedirectResponse(f"/video/{video_id}", status_code=303)
 
 
@@ -383,7 +358,7 @@ def bulk_page(request: Request, msg: str = ""):
     })
 
 
-@app.get("/api/bulk")
+@app.get("/api/bulk", response_model=BulkStatusResponse)
 def api_bulk():
     return {"counts": _bulk_counts(), "job": worker.job_status()}
 
@@ -418,12 +393,12 @@ def bulk_stop():
     return RedirectResponse("/bulk", status_code=303)
 
 
-@app.get("/api/progress")
+@app.get("/api/progress", response_model=ProgressResponse)
 def api_progress():
     return worker.progress_summary()
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
 
@@ -437,34 +412,21 @@ def require_agent_token(authorization: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Missing or invalid agent token. See Settings.")
 
 
-@app.post("/api/ingest/links", dependencies=[Depends(require_agent_token)])
-def api_ingest_links(entries: list[dict] = Body(...)):
-    """entries: [{"tiktok_url": str, "saved_date": "2026-01-01T00:00:00"|null}, ...].
-    Safe to call with everything currently visible on the Saved page every time —
-    already-known URLs are silently skipped."""
-    from datetime import datetime as dt
-    parsed = []
-    for e in entries:
-        url = (e.get("tiktok_url") or "").strip()
-        if not url:
-            continue
-        saved_date = None
-        if e.get("saved_date"):
-            try:
-                saved_date = dt.fromisoformat(e["saved_date"])
-            except ValueError:
-                saved_date = None
-        parsed.append({"tiktok_url": url, "saved_date": saved_date})
-    session = get_session()
-    try:
-        added = insert_new_videos(session, parsed)
-    finally:
-        session.close()
+@app.post("/api/ingest/links", dependencies=[Depends(require_agent_token)], response_model=IngestLinksResponse)
+def api_ingest_links(entries: list[IngestLinkEntry], session: Session = Depends(get_db)):
+    """Safe to call with everything currently visible in the source (Saved
+    page / inbox) every time - already-known URLs are silently skipped."""
+    parsed = [
+        {"tiktok_url": e.tiktok_url.strip(), "saved_date": e.saved_date, "user_note": e.user_note}
+        for e in entries if e.tiktok_url.strip()
+    ]
+    added = insert_new_videos(session, parsed)
     return {"seen": len(parsed), "added": added}
 
 
-@app.post("/api/sync/inbox", dependencies=[Depends(require_agent_token)])
-def api_sync_inbox(start_processing: bool = True):
+@app.post("/api/sync/inbox", dependencies=[Depends(require_agent_token)],
+          response_model=SyncInboxResponse, responses={409: {"model": SyncErrorResponse}, 502: {"model": SyncErrorResponse}})
+def api_sync_inbox(session: Session = Depends(get_db), start_processing: bool = True):
     """One call covering the whole free half of the pipeline: read the bot
     account's inbox for videos shared by the trusted sender (if a login
     session has been set up), ingest anything new, then kick off the
@@ -486,11 +448,7 @@ def api_sync_inbox(start_processing: bool = True):
     except Exception as e:  # noqa: BLE001 - scraping is inherently fragile; report, don't crash the agent run
         return JSONResponse(status_code=502, content={"error": f"TikTok inbox read failed: {e}"[:500]})
 
-    session = get_session()
-    try:
-        added = insert_new_videos(session, links)
-    finally:
-        session.close()
+    added = insert_new_videos(session, links)
 
     # Bounded to exactly what THIS sync found - a daily sync processing your
     # entire multi-thousand-video backlog every time it runs (a real bug this
@@ -505,64 +463,51 @@ def api_sync_inbox(start_processing: bool = True):
             "job": worker.job_status()}
 
 
-@app.get("/api/actions/queue", dependencies=[Depends(require_agent_token)])
-def api_actions_queue():
-    session = get_session()
-    try:
-        rows = session.exec(select(Action).where(Action.status == ActionStatus.QUEUED).order_by(Action.created_at)).all()
-        out = []
-        for a in rows:
-            video = session.get(Video, a.video_id)
-            out.append({
-                "action_id": a.id, "video_id": a.video_id, "action_type": a.action_type.value,
-                "brief": a.brief, "tiktok_url": video.tiktok_url if video else None,
-                "category": video.category if video else None, "summary": video.summary if video else None,
-                "author": video.author if video else None,
-            })
-        return {"queue": out, "settings": get_action_settings()}
-    finally:
-        session.close()
+@app.get("/api/actions/queue", dependencies=[Depends(require_agent_token)], response_model=ActionsQueueResponse)
+def api_actions_queue(session: Session = Depends(get_db)):
+    rows = session.exec(select(Action).where(Action.status == ActionStatus.QUEUED).order_by(Action.created_at)).all()
+    out = []
+    for a in rows:
+        video = session.get(Video, a.video_id)
+        out.append(QueuedAction(
+            action_id=a.id, video_id=a.video_id, action_type=a.action_type.value,
+            brief=a.brief, tiktok_url=video.tiktok_url if video else None,
+            category=video.category if video else None, summary=video.summary if video else None,
+            author=video.author if video else None,
+        ))
+    return {"queue": out, "settings": get_action_settings()}
 
 
-@app.post("/api/actions/{action_id}", dependencies=[Depends(require_agent_token)])
-def api_action_update(action_id: int, body: dict = Body(...)):
-    status_in = body.get("status")
-    if status_in not in [s.value for s in ActionStatus]:
+@app.post("/api/actions/{action_id}", dependencies=[Depends(require_agent_token)], response_model=ActionUpdateResponse)
+def api_action_update(action_id: int, body: ActionUpdateRequest, session: Session = Depends(get_db)):
+    if body.status not in [s.value for s in ActionStatus]:
         raise HTTPException(status_code=400, detail="Invalid or missing status.")
-    session = get_session()
-    try:
-        action = session.get(Action, action_id)
-        if not action:
-            raise HTTPException(status_code=404, detail="No such action.")
-        action.status = ActionStatus(status_in)
-        if "result" in body:
-            import json as _json
-            action.result = _json.dumps(body["result"]) if not isinstance(body["result"], str) else body["result"]
-        if "error_message" in body:
-            action.error_message = (body["error_message"] or "")[:500] or None
-        from datetime import datetime as dt
-        action.updated_at = dt.utcnow()
-        session.add(action)
-        session.commit()
-        return {"ok": True}
-    finally:
-        session.close()
+    action = session.get(Action, action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="No such action.")
+    action.status = ActionStatus(body.status)
+    if body.result is not None:
+        import json as _json
+        action.result = body.result if isinstance(body.result, str) else _json.dumps(body.result)
+    if body.error_message is not None:
+        action.error_message = body.error_message or None
+    from datetime import datetime as dt
+    action.updated_at = dt.utcnow()
+    session.add(action)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------- Actions / Jobs dashboard views ----------------
 @app.get("/actions")
-def actions_page(request: Request):
-    session = get_session()
-    try:
-        rows = session.exec(select(Action).order_by(Action.updated_at.desc())).all()
-        items = []
-        for a in rows:
-            if a.action_type == ActionType.JOB:
-                continue
-            video = session.get(Video, a.video_id)
-            items.append({"action": a, "video": video})
-    finally:
-        session.close()
+def actions_page(request: Request, session: Session = Depends(get_db)):
+    rows = session.exec(select(Action).order_by(Action.updated_at.desc())).all()
+    items = []
+    for a in rows:
+        if a.action_type == ActionType.JOB:
+            continue
+        video = session.get(Video, a.video_id)
+        items.append({"action": a, "video": video})
     grouped = {}
     for item in items:
         grouped.setdefault(item["action"].status.value, []).append(item)
@@ -574,14 +519,10 @@ def actions_page(request: Request):
 
 
 @app.get("/jobs")
-def jobs_page(request: Request):
-    session = get_session()
-    try:
-        rows = session.exec(
-            select(Action).where(Action.action_type == ActionType.JOB).order_by(Action.updated_at.desc())).all()
-        items = [{"action": a, "video": session.get(Video, a.video_id)} for a in rows]
-    finally:
-        session.close()
+def jobs_page(request: Request, session: Session = Depends(get_db)):
+    rows = session.exec(
+        select(Action).where(Action.action_type == ActionType.JOB).order_by(Action.updated_at.desc())).all()
+    items = [{"action": a, "video": session.get(Video, a.video_id)} for a in rows]
     return templates.TemplateResponse("jobs.html", {
         "request": request, "items": items, "has_resume": bool(get_resume_text()),
         "settings": get_action_settings(),
@@ -589,46 +530,34 @@ def jobs_page(request: Request):
 
 
 @app.post("/actions/{action_id}/dismiss")
-def action_dismiss(action_id: int, next: str = Form("/actions")):
-    session = get_session()
-    try:
-        action = session.get(Action, action_id)
-        if action:
-            action.status = ActionStatus.DISMISSED
-            session.add(action)
-            session.commit()
-    finally:
-        session.close()
+def action_dismiss(action_id: int, session: Session = Depends(get_db), next: str = Form("/actions")):
+    action = session.get(Action, action_id)
+    if action:
+        action.status = ActionStatus.DISMISSED
+        session.add(action)
+        session.commit()
     return RedirectResponse(next if next.startswith("/") else "/actions", status_code=303)
 
 
 @app.post("/actions/{action_id}/requeue")
-def action_requeue(action_id: int, next: str = Form("/actions")):
-    session = get_session()
-    try:
-        action = session.get(Action, action_id)
-        if action:
-            action.status = ActionStatus.QUEUED
-            action.error_message = None
-            session.add(action)
-            session.commit()
-    finally:
-        session.close()
+def action_requeue(action_id: int, session: Session = Depends(get_db), next: str = Form("/actions")):
+    action = session.get(Action, action_id)
+    if action:
+        action.status = ActionStatus.QUEUED
+        action.error_message = None
+        session.add(action)
+        session.commit()
     return RedirectResponse(next if next.startswith("/") else "/actions", status_code=303)
 
 
 @app.post("/jobs/{action_id}/mark-applied")
-def job_mark_applied(action_id: int):
+def job_mark_applied(action_id: int, session: Session = Depends(get_db)):
     """You confirming you personally submitted the application. The agent never sets this."""
-    session = get_session()
-    try:
-        action = session.get(Action, action_id)
-        if action:
-            action.status = ActionStatus.DONE
-            session.add(action)
-            session.commit()
-    finally:
-        session.close()
+    action = session.get(Action, action_id)
+    if action:
+        action.status = ActionStatus.DONE
+        session.add(action)
+        session.commit()
     return RedirectResponse("/jobs", status_code=303)
 
 
@@ -700,12 +629,8 @@ def settings_page(request: Request, key: str = ""):
 
 
 @app.get("/media/thumb/{video_id}")
-def media_thumb(video_id: int):
-    session = get_session()
-    try:
-        video = session.get(Video, video_id)
-    finally:
-        session.close()
+def media_thumb(video_id: int, session: Session = Depends(get_db)):
+    video = session.get(Video, video_id)
     if video and video.thumbnail_path and Path(video.thumbnail_path).exists():
         return FileResponse(video.thumbnail_path, media_type="image/jpeg")
     return FileResponse(str(BASE_DIR / "static" / "placeholder.svg"))
