@@ -1,15 +1,21 @@
 # TikTok Saved Scanner
 
+[![CI](https://github.com/mattthomas7641/tiktok-saved-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/tiktok-saved-scanner/actions/workflows/ci.yml)
+
 Go through your entire TikTok Saved/Favorites list, transcribe + summarize each
 video, categorize it, score whether it's worth rewatching, and flag anything
 with a promo code or dated offer that might be stale.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline/data-model diagrams
+and the reasoning behind the bigger design decisions (separate `Action`
+table, the Batch API, scoped bearer auth, the dedicated-bot-account sync).
+
 Runs entirely on your own machine (or your own server). You can feed it from
 your own official TikTok data export (ToS-compliant, but manual — see
-**How it works**), or opt into an optional daily sync that reads your Saved
-page directly using your own logged-in session (see **Daily agent**, below —
-this one does scrape TikTok, against their terms, and you have to set it up
-deliberately; it's off by default).
+**How it works**), or opt into an optional daily sync that reads the inbox of
+a second, dedicated TikTok account you create for this purpose (see
+**Daily agent**, below — off by default, and your real account's session is
+never automated).
 
 **This is a self-hosted, single-user app, by design.** There's no central
 service you sign up for — you (or anyone else who wants this) run your own
@@ -103,19 +109,29 @@ This ships in two parts, deliberately not turned all the way on yet:
 - **Built and working now**: action detection (part of the normal analysis
   step, no extra cost), the Ideas (`/actions`) and Jobs (`/jobs`) pages, and
   the authenticated `/api/*` routes a future scheduled agent will call.
-- **Built but needs your one-time setup**: `app/scraper.py` reads your Saved
-  page using a logged-in session you create yourself:
-  ```bash
-  source .venv/bin/activate
-  python -m app.scraper login
-  ```
-  This opens a real, visible browser — log into TikTok there yourself (this
-  app never sees or handles your TikTok credentials), confirm you can see
-  your Favorites tab, then close the window. It saves the session to
-  `data/tiktok_auth_state.json` (gitignored). Run `python -m app.scraper`
-  afterward to confirm it can read your saved links; if it raises
-  `SelectorMismatch`, TikTok's page structure didn't match what the script
-  expects — see the checklist in `app/scraper.py`'s docstring.
+- **Built but needs your one-time setup**: `app/scraper.py` reads the inbox
+  of a **second, dedicated TikTok account** — not your real one. If that bot
+  account ever gets rate-limited or flagged, your real profile and Saved
+  list are completely unaffected, since it's never the one being automated.
+  1. Create a new TikTok account for this (it only needs to receive DMs; no
+     public presence needed). Set its message privacy to accept DMs from
+     "Everyone," and note its handle.
+  2. In this app's Settings page, enter **your own real handle** as the
+     trusted sender — the bot account only acts on messages from that
+     handle, everything else is ignored.
+  3. Log the bot account into the scraper once, interactively:
+     ```bash
+     source .venv/bin/activate
+     python -m app.scraper login
+     ```
+     This opens a real, visible browser — log the **bot account** in there
+     yourself (this app never sees or handles the credentials), then close
+     the window. The session saves to `data/tiktok_auth_state.json`
+     (gitignored).
+  4. From your real account, send a saved video to the bot account as a DM.
+     Run `python -m app.scraper` to confirm it finds the video; if it raises
+     `SelectorMismatch`, TikTok's markup didn't match what the script
+     expects — see the DOM/network notes in `app/scraper.py`'s docstring.
 - **Not yet done**: actually registering a daily schedule. That's a
   deliberate, separate step — only worth doing once you've confirmed the
   login session survives unattended across a real day's gap, and reviewed
@@ -181,20 +197,43 @@ know before you do this:
   shared service that downloads other users' TikTok content, which is a much
   higher-risk use of `yt-dlp` against TikTok's terms.
 
+## Testing
+
+```bash
+source .venv/bin/activate
+pytest                 # runs against an isolated temp DB, never data/db.sqlite3
+ruff check .
+```
+
+Each test gets a fresh, freshly-migrated schema (`tests/conftest.py`) and
+isolated `secrets.json`, via the same `SCANNER_DATA_DIR` override the app
+itself uses. The Anthropic API is never called live in tests —
+`app/analyze.py`'s classification is tested against a mocked client
+(`unittest.mock.patch` on `messages.create`, returning a canned `tool_use`
+block), so the suite runs free and offline. CI (`.github/workflows/ci.yml`)
+runs this plus a Docker-build check on every push.
+
 ## Project layout
 
 ```
 app/
-  main.py        FastAPI routes
-  models.py      Video table (SQLModel)
-  ingest.py      Parses the TikTok export
-  download.py    yt-dlp wrapper
-  transcribe.py  faster-whisper wrapper
-  ocr.py         ffmpeg frame sampling + tesseract OCR
-  analyze.py     Claude categorization/summarization
-  relevance.py   Staleness heuristic
-  pipeline.py    Orchestrates one video through all steps
-  worker.py      Background thread that processes the pending queue
-templates/       Jinja2 pages (dashboard, video detail, onboarding, settings)
-data/            SQLite DB + thumbnails (gitignored)
+  main.py          FastAPI routes (thin HTTP glue; logic lives below)
+  schemas.py       Pydantic request/response models for the /api/* routes
+  db.py            Engine + get_db() dependency; schema managed by Alembic
+  models.py        Video + Action tables (SQLModel)
+  services/
+    dashboard_query.py  Query/filter/stats logic for /dashboard
+  ingest.py        Parses the TikTok export
+  scraper.py       Bot-account inbox reader (daily sync)
+  download.py      yt-dlp wrapper
+  transcribe.py    faster-whisper wrapper
+  ocr.py           ffmpeg frame sampling + tesseract OCR
+  analyze.py       Claude categorization/summarization + action detection
+  relevance.py     Staleness heuristic
+  pipeline.py      Orchestrates one video through all steps
+  worker.py        Background thread that processes the pending queue
+alembic/           Schema migrations (replaces hand-rolled ALTER TABLE)
+templates/         Jinja2 pages (dashboard, video detail, onboarding, settings, actions, jobs)
+tests/             pytest suite + fixtures
+data/              SQLite DB + thumbnails (gitignored)
 ```
