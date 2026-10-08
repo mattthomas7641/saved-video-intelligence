@@ -6,6 +6,7 @@ original false-"no videos found" bug, and the tiktokv.com link-normalization
 fix for the real export format.
 """
 import json
+from datetime import datetime, timedelta
 
 from sqlmodel import select
 
@@ -73,3 +74,23 @@ def test_insert_new_videos_dedups_by_url(session):
     assert added_first == 2
     assert added_second == 0
     assert len(session.exec(select(Video)).all()) == 2
+
+
+def test_insert_new_videos_defaults_missing_saved_date_to_now(session):
+    """Regression test for a real bug found live: the DM-sync path doesn't
+    know TikTok's original save time and passes saved_date=None. Leaving
+    that as NULL sorts a synced video dead last in the saved_date-DESC
+    processing queue (SQLite sorts NULL as the smallest value) - behind an
+    entire historical backlog, not ahead of it as the daily sync intends.
+    Defaulting to "now" fixes the ordering without the scraper needing to
+    guess a real save time it doesn't have."""
+    old_video = Video(tiktok_url="https://www.tiktok.com/@old/video/1",
+                       saved_date=datetime.utcnow() - timedelta(days=300))
+    session.add(old_video)
+    session.commit()
+
+    insert_new_videos(session, [{"tiktok_url": "https://www.tiktok.com/@new/video/2", "saved_date": None}])
+
+    new_video = session.exec(select(Video).where(Video.tiktok_url.contains("@new"))).first()
+    assert new_video.saved_date is not None
+    assert new_video.saved_date > old_video.saved_date
