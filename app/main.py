@@ -16,11 +16,13 @@ from app.config import (
     get_agent_token,
     get_api_key,
     get_resume_text,
+    get_trusted_sender,
     group_of,
     regenerate_agent_token,
     save_action_settings,
     save_api_key,
     save_resume_text,
+    save_trusted_sender,
 )
 from app.db import get_session, init_db
 from app.ingest import insert_new_videos, parse_export
@@ -461,22 +463,28 @@ def api_ingest_links(entries: list[dict] = Body(...)):
     return {"seen": len(parsed), "added": added}
 
 
-@app.post("/api/sync/tiktok", dependencies=[Depends(require_agent_token)])
-def api_sync_tiktok(start_processing: bool = True):
-    """One call covering the whole free half of the pipeline: scrape your Saved
-    page (if a login session has been set up), ingest anything new, then kick
-    off the existing collect+analyze job so results are ready by the time the
-    agent asks for the action queue."""
+@app.post("/api/sync/inbox", dependencies=[Depends(require_agent_token)])
+def api_sync_inbox(start_processing: bool = True):
+    """One call covering the whole free half of the pipeline: read the bot
+    account's inbox for videos shared by the trusted sender (if a login
+    session has been set up), ingest anything new, then kick off the
+    existing collect+analyze job so results are ready by the time the agent
+    asks for the action queue."""
     from app import scraper
     try:
         links = scraper.scrape_new_saves()
     except scraper.NotLoggedIn:
         return JSONResponse(status_code=409, content={
-            "error": "No TikTok login session saved yet. Run `python -m app.scraper login` on the host once, "
-                     "then retry.",
+            "error": "No TikTok login session saved yet. Run `python -m app.scraper login` on the host, "
+                     "against the bot account, then retry.",
+        })
+    except scraper.NoTrustedSender:
+        return JSONResponse(status_code=409, content={
+            "error": "No trusted TikTok handle set. Add your real handle in Settings so the inbox reader "
+                     "knows whose shared videos to act on.",
         })
     except Exception as e:  # noqa: BLE001 - scraping is inherently fragile; report, don't crash the agent run
-        return JSONResponse(status_code=502, content={"error": f"TikTok scrape failed: {e}"[:500]})
+        return JSONResponse(status_code=502, content={"error": f"TikTok inbox read failed: {e}"[:500]})
 
     session = get_session()
     try:
@@ -636,6 +644,12 @@ def settings_actions(skill_enabled: bool = Form(False), project_enabled: bool = 
     return RedirectResponse("/settings?key=actions_saved", status_code=303)
 
 
+@app.post("/settings/trusted-sender")
+def settings_trusted_sender(handle: str = Form("")):
+    save_trusted_sender(handle)
+    return RedirectResponse("/settings?key=sender_saved", status_code=303)
+
+
 @app.post("/settings/regenerate-token")
 def settings_regenerate_token():
     regenerate_agent_token()
@@ -673,6 +687,7 @@ def settings_page(request: Request, key: str = ""):
         "stale_threshold_months": STALE_THRESHOLD_MONTHS,
         "env_path": str(BASE_DIR / ".env"),
         "agent_token": get_agent_token(),
+        "trusted_sender": get_trusted_sender(),
         "action_settings": get_action_settings(),
         "resume_text": get_resume_text(),
     })

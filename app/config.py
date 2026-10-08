@@ -79,6 +79,17 @@ def get_action_settings() -> dict:
     }
 
 
+def get_trusted_sender() -> str:
+    """Your real TikTok handle - the inbox reader only acts on messages from
+    this account; everything else (including random DMs to the bot account)
+    is ignored. Stored without a leading '@'."""
+    return _load_secrets().get("TRUSTED_SENDER", "").strip().lstrip("@")
+
+
+def save_trusted_sender(handle: str) -> None:
+    _save_secret("TRUSTED_SENDER", handle.strip().lstrip("@"))
+
+
 def save_action_settings(**updates) -> dict:
     current = get_action_settings()
     current.update({k: v for k, v in updates.items() if v is not None})

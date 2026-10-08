@@ -1,70 +1,81 @@
-"""Deterministic TikTok Saved-page scraper, used by the daily sync endpoint.
+"""TikTok bot-account inbox reader, used by the daily sync endpoint.
+
+This automates a **dedicated account created for this purpose**, not your
+real TikTok account — per the plan, that's the whole point: if this account
+gets rate-limited, flagged, or banned, your real profile, social graph, and
+Saved list are untouched. Point `login()` at the bot account, never your own.
 
 This is intentionally NOT an LLM driving a browser fresh each run — it's a
 small, directly testable script with a persisted login session, so "does the
 saved session survive unattended, across a real day-gap" can be checked by
-hand (see the plan's Phase 2 verification) instead of trusted blind.
+hand instead of trusted blind.
 
-DOM notes (confirmed live, logged in as the account owner, during Phase 2
-verification — not guessed):
-  - Profile tabs (Videos/Short dramas/Reposts/Favorites/Liked) are client-side
-    `<p role="tab">` elements, NOT separate URLs — there's no `/favorites`
-    route to navigate straight to. The scraper clicks the tab instead.
-  - Every other tab carries a `data-e2e="...-tab"` attribute (videos-tab,
-    drama-tab, repost-tab, liked-tab) - **Favorites does not**. It has to be
-    found by its accessible role+name ("tab" named "Favorites"), not by a
-    data-e2e selector, which is why an earlier version of this script guessed
-    wrong. `page.get_by_role("tab", name="Favorites", exact=True)` is what
-    actually works.
-  - Headless Chromium with default settings got served a degraded profile
-    page (generic public tab set, a "Something went wrong" content error,
-    no Favorites tab at all) even with a valid logged-in session - consistent
-    with TikTok treating stock headless automation as suspicious. Basic
-    countermeasures (a real desktop user-agent, `navigator.webdriver` patched
-    out, `--disable-blink-features=AutomationControlled`) reliably fixed it
-    in testing. This is inherently adversarial and could stop working if
-    TikTok tightens detection further - that's the fragility you accepted
-    when choosing this approach over the export-file alternative.
+DOM notes - what's confirmed vs. still a best guess:
+  CONFIRMED (seen live, logged in, during the earlier Saved-page work):
+  - `[data-e2e="nav-messages"]` exists in the top nav when logged in.
+  - Headless Chromium with default settings gets served a degraded page
+    (missing features, generic fallback content) even with a valid session -
+    the same basic countermeasures that fixed the Favorites-tab work
+    (desktop user-agent, `navigator.webdriver` patched out,
+    `--disable-blink-features=AutomationControlled`) are carried over here.
+  NOT YET CONFIRMED - written as a reasonable first attempt, expect to debug
+  this live once the bot account exists and has real test messages (the
+  Favorites-tab code went through exactly this cycle: a first guess, three
+  real bugs found by testing against a real account, then it worked):
+  - Whether clicking nav-messages opens an inline panel or navigates to a
+    dedicated page (a direct `/messages` navigation is tried as a fallback).
+  - The conversation-list and message-thread markup, and whether a text note
+    sent alongside a shared video is a caption on the same message or a
+    separate one. Video *links* are found the same robust, selector-light
+    way the Favorites page used (any `a[href*='/video/']`), which doesn't
+    depend on guessing bubble markup. Note *association* is best-effort on
+    top of that and fails soft per-video (returns no note, not an error) if
+    the structure doesn't match what's assumed here - the core job (finding
+    shared videos from the trusted sender) still works even if note-pairing
+    doesn't.
 
-Setup (once, interactively, on the host):
+Setup (once, interactively, on the host, against the BOT account):
     python -m app.scraper login
 
-Then the daily agent calls scrape_new_saves() via POST /api/sync/tiktok.
-
-If TikTok changes its markup again, scrape_new_saves() raises SelectorMismatch
-or FavoritesLocked naming the specific thing that didn't match - open the
-browser pane yourself, log into tiktok.com, open your own profile, and read
-the live DOM to find the fix, the same way this version was grounded.
+Then the daily agent calls scrape_new_saves() via POST /api/sync/inbox.
 """
 import json
 import re
 import sys
 import time
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, get_trusted_sender
 
 _DESKTOP_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
 
 AUTH_STATE_PATH = DATA_DIR / "tiktok_auth_state.json"
 HOME_URL = "https://www.tiktok.com/"
+MESSAGES_URL = "https://www.tiktok.com/messages"
 
 _VIDEO_LINK_SELECTOR = "a[href*='/video/']"
-_LOCK_SELECTOR = '[data-e2e*="lock"]'
+_SESSION_COOKIES = {"sessionid", "sid_tt", "sid_guard"}
+
+# How far back to look each poll. Bounded so a growing conversation doesn't
+# make every future poll slower - rely on polling often enough that nothing
+# of interest falls outside this window between runs.
+_LOOKBACK_HOURS = 48
 
 
 class NotLoggedIn(Exception):
-    """No saved session yet, or it expired — run `python -m app.scraper login`."""
+    """No saved session yet, or it expired — run `python -m app.scraper login`
+    against the bot account."""
 
 
 class SelectorMismatch(Exception):
-    """TikTok's page structure didn't match what this script expects. Likely
-    needs a selector update in app/scraper.py — see FIRST_RUN_CHECKLIST."""
+    """TikTok's page structure didn't match what this script expects. See the
+    module docstring's "not yet confirmed" section for what to check first."""
 
 
-class FavoritesLocked(Exception):
-    """The Favorites tab rendered a locked/empty state even though we're
-    logged in — something's off with the account or session, not a code bug."""
+class NoTrustedSender(Exception):
+    """No trusted-sender handle configured in Settings - the inbox reader
+    refuses to guess who to trust, rather than silently acting on messages
+    from anyone who happens to DM the bot account."""
 
 
 def _require_playwright():
@@ -78,21 +89,16 @@ def _require_playwright():
         ) from e
 
 
-_SESSION_COOKIES = {"sessionid", "sid_tt", "sid_guard"}
-
-
 def login() -> None:
-    """Open a real, visible browser so you can log into TikTok by hand. Detects
-    a successful login by watching for TikTok's own session cookies (not by
-    watching one tab's URL — TikTok's login can finish in a popup or a second
-    tab, e.g. Google/Apple sign-in or a QR code, which a single-tab URL check
-    would never notice). Saves the session and closes the browser itself once
-    it sees you're logged in — you don't need to close anything by hand.
-    Run this on the host (not inside a headless container); it needs a real
-    display."""
+    """Open a real, visible browser so you can log into the BOT account by
+    hand - not your own account. Detects a successful login by watching for
+    TikTok's own session cookies (not one tab's URL — login can finish in a
+    popup or a second tab). Saves the session and closes the browser itself
+    once it sees you're logged in. Run this on the host (not inside a
+    headless container); it needs a real display."""
     sync_playwright = _require_playwright()
-    print("Opening a browser window. Log into TikTok however you like, then open your profile and "
-          "confirm you can see your Favorites tab. I'll detect it and close the window myself — "
+    print("Opening a browser window. Log into the DEDICATED BOT ACCOUNT (not your own TikTok account), "
+          "then confirm its inbox loads. I'll detect it and close the window myself — "
           "just wait for 'Saved session' here rather than closing it yourself.", flush=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -130,35 +136,89 @@ def login() -> None:
             pass
 
 
-def _click_favorites_tab(page):
-    # Unlike the other profile tabs, Favorites carries no data-e2e attribute
-    # (confirmed live) - found by accessible role+name instead, which is also
-    # the more change-resistant choice since it doesn't depend on a generated
-    # CSS class or an attribute TikTok may add later.
+def _open_inbox(page):
+    """Navigate to the message inbox. Tries the nav icon first (confirmed to
+    exist), falls back to a direct URL if that doesn't land on a messages
+    view - two different plausible TikTok UX shapes, so both are covered
+    rather than guessing one."""
+    page.goto(HOME_URL, wait_until="networkidle", timeout=30000)
     try:
-        page.get_by_role("tab", name="Favorites", exact=True).click(timeout=15000)
+        page.locator('[data-e2e="nav-messages"]').first.click(timeout=15000)
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:  # noqa: BLE001 - try the direct URL instead
+        pass
+
+    if "login" in page.url:
+        raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+
+    if "messages" not in page.url:
+        page.goto(MESSAGES_URL, wait_until="networkidle", timeout=30000)
+        if "login" in page.url:
+            raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+
+
+def _open_trusted_sender_thread(page, handle: str):
+    """Find and open the conversation with the trusted sender. Matches by
+    visible text in the conversation list, not a guessed data-e2e attribute,
+    since that's the part most likely to need live-DOM correction."""
+    needle = handle.lower()
+    try:
+        page.get_by_text(re.compile(re.escape(handle), re.IGNORECASE)).first.click(timeout=15000)
     except Exception as e:
         raise SelectorMismatch(
-            "Couldn't find/click a tab named 'Favorites' on the profile page. TikTok likely changed "
-            "its markup or served a degraded page - inspect the live DOM and update "
-            "_click_favorites_tab in app/scraper.py."
+            f"Couldn't find a conversation with '@{handle}' in the inbox. Either nothing's been shared "
+            "yet, or the conversation-list markup doesn't match what get_by_text expects here - open "
+            "the browser pane yourself and check the live inbox DOM."
         ) from e
+    page.wait_for_timeout(1500)
+    if needle not in page.content().lower():
+        raise SelectorMismatch(
+            f"Clicked a conversation but '@{handle}' doesn't appear in the opened thread - may have "
+            "opened the wrong conversation. Inspect the live DOM."
+        )
 
 
-def scrape_new_saves(max_scrolls: int = 12, scroll_pause: float = 1.5) -> list[dict]:
-    """Returns every video link currently visible on the Saved/Favorites page,
-    as [{"tiktok_url": str, "saved_date": None}, ...]. TikTok's Saved page
-    doesn't expose per-item save timestamps, so saved_date is left for the
-    caller's dedup-by-URL logic to handle — already-known links are silently
-    dropped, so it's safe to return everything currently visible every time."""
+def _extract_videos_with_notes(page) -> list[dict]:
+    """Best-effort: pair each shared video link with nearby text as a note.
+    Video-link extraction is the robust part (same pattern that worked for
+    the Favorites page); note-pairing is a first attempt and fails soft per
+    item rather than raising, since getting video links right matters far
+    more than getting notes right."""
+    data = page.evaluate("""() => {
+        const links = [...document.querySelectorAll("a[href*='/video/']")];
+        return links.map(link => {
+            const bubble = link.closest('[class*="message"], [class*="Message"], li, div[role="listitem"]') || link.parentElement;
+            let note = null;
+            if (bubble) {
+                const prev = bubble.previousElementSibling;
+                const next = bubble.nextElementSibling;
+                for (const sib of [next, prev]) {
+                    if (sib && !sib.querySelector("a[href*='/video/']")) {
+                        const text = sib.innerText?.trim();
+                        if (text && text.length < 500) { note = text; break; }
+                    }
+                }
+            }
+            return { href: link.href, note };
+        });
+    }""")
+    return data or []
+
+
+def scrape_new_saves(max_messages: int = 100) -> list[dict]:
+    """Returns videos shared by the trusted sender, as
+    [{"tiktok_url": str, "saved_date": None, "user_note": str|None}, ...].
+    Safe to call repeatedly with everything currently visible - the caller's
+    dedup-by-URL logic drops anything already known."""
+    handle = get_trusted_sender()
+    if not handle:
+        raise NoTrustedSender("No trusted TikTok handle set in Settings. The inbox reader won't act on "
+                               "messages from an unconfigured sender.")
     if not AUTH_STATE_PATH.exists():
-        raise NotLoggedIn("No saved TikTok login session. Run: python -m app.scraper login")
+        raise NotLoggedIn("No saved TikTok login session. Run: python -m app.scraper login (against the bot account)")
 
     sync_playwright = _require_playwright()
     with sync_playwright() as p:
-        # The basic automation countermeasures below (see module docstring) were
-        # necessary in testing - without them TikTok served a degraded page with
-        # no Favorites tab at all, even with a valid logged-in session.
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(
             storage_state=str(AUTH_STATE_PATH), viewport={"width": 1280, "height": 900},
@@ -167,93 +227,47 @@ def scrape_new_saves(max_scrolls: int = 12, scroll_pause: float = 1.5) -> list[d
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = context.new_page()
 
-        # Getting to a clean, fully-rendered Favorites tab is empirically
-        # inconsistent run to run (observed in testing: identical code
-        # succeeded on one attempt and got a degraded/bot-suspicious page on
-        # the next) - retry with a fresh navigation before treating it as a
-        # real failure, rather than raising on the first flaky attempt.
         last_error: Exception | None = None
-        reached_favorites = False
+        extracted: list[dict] = []
         for _attempt in range(3):
             try:
-                # networkidle (not domcontentloaded): this is a heavily
-                # client-rendered page, and the nav isn't in the initial HTML -
-                # domcontentloaded fires before TikTok's JS has painted it,
-                # which otherwise looks exactly like a genuinely missing
-                # selector.
-                page.goto(HOME_URL, wait_until="networkidle", timeout=30000)
-                page.locator('[data-e2e="nav-profile"]').first.click(timeout=15000)
-                page.wait_for_load_state("networkidle", timeout=15000)
-
-                if "login" in page.url:
-                    browser.close()
-                    raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
-
-                _click_favorites_tab(page)
-                page.wait_for_timeout(1200)
-                reached_favorites = True
+                _open_inbox(page)
+                _open_trusted_sender_thread(page, handle)
+                extracted = _extract_videos_with_notes(page)
                 break
             except NotLoggedIn:
+                browser.close()
+                raise
+            except NoTrustedSender:
+                browser.close()
                 raise
             except Exception as e:  # noqa: BLE001 - genuinely flaky; retry before giving up
                 last_error = e
                 page.wait_for_timeout(2000)
-
-        if not reached_favorites:
+        else:
             browser.close()
             raise SelectorMismatch(
-                f"Couldn't reach a working Favorites tab after 3 attempts (last error: {last_error}). "
-                "This page is inconsistent run to run - try again, and if it keeps failing, open the "
-                "browser pane yourself and check what's actually rendering."
+                f"Couldn't read the inbox after 3 attempts (last error: {last_error}). "
+                "Open the browser pane yourself and check what's actually rendering."
             ) from last_error
 
-        if page.locator(_LOCK_SELECTOR).count():
-            browser.close()
-            raise FavoritesLocked(
-                "The Favorites tab shows a locked/empty state even though we're logged in. "
-                "Open the browser yourself and check your account's Favorites tab directly."
-            )
-
-        hrefs: set[str] = set()
-        stable_rounds = 0
-        for _ in range(max_scrolls):
-            found = page.eval_on_selector_all(_VIDEO_LINK_SELECTOR, "els => els.map(e => e.href)")
-            before = len(hrefs)
-            hrefs.update(found)
-            if len(hrefs) == before:
-                stable_rounds += 1
-                if stable_rounds >= 2:  # two scrolls with nothing new: reached the end
-                    break
-            else:
-                stable_rounds = 0
-            page.mouse.wheel(0, 2400)
-            page.wait_for_timeout(int(scroll_pause * 1000))
-
-        # Refresh the saved session on disk (TikTok rotates some cookies over time).
         try:
-            context.storage_state(path=str(AUTH_STATE_PATH))
-        except Exception:  # noqa: BLE001 - non-fatal; next run just reuses the older state
+            context.storage_state(path=str(AUTH_STATE_PATH))  # refresh rotated cookies
+        except Exception:  # noqa: BLE001 - non-fatal
             pass
         browser.close()
-
-    if not hrefs:
-        raise SelectorMismatch(
-            f"Favorites tab loaded with no lock shown, but no links matched {_VIDEO_LINK_SELECTOR!r}. "
-            "TikTok likely renders saved items differently than the public Videos grid — inspect the "
-            "live DOM and update _VIDEO_LINK_SELECTOR in app/scraper.py."
-        )
 
     video_id_re = re.compile(r"/video/(\d{8,})")
     seen_ids: set[str] = set()
     results = []
-    for href in hrefs:
-        m = video_id_re.search(href)
+    for item in extracted[:max_messages]:
+        m = video_id_re.search(item.get("href", ""))
         if not m or m.group(1) in seen_ids:
             continue
         seen_ids.add(m.group(1))
-        user = re.search(r"tiktok\.com/(@[\w.\-]+)/video/", href)
+        user = re.search(r"tiktok\.com/(@[\w.\-]+)/video/", item["href"])
         url = f"https://www.tiktok.com/{user.group(1) if user else '@_'}/video/{m.group(1)}"
-        results.append({"tiktok_url": url, "saved_date": None})
+        results.append({"tiktok_url": url, "saved_date": None, "user_note": item.get("note")})
     return results
 
 

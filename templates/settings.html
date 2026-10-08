@@ -32,6 +32,14 @@
   </form>
   {% if key_status == "actions_saved" %}<p style="color:var(--accent);margin-bottom:10px">Saved.</p>{% endif %}
 
+  <p style="margin-bottom:8px">Your real TikTok handle — the inbox reader on the dedicated bot account only acts on videos shared by this account. Messages from anyone else (including random DMs to the bot account) are ignored.</p>
+  <form action="/settings/trusted-sender" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+    <input class="field" style="flex:1;min-width:200px" type="text" name="handle" value="{{ trusted_sender }}" placeholder="yourhandle (no @)">
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+  {% if key_status == "sender_saved" %}<p style="color:var(--accent);margin-bottom:10px">Saved.</p>{% endif %}
+  {% if not trusted_sender %}<div class="notice warn" style="margin-bottom:14px">{{ icon("alert") }}<span>Not set yet — the inbox sync will refuse to run until this is configured.</span></div>{% endif %}
+
   <p style="margin-bottom:8px">Agent access token — the daily agent sends this to prove it's allowed to call the sync/action endpoints. Your own use of this dashboard never needs it.</p>
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <code style="word-break:break-all">{{ agent_token }}</code>
