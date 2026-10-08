@@ -10,7 +10,6 @@ where TikTok video URLs are just listed one per line.
 import json
 import re
 from datetime import datetime
-from typing import Iterable
 
 TIKTOK_URL_RE = re.compile(r"https?://(?:[\w-]+\.)?tiktok(?:v)?\.com/\S+", re.IGNORECASE)
 VIDEO_ID_RE = re.compile(r"/video/(\d{8,})")
@@ -153,5 +152,6 @@ def insert_new_videos(session, entries: list[dict]) -> int:
 
 def _video_by_url(url: str):
     from sqlmodel import select
+
     from app.models import Video
     return select(Video).where(Video.tiktok_url == url)

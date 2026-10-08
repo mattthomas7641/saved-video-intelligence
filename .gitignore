@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+.coverage
+.pytest_cache/
+.ruff_cache/
+__pycache__/

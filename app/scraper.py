@@ -174,7 +174,7 @@ def scrape_new_saves(max_scrolls: int = 12, scroll_pause: float = 1.5) -> list[d
         # real failure, rather than raising on the first flaky attempt.
         last_error: Exception | None = None
         reached_favorites = False
-        for attempt in range(3):
+        for _attempt in range(3):
             try:
                 # networkidle (not domcontentloaded): this is a heavily
                 # client-rendered page, and the nav isn't in the initial HTML -

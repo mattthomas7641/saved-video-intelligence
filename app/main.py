@@ -1,20 +1,30 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, Header, HTTPException, Body
-from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
+from app import batch, worker
 from app.config import (
-    BASE_DIR, get_api_key, save_api_key, STALE_THRESHOLD_MONTHS, GROUPS, group_of, DEFAULT_WORKERS,
-    get_agent_token, regenerate_agent_token, get_action_settings, save_action_settings,
-    get_resume_text, save_resume_text, JOBS_DIR,
+    BASE_DIR,
+    DEFAULT_WORKERS,
+    GROUPS,
+    STALE_THRESHOLD_MONTHS,
+    get_action_settings,
+    get_agent_token,
+    get_api_key,
+    get_resume_text,
+    group_of,
+    regenerate_agent_token,
+    save_action_settings,
+    save_api_key,
+    save_resume_text,
 )
-from app.db import init_db, get_session
-from app.models import Video, Status, Action, ActionType, ActionStatus
-from app.ingest import parse_export, insert_new_videos
-from app import worker, batch
+from app.db import get_session, init_db
+from app.ingest import insert_new_videos, parse_export
+from app.models import Action, ActionStatus, ActionType, Status, Video
 
 app = FastAPI(title="TikTok Saved Scanner")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -636,6 +646,7 @@ def settings_regenerate_token():
 def settings_key(key: str = Form(""), next: str = Form("/settings")):
     """Validate the key with a free token-count call, then store it in data/secrets.json."""
     import anthropic
+
     from app.config import ANALYSIS_MODEL
     key = key.strip()
     dest = next if next.startswith("/") else "/settings"

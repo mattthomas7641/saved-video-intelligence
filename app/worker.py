@@ -2,15 +2,15 @@
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from sqlmodel import select
 
-from app.config import DEFAULT_WORKERS
-from app.db import get_session
-from app.models import Video, Status
 from app import pipeline
 from app.analyze import FatalAnalysisError
+from app.config import DEFAULT_WORKERS
+from app.db import get_session
+from app.models import Status, Video
 from app.throttle import throttle
 
 log = logging.getLogger("worker")

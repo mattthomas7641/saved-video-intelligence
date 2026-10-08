@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from app.config import VIDEOS_DIR, THUMBS_DIR
+from app.config import THUMBS_DIR, VIDEOS_DIR
 
 
 class DownloadResult:
