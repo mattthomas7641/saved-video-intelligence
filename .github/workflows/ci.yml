@@ -30,4 +30,4 @@ jobs:
         # Catches exactly the class of bug that bit `playwright install --with-deps`
         # earlier in development: the Dockerfile looked fine until it was actually
         # built. No push - this only needs to prove the image still builds.
-        run: docker build -t tiktok-saved-scanner:ci .
+        run: docker build -t saved-video-intelligence:ci .
