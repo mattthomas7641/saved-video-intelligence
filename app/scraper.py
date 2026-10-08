@@ -36,6 +36,21 @@ shared messages - not guessed):
     earlier Favorites-tab work (desktop user-agent, `navigator.webdriver`
     patched out, `--disable-blink-features=AutomationControlled`) apply here
     too.
+  - A stale/rejected session does NOT reliably redirect to a URL containing
+    "login" - confirmed live: TikTok can instead serve the logged-out guest
+    homepage at the same tiktok.com/ URL, with a `top-login-button` element
+    and no nav-messages. `_raise_if_logged_out` checks for that element
+    directly instead of relying on the URL alone.
+
+Session longevity (confirmed live, 2026-10-08): a saved session can go stale
+server-side well before the file on disk looks obviously wrong - the cookie
+names TikTok expects (sessionid, sid_tt, sid_guard) were all still present
+in `tiktok_auth_state.json`, but TikTok had already revoked the session
+itself. This isn't a bug to fix so much as an inherent limit of session-based
+browser automation against a platform you don't control - expect to
+re-run `python -m app.scraper login` periodically, and treat a `NotLoggedIn`
+error from `/api/sync/inbox` as the normal, expected way that surfaces
+rather than a crash to debug.
 
 Known gap: a text note sent alongside a shared video isn't paired with it
 yet (`user_note` is always returned as None for now) - getting the right
@@ -143,25 +158,49 @@ def login() -> None:
             pass
 
 
+_LOGGED_OUT_SIGNAL = '[data-e2e="top-login-button"]'
+
+
+def _raise_if_logged_out(page):
+    """A stale/rejected session doesn't always redirect to a URL containing
+    "login" - confirmed live: TikTok can instead silently serve the logged-out
+    guest homepage at the SAME url (tiktok.com/), with a visible
+    `top-login-button` element and no nav-messages/nav-profile, rather than
+    redirecting anywhere. Checking the URL alone misses this case entirely -
+    it would otherwise fall through to nav-messages not being found, retry
+    3 times, and surface as a confusing SelectorMismatch instead of a clear
+    "please re-login" error."""
+    if "login" in page.url:
+        raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+    try:
+        logged_out = page.locator(_LOGGED_OUT_SIGNAL).count() > 0
+    except Exception:  # noqa: BLE001 - if we can't even check, don't block on it here
+        logged_out = False
+    if logged_out:
+        raise NotLoggedIn(
+            "Saved session is no longer valid (TikTok is serving a logged-out page). "
+            "Re-run: python -m app.scraper login"
+        )
+
+
 def _open_inbox(page):
     """Navigate to the message inbox. Tries the nav icon first (confirmed to
     exist), falls back to a direct URL if that doesn't land on a messages
     view - two different plausible TikTok UX shapes, so both are covered
     rather than guessing one."""
     page.goto(HOME_URL, wait_until="networkidle", timeout=30000)
+    _raise_if_logged_out(page)
     try:
         page.locator('[data-e2e="nav-messages"]').first.click(timeout=15000)
         page.wait_for_load_state("networkidle", timeout=15000)
     except Exception:  # noqa: BLE001 - try the direct URL instead
         pass
 
-    if "login" in page.url:
-        raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+    _raise_if_logged_out(page)
 
     if "messages" not in page.url:
         page.goto(MESSAGES_URL, wait_until="networkidle", timeout=30000)
-        if "login" in page.url:
-            raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
+        _raise_if_logged_out(page)
 
 
 _CONVERSATION_ITEM_SELECTOR = '[data-e2e="dm-new-conversation-item"]'
