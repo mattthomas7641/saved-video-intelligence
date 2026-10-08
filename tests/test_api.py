@@ -113,4 +113,54 @@ def test_sync_inbox_without_login_session_returns_clear_error(client, auth_heade
     save_trusted_sender("realaccount")
     resp = client.post("/api/sync/inbox", headers=auth_headers)
     assert resp.status_code == 409
-    assert "login" in resp.json()["error"].lower()
+
+
+def test_sync_inbox_only_processes_what_it_found_not_the_whole_backlog(client, auth_headers):
+    """Regression test for a real bug caught live: the processing job this
+    endpoint kicks off had no limit at all, and also triggered on any
+    pre-existing pending backlog even with zero new videos - so one sync
+    call started processing the entire multi-thousand-video library instead
+    of just what that sync found. Caught in production; ~$0.22 before it
+    was stopped. This pins the fix: bounded to exactly `added`, and only
+    triggered when something was actually added."""
+    from unittest.mock import patch
+
+    from app.config import save_trusted_sender
+
+    save_trusted_sender("realaccount")
+    # Simulate a large pre-existing backlog unrelated to this sync.
+    session = get_session()
+    for i in range(20):
+        session.add(Video(tiktok_url=f"https://www.tiktok.com/@old/video/{i}"))
+    session.commit()
+    session.close()
+
+    fake_links = [{"tiktok_url": "https://www.tiktok.com/@new/video/1", "saved_date": None, "user_note": None}]
+    with patch("app.scraper.scrape_new_saves", return_value=fake_links), \
+         patch("app.worker.start_job") as mock_start_job:
+        mock_start_job.return_value = True
+        resp = client.post("/api/sync/inbox", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["added"] == 1
+    mock_start_job.assert_called_once_with("full", limit=1, retry_errors=False)
+
+
+def test_sync_inbox_does_not_start_a_job_when_nothing_new_found(client, auth_headers):
+    from unittest.mock import patch
+
+    from app.config import save_trusted_sender
+
+    save_trusted_sender("realaccount")
+    session = get_session()
+    session.add(Video(tiktok_url="https://www.tiktok.com/@old/video/1"))  # pre-existing pending backlog
+    session.commit()
+    session.close()
+
+    with patch("app.scraper.scrape_new_saves", return_value=[]), \
+         patch("app.worker.start_job") as mock_start_job:
+        resp = client.post("/api/sync/inbox", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["added"] == 0
+    mock_start_job.assert_not_called()

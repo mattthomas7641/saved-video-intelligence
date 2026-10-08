@@ -10,29 +10,38 @@ small, directly testable script with a persisted login session, so "does the
 saved session survive unattended, across a real day-gap" can be checked by
 hand instead of trusted blind.
 
-DOM notes - what's confirmed vs. still a best guess:
-  CONFIRMED (seen live, logged in, during the earlier Saved-page work):
-  - `[data-e2e="nav-messages"]` exists in the top nav when logged in.
+DOM/network notes (confirmed live against a real bot account with real
+shared messages - not guessed):
+  - Clicking `[data-e2e="nav-messages"]` opens an INLINE FLYOUT panel, not a
+    page navigation (the URL stays on tiktok.com/) - a direct /messages
+    navigation is kept as a fallback for a possible alternate layout.
+  - That same click also surfaces an unrelated Activity/notifications panel
+    that can share overlapping visible text (e.g. a display name) with the
+    real conversation list - matching the DM list specifically by
+    `[data-e2e="dm-new-conversation-item"]` avoids that false match.
+  - The conversation list shows the counterpart's **display nickname**
+    ("Matt Thomas"), never their @handle - matching the configured trusted
+    handle against the list is a dead end. Instead each conversation is
+    opened and the handle is confirmed present in the rendered thread
+    itself, which TikTok does include once a thread is open.
+  - A shared video card (`[data-e2e="dm-new-shared-video"]`) has NO href,
+    id, or any usable attribute in its DOM - it's a CSS background-image
+    thumbnail with a client-side-only click handler. The canonical video id
+    and author instead show up in the `/api/im/item_detail` network
+    response TikTok fires automatically for each shared video as the thread
+    renders (no click needed) - listening for that, not scraping the DOM,
+    is what actually works here.
   - Headless Chromium with default settings gets served a degraded page
-    (missing features, generic fallback content) even with a valid session -
-    the same basic countermeasures that fixed the Favorites-tab work
-    (desktop user-agent, `navigator.webdriver` patched out,
-    `--disable-blink-features=AutomationControlled`) are carried over here.
-  NOT YET CONFIRMED - written as a reasonable first attempt, expect to debug
-  this live once the bot account exists and has real test messages (the
-  Favorites-tab code went through exactly this cycle: a first guess, three
-  real bugs found by testing against a real account, then it worked):
-  - Whether clicking nav-messages opens an inline panel or navigates to a
-    dedicated page (a direct `/messages` navigation is tried as a fallback).
-  - The conversation-list and message-thread markup, and whether a text note
-    sent alongside a shared video is a caption on the same message or a
-    separate one. Video *links* are found the same robust, selector-light
-    way the Favorites page used (any `a[href*='/video/']`), which doesn't
-    depend on guessing bubble markup. Note *association* is best-effort on
-    top of that and fails soft per-video (returns no note, not an error) if
-    the structure doesn't match what's assumed here - the core job (finding
-    shared videos from the trusted sender) still works even if note-pairing
-    doesn't.
+    even with a valid session - the same countermeasures that fixed the
+    earlier Favorites-tab work (desktop user-agent, `navigator.webdriver`
+    patched out, `--disable-blink-features=AutomationControlled`) apply here
+    too.
+
+Known gap: a text note sent alongside a shared video isn't paired with it
+yet (`user_note` is always returned as None for now) - getting the right
+videos from the right sender reliably was the harder and more important
+problem to solve first. `[data-e2e="dm-new-message-text"]` is a confirmed,
+real selector for message text if/when this gets implemented.
 
 Setup (once, interactively, on the host, against the BOT account):
     python -m app.scraper login
@@ -40,7 +49,6 @@ Setup (once, interactively, on the host, against the BOT account):
 Then the daily agent calls scrape_new_saves() via POST /api/sync/inbox.
 """
 import json
-import re
 import sys
 import time
 
@@ -53,7 +61,6 @@ AUTH_STATE_PATH = DATA_DIR / "tiktok_auth_state.json"
 HOME_URL = "https://www.tiktok.com/"
 MESSAGES_URL = "https://www.tiktok.com/messages"
 
-_VIDEO_LINK_SELECTOR = "a[href*='/video/']"
 _SESSION_COOKIES = {"sessionid", "sid_tt", "sid_guard"}
 
 # How far back to look each poll. Bounded so a growing conversation doesn't
@@ -157,52 +164,68 @@ def _open_inbox(page):
             raise NotLoggedIn("Saved session expired or was rejected. Re-run: python -m app.scraper login")
 
 
-def _open_trusted_sender_thread(page, handle: str):
-    """Find and open the conversation with the trusted sender. Matches by
-    visible text in the conversation list, not a guessed data-e2e attribute,
-    since that's the part most likely to need live-DOM correction."""
-    needle = handle.lower()
-    try:
-        page.get_by_text(re.compile(re.escape(handle), re.IGNORECASE)).first.click(timeout=15000)
-    except Exception as e:
+_CONVERSATION_ITEM_SELECTOR = '[data-e2e="dm-new-conversation-item"]'
+
+
+def _collect_from_trusted_sender_conversations(page, handle: str) -> list[dict]:
+    """Opens each conversation exactly once, combining sender-verification and
+    video extraction in that single visit - opening a conversation a second
+    time to "extract" from it doesn't refire the network requests the
+    extraction depends on (TikTok doesn't repeat an already-loaded fetch),
+    which is a real bug this fixed: an earlier version of this function
+    verified the sender first and extracted in a separate second pass, and
+    silently came back empty every time as a result.
+
+    The conversation LIST only shows a display nickname (confirmed live:
+    "Matt Thomas", not the @handle) - unusable for matching by handle.
+    Instead each candidate is opened and the handle is confirmed present in
+    the thread itself (TikTok does render the counterpart's real @handle
+    inside an opened thread, even though the list only shows their
+    nickname). Shared-video cards have no href/id in the DOM at all - the
+    canonical video id/author only show up in the `/api/im/item_detail`
+    network response TikTok fires automatically for each one as the thread
+    renders (no click on the video itself needed)."""
+    count = page.locator(_CONVERSATION_ITEM_SELECTOR).count()
+    if count == 0:
         raise SelectorMismatch(
-            f"Couldn't find a conversation with '@{handle}' in the inbox. Either nothing's been shared "
-            "yet, or the conversation-list markup doesn't match what get_by_text expects here - open "
-            "the browser pane yourself and check the live inbox DOM."
-        ) from e
-    page.wait_for_timeout(1500)
-    if needle not in page.content().lower():
-        raise SelectorMismatch(
-            f"Clicked a conversation but '@{handle}' doesn't appear in the opened thread - may have "
-            "opened the wrong conversation. Inspect the live DOM."
+            f"No conversations found at all ({_CONVERSATION_ITEM_SELECTOR} matched nothing). "
+            "Either nothing's been shared yet, or the inbox markup doesn't match what's expected here - "
+            "open the browser pane yourself and check the live inbox DOM."
         )
+    needle = handle.lower()
+    any_matched = False
+    collected: list[dict] = []
+    for i in range(count):
+        found_here: list[dict] = []
 
+        def on_response(resp, sink=found_here):
+            if "/api/im/item_detail" not in resp.url:
+                return
+            try:
+                item = resp.json()["itemInfo"]["itemStruct"]
+                sink.append({"id": str(item["id"]), "author": item["author"]["uniqueId"]})
+            except Exception:  # noqa: BLE001 - a single malformed response shouldn't lose the rest
+                pass
 
-def _extract_videos_with_notes(page) -> list[dict]:
-    """Best-effort: pair each shared video link with nearby text as a note.
-    Video-link extraction is the robust part (same pattern that worked for
-    the Favorites page); note-pairing is a first attempt and fails soft per
-    item rather than raising, since getting video links right matters far
-    more than getting notes right."""
-    data = page.evaluate("""() => {
-        const links = [...document.querySelectorAll("a[href*='/video/']")];
-        return links.map(link => {
-            const bubble = link.closest('[class*="message"], [class*="Message"], li, div[role="listitem"]') || link.parentElement;
-            let note = null;
-            if (bubble) {
-                const prev = bubble.previousElementSibling;
-                const next = bubble.nextElementSibling;
-                for (const sib of [next, prev]) {
-                    if (sib && !sib.querySelector("a[href*='/video/']")) {
-                        const text = sib.innerText?.trim();
-                        if (text && text.length < 500) { note = text; break; }
-                    }
-                }
-            }
-            return { href: link.href, note };
-        });
-    }""")
-    return data or []
+        page.on("response", on_response)
+        try:
+            page.locator(_CONVERSATION_ITEM_SELECTOR).nth(i).click(timeout=10000)
+            page.wait_for_timeout(2500)  # let item_detail requests from opening this thread settle
+            if needle in page.content().lower():
+                any_matched = True
+                collected.extend(found_here)
+        except Exception:  # noqa: BLE001 - skip a flaky item, don't abort the whole scan
+            continue
+        finally:
+            page.remove_listener("response", on_response)
+
+    if not any_matched:
+        raise SelectorMismatch(
+            f"Found {count} conversation(s) but none mention '@{handle}' once opened. Either nothing's "
+            "been shared from that account yet, or TikTok no longer surfaces the handle inside an "
+            "opened thread the way it did when this was written - inspect the live DOM."
+        )
+    return collected
 
 
 def scrape_new_saves(max_messages: int = 100) -> list[dict]:
@@ -228,12 +251,11 @@ def scrape_new_saves(max_messages: int = 100) -> list[dict]:
         page = context.new_page()
 
         last_error: Exception | None = None
-        extracted: list[dict] = []
+        collected: list[dict] = []
         for _attempt in range(3):
             try:
                 _open_inbox(page)
-                _open_trusted_sender_thread(page, handle)
-                extracted = _extract_videos_with_notes(page)
+                collected = _collect_from_trusted_sender_conversations(page, handle)
                 break
             except NotLoggedIn:
                 browser.close()
@@ -243,6 +265,7 @@ def scrape_new_saves(max_messages: int = 100) -> list[dict]:
                 raise
             except Exception as e:  # noqa: BLE001 - genuinely flaky; retry before giving up
                 last_error = e
+                collected = []
                 page.wait_for_timeout(2000)
         else:
             browser.close()
@@ -257,17 +280,16 @@ def scrape_new_saves(max_messages: int = 100) -> list[dict]:
             pass
         browser.close()
 
-    video_id_re = re.compile(r"/video/(\d{8,})")
     seen_ids: set[str] = set()
     results = []
-    for item in extracted[:max_messages]:
-        m = video_id_re.search(item.get("href", ""))
-        if not m or m.group(1) in seen_ids:
+    for item in collected[:max_messages]:
+        if item["id"] in seen_ids:
             continue
-        seen_ids.add(m.group(1))
-        user = re.search(r"tiktok\.com/(@[\w.\-]+)/video/", item["href"])
-        url = f"https://www.tiktok.com/{user.group(1) if user else '@_'}/video/{m.group(1)}"
-        results.append({"tiktok_url": url, "saved_date": None, "user_note": item.get("note")})
+        seen_ids.add(item["id"])
+        url = f"https://www.tiktok.com/@{item['author']}/video/{item['id']}"
+        # Note-pairing isn't implemented yet - getting the right videos from the right
+        # sender reliably mattered more to get working first. See module docstring.
+        results.append({"tiktok_url": url, "saved_date": None, "user_note": None})
     return results
 
 
