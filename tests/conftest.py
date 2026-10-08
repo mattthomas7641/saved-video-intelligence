@@ -30,8 +30,16 @@ def clean_db():
     must not leak into the next test's assertions about unconfigured state.
     (Found by a real failure: a trusted-sender test run earlier in the suite
     made a later "refuses without one configured" test fail only when run
-    as part of the full suite, not in isolation - this fixture is that fix.)"""
+    as part of the full suite, not in isolation - this fixture is that fix.)
+
+    alembic_version is dropped too, not just the app's own tables: it isn't
+    part of SQLModel.metadata (Alembic creates it itself via raw SQL), so
+    without this, init_db() would see the DB already "at head" from a
+    previous test and skip recreating video/action entirely."""
     SQLModel.metadata.drop_all(engine)
+    with engine.connect() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+        conn.commit()
     init_db()
     SECRETS_PATH.unlink(missing_ok=True)
     yield

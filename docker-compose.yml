@@ -2,7 +2,10 @@ services:
   app:
     build: .
     ports:
-      - "8787:8787"
+      # Loopback-only - "8787:8787" alone binds 0.0.0.0, exposing this (and
+      # the bearer-token /api/* routes) to the whole local network, not just
+      # this machine.
+      - "127.0.0.1:8787:8787"
     env_file:
       - .env
     volumes:
