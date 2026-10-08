@@ -19,14 +19,21 @@ import pytest
 from sqlmodel import SQLModel
 
 import app.models  # noqa: F401 - registers Video/Action on SQLModel.metadata
+from app.config import SECRETS_PATH
 from app.db import engine, get_session, init_db
 
 
 @pytest.fixture(autouse=True)
 def clean_db():
-    """Every test starts from an empty, freshly-migrated schema."""
+    """Every test starts from an empty, freshly-migrated schema AND a clean
+    secrets.json - a test that saves an API key / trusted sender / token
+    must not leak into the next test's assertions about unconfigured state.
+    (Found by a real failure: a trusted-sender test run earlier in the suite
+    made a later "refuses without one configured" test fail only when run
+    as part of the full suite, not in isolation - this fixture is that fix.)"""
     SQLModel.metadata.drop_all(engine)
     init_db()
+    SECRETS_PATH.unlink(missing_ok=True)
     yield
 
 

@@ -97,13 +97,20 @@ def _clip(text: str | None) -> str:
 
 def build_params(video) -> dict:
     """Request body for one video. Used as-is by live calls and as a Batch API entry."""
+    user_note = getattr(video, "user_note", None)
+    note_block = (
+        f"\nNote from the person who saved this (their own stated intent - weight this heavily for "
+        f"is_actionable/action_type/action_brief; direct stated intent should generally win over "
+        f"inferred content): {user_note}\n"
+        if user_note else ""
+    )
     content = f"""Saved TikTok video.
 Author: {video.author or "unknown"}
 Caption: {_clip(video.caption) or "(none)"}
 Hashtags: {video.hashtags or "(none)"}
 Transcript: {_clip(video.transcript) or "(no speech)"}
 On-screen text (OCR, noisy): {_clip(video.ocr_text) or "(none)"}
-
+{note_block}
 Call record_analysis. Score honestly: most saves are low-effort; reserve 4-5 for lasting value (recipe, tutorial, strong recommendation) or an unresolved action item."""
     return {
         "model": ANALYSIS_MODEL,

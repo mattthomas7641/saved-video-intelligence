@@ -42,6 +42,18 @@ def test_build_params_includes_model_and_forces_the_tool():
     assert params["tools"][0]["name"] == "record_analysis"
 
 
+def test_build_params_includes_user_note_when_present():
+    v = FakeVideo()
+    v.user_note = "build this agent for me"
+    params = analyze.build_params(v)
+    assert "build this agent for me" in params["messages"][0]["content"]
+
+
+def test_build_params_omits_note_block_when_absent():
+    params = analyze.build_params(FakeVideo())  # FakeVideo has no user_note attribute at all
+    assert "Note from the person who saved this" not in params["messages"][0]["content"]
+
+
 def test_build_params_clips_very_long_text():
     long_transcript = "x" * (analyze.MAX_TEXT_CHARS + 500)
     params = analyze.build_params(FakeVideo(transcript=long_transcript))

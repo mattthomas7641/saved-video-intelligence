@@ -144,7 +144,7 @@ def insert_new_videos(session, entries: list[dict]) -> int:
         existing = session.exec(_video_by_url(url)).first()
         if existing:
             continue
-        session.add(Video(tiktok_url=url, saved_date=entry.get("saved_date")))
+        session.add(Video(tiktok_url=url, saved_date=entry.get("saved_date"), user_note=entry.get("user_note")))
         added += 1
     session.commit()
     return added

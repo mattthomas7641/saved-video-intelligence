@@ -11,6 +11,7 @@ _ADDED_COLUMNS = [
     ("output_tokens", "INTEGER"),
     ("cost_usd", "REAL"),
     ("batch_id", "VARCHAR"),
+    ("user_note", "TEXT"),
 ]
 
 

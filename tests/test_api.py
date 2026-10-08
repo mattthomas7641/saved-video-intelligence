@@ -96,10 +96,21 @@ def test_action_update_persists_status_and_result(client, auth_headers):
     session.close()
 
 
-def test_sync_tiktok_without_login_session_returns_clear_error(client, auth_headers):
-    """No data/tiktok_auth_state.json exists in the test data dir, so this
-    must fail with a clear, actionable error - not a crash or a silent
-    empty success that would look like 'no new saves'."""
-    resp = client.post("/api/sync/tiktok", headers=auth_headers)
+def test_sync_inbox_without_trusted_sender_returns_clear_error(client, auth_headers):
+    """No TRUSTED_SENDER configured in the test data dir, so this must fail
+    with a clear, actionable error - not silently act on messages from
+    whoever happens to DM the bot account."""
+    resp = client.post("/api/sync/inbox", headers=auth_headers)
+    assert resp.status_code == 409
+    assert "handle" in resp.json()["error"].lower()
+
+
+def test_sync_inbox_without_login_session_returns_clear_error(client, auth_headers):
+    """Trusted sender configured, but no data/tiktok_auth_state.json exists
+    in the test data dir - must fail with a clear, actionable error, not a
+    crash or a silent empty success that would look like 'no new saves'."""
+    from app.config import save_trusted_sender
+    save_trusted_sender("realaccount")
+    resp = client.post("/api/sync/inbox", headers=auth_headers)
     assert resp.status_code == 409
     assert "login" in resp.json()["error"].lower()

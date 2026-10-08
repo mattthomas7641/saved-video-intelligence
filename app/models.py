@@ -23,6 +23,7 @@ class Video(SQLModel, table=True):
     # From the TikTok export
     tiktok_url: str = Field(index=True, unique=True)
     saved_date: datetime | None = None
+    user_note: str | None = None  # your own note when sharing to the bot account; null for export-upload imports
 
     # From yt-dlp
     author: str | None = None
