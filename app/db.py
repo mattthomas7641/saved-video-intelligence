@@ -27,4 +27,18 @@ def init_db() -> None:
 
 
 def get_session() -> Session:
+    """For non-request contexts with no FastAPI request lifecycle to hook a
+    dependency into - the worker thread pool, the batch poller, one-off
+    scripts. Request handlers should prefer get_db() instead."""
     return Session(engine)
+
+
+def get_db():
+    """FastAPI dependency: `session: Session = Depends(get_db)`. Opens one
+    session per request and guarantees it's closed afterward, replacing the
+    manual get_session()/try/finally boilerplate every route used to repeat."""
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
