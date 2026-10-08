@@ -133,7 +133,19 @@ def parse_export(file_bytes: bytes) -> list[dict]:
 def insert_new_videos(session, entries: list[dict]) -> int:
     """Shared dedup-insert used by both the export-upload path and the daily
     sync path: skip anything whose tiktok_url is already known, insert the rest
-    as PENDING. Returns how many new rows were added."""
+    as PENDING. Returns how many new rows were added.
+
+    An entry with no saved_date (the DM-sync path doesn't know TikTok's
+    original save time - see app/scraper.py) defaults to right now rather
+    than staying NULL. This matters for processing order, not just display:
+    the pending queue is worked oldest-saved-date-last (worker.py sorts
+    saved_date DESC), and SQLite sorts NULL as the *smallest* value - so a
+    NULL saved_date sorts dead last behind the entire historical backlog,
+    not first. A video synced today should be worked before a multi-year-old
+    backlog entry, which "we don't know when you saved it, so treat it as
+    just now" achieves; leaving it NULL silently defeated the daily sync's
+    whole purpose (confirmed live: a real synced video sat at the back of a
+    6,830-item queue and never got touched by a limit=1 run)."""
     from app.models import Video  # local import: avoids a circular import with models/db
 
     added = 0
@@ -144,7 +156,8 @@ def insert_new_videos(session, entries: list[dict]) -> int:
         existing = session.exec(_video_by_url(url)).first()
         if existing:
             continue
-        session.add(Video(tiktok_url=url, saved_date=entry.get("saved_date"), user_note=entry.get("user_note")))
+        saved_date = entry.get("saved_date") or datetime.utcnow()
+        session.add(Video(tiktok_url=url, saved_date=saved_date, user_note=entry.get("user_note")))
         added += 1
     session.commit()
     return added
