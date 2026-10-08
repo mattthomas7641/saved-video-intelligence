@@ -1,6 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --cov=app --cov-report=term-missing"
+# Without this, `app` is only importable when invoked as `python -m pytest`
+# (which adds cwd to sys.path) - bare `pytest` doesn't, and that's exactly
+# what broke the first real CI run. pythonpath makes it invocation-agnostic.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
