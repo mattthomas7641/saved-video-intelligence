@@ -1,29 +1,24 @@
 """Database engine/session helpers."""
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
-from app.config import DB_PATH
+from app.config import BASE_DIR, DB_PATH
 
 # Several worker threads write concurrently; wait for locks instead of failing.
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False, "timeout": 30})
 
-_ADDED_COLUMNS = [
-    ("input_tokens", "INTEGER"),
-    ("output_tokens", "INTEGER"),
-    ("cost_usd", "REAL"),
-    ("batch_id", "VARCHAR"),
-    ("user_note", "TEXT"),
-]
-
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(engine)
-    # create_all never alters existing tables, so add newer columns by hand.
-    with engine.connect() as conn:
-        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(video)")}
-        for name, ddl in _ADDED_COLUMNS:
-            if name not in existing:
-                conn.exec_driver_sql(f"ALTER TABLE video ADD COLUMN {name} {ddl}")
-        conn.commit()
+    """Brings the schema up to date via the Alembic migrations in alembic/versions/
+    (replaces the old hand-rolled ALTER TABLE list). `alembic upgrade head` is
+    idempotent and handles both cases: a brand-new DB gets created from the
+    baseline migration; one already at head (tracked via its alembic_version
+    table) is a no-op."""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(BASE_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BASE_DIR / "alembic"))
+    command.upgrade(cfg, "head")
 
 
 def get_session() -> Session:
