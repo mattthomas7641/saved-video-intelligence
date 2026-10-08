@@ -1,15 +1,51 @@
-"""App configuration loaded from environment / .env."""
+"""App configuration.
+
+Two deliberately separate mechanisms, not one:
+- `Settings` below (pydantic-settings) is .env-sourced *deployment* config -
+  static for a given deployment, the kind of thing that varies between dev
+  and prod but not between button-clicks in the running app. Validated at
+  startup; a typo or bad value fails fast instead of silently misbehaving.
+- `data/secrets.json` (see get_api_key/save_api_key and friends below) is
+  *runtime-mutable, user-editable-via-Settings-UI* state - the Anthropic key,
+  the agent bearer token, action-type toggles, your trusted TikTok handle.
+  These change while the app is running, from the app's own Settings page,
+  which `Settings` (env-var-sourced, read once at process start) can't
+  represent. Collapsing the two into one mechanism would be the wrong call,
+  not a simplification.
+"""
 import json
 import os
 import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Settings below re-parses .env itself (pydantic-settings' own mechanism), but
+# ANTHROPIC_API_KEY's fallback (see get_api_key) reads bare os.environ, which
+# needs .env loaded into the real process environment too - this is that.
 load_dotenv(BASE_DIR / ".env")
 
-DATA_DIR = Path(os.environ.get("SCANNER_DATA_DIR") or BASE_DIR / "data")
+
+class Settings(BaseSettings):
+    """.env-sourced deployment config. See module docstring for why this is
+    kept separate from the data/secrets.json-backed runtime settings."""
+    model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), env_file_encoding="utf-8", extra="ignore")
+
+    scanner_data_dir: str = Field(default="", alias="SCANNER_DATA_DIR")
+    analysis_model: str = Field(default="claude-haiku-4-5-20251001", alias="ANALYSIS_MODEL")
+    whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
+    stale_threshold_months: int = Field(default=3, alias="STALE_THRESHOLD_MONTHS")
+    workers: int = Field(default=4, alias="WORKERS")
+    delete_video_after_process: bool = Field(default=True, alias="DELETE_VIDEO_AFTER_PROCESS")
+
+
+settings = Settings()
+
+DATA_DIR = Path(settings.scanner_data_dir) if settings.scanner_data_dir.strip() else (BASE_DIR / "data")
 VIDEOS_DIR = DATA_DIR / "videos"
 THUMBS_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "db.sqlite3"
@@ -109,11 +145,15 @@ def save_resume_text(text: str) -> None:
 
 
 ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key()
-ANALYSIS_MODEL = os.environ.get("ANALYSIS_MODEL", "claude-haiku-4-5-20251001").strip()
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base").strip()
-STALE_THRESHOLD_MONTHS = int(os.environ.get("STALE_THRESHOLD_MONTHS", "3"))
-DEFAULT_WORKERS = int(os.environ.get("WORKERS", "4"))
-DELETE_VIDEO_AFTER_PROCESS = os.environ.get("DELETE_VIDEO_AFTER_PROCESS", "true").strip().lower() != "false"
+# Deliberately NOT part of Settings above: the Anthropic key is runtime-mutable
+# secrets.json state (see get_api_key), with this bare env var read as its one
+# fallback for users who prefer .env - not "deployment config" in the same
+# sense as the fields in Settings.
+ANALYSIS_MODEL = settings.analysis_model.strip()
+WHISPER_MODEL = settings.whisper_model.strip()
+STALE_THRESHOLD_MONTHS = settings.stale_threshold_months
+DEFAULT_WORKERS = settings.workers
+DELETE_VIDEO_AFTER_PROCESS = settings.delete_video_after_process
 
 # Broad groups -> categories. Claude assigns a category to each video; the group
 # level is derived here so it also applies to videos analyzed earlier.
