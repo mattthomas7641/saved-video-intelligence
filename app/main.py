@@ -492,9 +492,15 @@ def api_sync_inbox(start_processing: bool = True):
     finally:
         session.close()
 
+    # Bounded to exactly what THIS sync found - a daily sync processing your
+    # entire multi-thousand-video backlog every time it runs (a real bug this
+    # fixes: it originally had no limit at all, and also triggered on any
+    # pre-existing backlog even with zero new videos) would be both wildly
+    # slow and an unbounded Claude bill. Catching up a big backlog is still
+    # possible via /bulk, deliberately, not as a side effect of every sync.
     started = False
-    if start_processing and (added or worker.progress_summary()["counts"]["pending"]):
-        started = worker.start_job("full", retry_errors=False)
+    if start_processing and added:
+        started = worker.start_job("full", limit=added, retry_errors=False)
     return {"scraped": len(links), "added": added, "processing_started": started,
             "job": worker.job_status()}
 
