@@ -10,7 +10,6 @@ from app import batch, worker
 from app.config import (
     BASE_DIR,
     DEFAULT_WORKERS,
-    GROUPS,
     STALE_THRESHOLD_MONTHS,
     get_action_settings,
     get_agent_token,
@@ -40,6 +39,7 @@ from app.schemas import (
     SyncErrorResponse,
     SyncInboxResponse,
 )
+from app.services import dashboard_query
 
 app = FastAPI(title="TikTok Saved Scanner")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -99,8 +99,7 @@ def root():
 
 @app.get("/onboarding")
 def onboarding(request: Request):
-    return templates.TemplateResponse("onboarding.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "onboarding.html", {
         "has_api_key": bool(get_api_key()),
     })
 
@@ -113,174 +112,24 @@ async def onboarding_upload(file: UploadFile = File(...), session: Session = Dep
     return RedirectResponse(f"/dashboard?imported={added}", status_code=303)
 
 
-PER_PAGE = 30
-VIEW_NAMES = {
-    "processed": "Everything", "worth_rewatching": "Worth rewatching",
-    "flagged": "May be expired", "unwatched": "Not revisited",
-    "archived": "Archived", "queue": "Waiting & errors",
-}
-FILTER_KEYS = ("tab", "group", "category", "theme", "q", "sort", "show", "page")
-
-
 @app.get("/dashboard")
 def dashboard(request: Request, session: Session = Depends(get_db), tab: str = "processed", group: str = "",
               category: str = "", theme: str = "", q: str = "", sort: str = "score", show: str = "",
               page: int = 1, imported: int | None = None):
-    from collections import Counter, defaultdict
-    from urllib.parse import urlencode
-
-    all_videos = session.exec(select(Video)).all()
-
-    if tab not in VIEW_NAMES:
-        tab = "processed"
-    if category and not group:
-        group = group_of(category)
-
-    done = [v for v in all_videos if v.status == Status.DONE]
-    live = [v for v in done if not v.archived]
-    scores = [v.worth_rewatching_score for v in done if v.worth_rewatching_score]
-    stats = {
-        "total": len(all_videos),
-        "processed": len(done),
-        "queue": len([v for v in all_videos if v.status != Status.DONE]),
-        "errors": len([v for v in all_videos if v.status == Status.ERROR]),
-        "worth": len([v for v in live if (v.worth_rewatching_score or 0) >= 4]),
-        "flagged": len([v for v in live if v.needs_verification]),
-        "unwatched": len([v for v in live if not v.watched]),
-        "archived": len([v for v in done if v.archived]),
-        "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
-    }
-
-    # ---- topic tree (group -> category), counted over the live library
-    by_group: dict[str, Counter] = defaultdict(Counter)
-    for v in live:
-        if v.category:
-            by_group[group_of(v.category)][v.category] += 1
-    order = [g for g, _ in GROUPS]
-    tree = []
-    for g in order:
-        if g in by_group:
-            cats = by_group[g].most_common()
-            tree.append({"name": g, "count": sum(n for _, n in cats), "cats": cats})
-
-    # ---- base set for the chosen view
-    if tab == "queue":
-        videos = [v for v in all_videos if v.status != Status.DONE]
-    elif tab == "archived":
-        videos = [v for v in done if v.archived]
-    elif tab == "worth_rewatching":
-        videos = [v for v in live if (v.worth_rewatching_score or 0) >= 4]
-    elif tab == "flagged":
-        videos = [v for v in live if v.needs_verification]
-    elif tab == "unwatched":
-        videos = [v for v in live if not v.watched]
-    else:
-        videos = live
-
-    view_total = len(videos)
-    if group:
-        videos = [v for v in videos if group_of(v.category) == group]
-    if category:
-        videos = [v for v in videos if v.category == category]
-
-    # ---- drill-down chips for the next level
-    if category:
-        tag_counts = Counter(t.strip() for v in videos for t in (v.tags or "").split(",") if t.strip())
-        drill_label, drill = "Themes", [("theme", t, n) for t, n in tag_counts.most_common(14)]
-    elif group:
-        cat_counts = Counter(v.category for v in videos if v.category)
-        drill_label, drill = "Categories", [("category", c, n) for c, n in cat_counts.most_common()]
-    else:
-        grp_counts = Counter(group_of(v.category) for v in videos if v.category)
-        drill_label = "Topics"
-        drill = [("group", g, grp_counts[g]) for g in order if grp_counts[g]]
-
-    if theme:
-        tl = theme.lower()
-        videos = [v for v in videos if tl in [t.strip().lower() for t in (v.tags or "").split(",")]]
-    if q:
-        ql = q.lower()
-
-        def matches(v: Video) -> bool:
-            haystack = " ".join(filter(None, [v.summary, v.caption, v.tags, v.key_facts, v.author, v.category]))
-            return ql in haystack.lower()
-        videos = [v for v in videos if matches(v)]
-
-    def recency(v: Video):
-        return v.saved_date or v.created_at
-    if sort == "newest_saved":
-        videos.sort(key=recency, reverse=True)
-    elif sort == "oldest_saved":
-        videos.sort(key=recency)
-    else:
-        sort = "score"
-        videos.sort(key=lambda v: ((v.worth_rewatching_score or 0), recency(v)), reverse=True)
-
-    total_results = len(videos)
-    pages = max(1, -(-total_results // PER_PAGE))
-    page = min(max(page, 1), pages)
-    page_videos = videos[(page - 1) * PER_PAGE: page * PER_PAGE]
-
-    current = {"tab": tab, "group": group, "category": category, "theme": theme, "q": q, "sort": sort, "show": show, "page": page}
-
-    def href(**overrides):
-        merged = {**current, **overrides}
-        # moving up/sideways in the hierarchy clears the levels below it
-        if "group" in overrides and "category" not in overrides:
-            merged["category"] = ""
-        if ("group" in overrides or "category" in overrides) and "theme" not in overrides:
-            merged["theme"] = ""
-        if any(k in overrides for k in FILTER_KEYS if k != "page"):
-            merged["page"] = 1
-        if merged["tab"] == "processed":
-            merged["tab"] = ""
-        if merged["sort"] == "score":
-            merged["sort"] = ""
-        return "/dashboard?" + urlencode({k: v for k, v in merged.items() if v not in ("", None, 1)}) if any(
-            v not in ("", None, 1) for v in merged.values()) else "/dashboard"
-
-    crumbs = [("Library", href(group="", category="", theme="", q="", show=""))]
-    if group:
-        crumbs.append((group, href(group=group, category="")))
-    if category:
-        crumbs.append((category, href(category=category)))
-    if theme:
-        crumbs.append((theme, None))
-
-    # ---- overview (home) data
-    filtering = bool(group or category or theme or q)
-    overview = tab == "processed" and not filtering and show != "all" and stats["processed"] > 0
-    panels, top_picks = [], []
-    if overview:
-        def best_key(v: Video):
-            return ((v.worth_rewatching_score or 0), recency(v))
-        for g in tree:
-            members = [v for v in live if group_of(v.category) == g["name"]]
-            g = {**g, "best": max(members, key=best_key) if members else None,
-                 "worth": len([v for v in members if (v.worth_rewatching_score or 0) >= 4]),
-                 "flagged": len([v for v in members if v.needs_verification])}
-            panels.append(g)
-        top_picks = sorted([v for v in live if (v.worth_rewatching_score or 0) >= 4], key=best_key, reverse=True)[:8]
-
-    action_queue_count = len(session.exec(select(Action.id).where(Action.status == ActionStatus.QUEUED)).all())
-
+    context = dashboard_query.build_dashboard_context(
+        session, tab=tab, group=group, category=category, theme=theme, q=q, sort=sort, show=show,
+        page=page, imported=imported,
+    )
     key_ok = bool(get_api_key())
     setup = {
-        "key": key_ok, "imported": stats["total"] > 0, "analyzed": stats["processed"] > 0,
+        "key": key_ok, "imported": context["stats"]["total"] > 0, "analyzed": context["stats"]["processed"] > 0,
     }
     show_setup = not (setup["key"] and setup["imported"] and setup["analyzed"])
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "videos": page_videos, "top_picks": top_picks, "panels": panels, "overview": overview,
-        "tab": tab, "group": group, "category": category, "theme": theme, "q": q, "sort": sort,
-        "page": page, "pages": pages, "total_results": total_results, "view_total": view_total,
-        "tree": tree, "drill": drill, "drill_label": drill_label, "crumbs": crumbs,
-        "view_names": VIEW_NAMES, "stats": stats, "href": href,
+    return templates.TemplateResponse(request, "dashboard.html", {
+        **context,
         "setup": setup, "show_setup": show_setup,
         "next_url": request.url.path + ("?" + request.url.query if request.url.query else ""),
-        "action_queue_count": action_queue_count,
-        "imported": imported,
         "progress": worker.progress_summary(),
         "has_api_key": key_ok,
     })
@@ -289,7 +138,7 @@ def dashboard(request: Request, session: Session = Depends(get_db), tab: str = "
 @app.get("/video/{video_id}")
 def video_detail(request: Request, video_id: int, session: Session = Depends(get_db)):
     video = session.get(Video, video_id)
-    return templates.TemplateResponse("video_detail.html", {"request": request, "video": video})
+    return templates.TemplateResponse(request, "video_detail.html", {"video": video})
 
 
 @app.post("/video/{video_id}/watched")
@@ -351,8 +200,8 @@ def _optional_money(text: str) -> float | None:
 
 @app.get("/bulk")
 def bulk_page(request: Request, msg: str = ""):
-    return templates.TemplateResponse("bulk.html", {
-        "request": request, "counts": _bulk_counts(), "job": worker.job_status(), "msg": msg,
+    return templates.TemplateResponse(request, "bulk.html", {
+        "counts": _bulk_counts(), "job": worker.job_status(), "msg": msg,
         "cost_live": batch.observed_cost(False) or 0.0026, "cost_batch": batch.observed_cost(True) or batch.DEFAULT_BATCH_COST,
         "default_workers": DEFAULT_WORKERS, "has_api_key": bool(get_api_key()),
     })
@@ -511,8 +360,8 @@ def actions_page(request: Request, session: Session = Depends(get_db)):
     grouped = {}
     for item in items:
         grouped.setdefault(item["action"].status.value, []).append(item)
-    return templates.TemplateResponse("actions.html", {
-        "request": request, "grouped": grouped,
+    return templates.TemplateResponse(request, "actions.html", {
+        "grouped": grouped,
         "status_order": [s.value for s in ActionStatus],
         "settings": get_action_settings(),
     })
@@ -523,8 +372,8 @@ def jobs_page(request: Request, session: Session = Depends(get_db)):
     rows = session.exec(
         select(Action).where(Action.action_type == ActionType.JOB).order_by(Action.updated_at.desc())).all()
     items = [{"action": a, "video": session.get(Video, a.video_id)} for a in rows]
-    return templates.TemplateResponse("jobs.html", {
-        "request": request, "items": items, "has_resume": bool(get_resume_text()),
+    return templates.TemplateResponse(request, "jobs.html", {
+        "items": items, "has_resume": bool(get_resume_text()),
         "settings": get_action_settings(),
     })
 
@@ -615,8 +464,7 @@ def settings_key(key: str = Form(""), next: str = Form("/settings")):
 
 @app.get("/settings")
 def settings_page(request: Request, key: str = ""):
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "key_status": key,
         "has_api_key": bool(get_api_key()),
         "stale_threshold_months": STALE_THRESHOLD_MONTHS,
