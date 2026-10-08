@@ -7,9 +7,9 @@ import anthropic
 from anthropic import Anthropic
 from sqlmodel import select
 
-from app.analyze import build_params, parse_message, get_api_key, cost_usd
+from app.analyze import build_params, get_api_key, parse_message
 from app.db import get_session
-from app.models import Video, Status
+from app.models import Status, Video
 from app.pipeline import apply_analysis
 
 log = logging.getLogger("batch")

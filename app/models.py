@@ -1,9 +1,8 @@
 """Database models."""
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
-from sqlmodel import SQLModel, Field
+from sqlmodel import Field, SQLModel
 
 
 class Status(str, Enum):
@@ -19,50 +18,50 @@ class Status(str, Enum):
 
 
 class Video(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
 
     # From the TikTok export
     tiktok_url: str = Field(index=True, unique=True)
-    saved_date: Optional[datetime] = None
+    saved_date: datetime | None = None
 
     # From yt-dlp
-    author: Optional[str] = None
-    caption: Optional[str] = None
-    hashtags: Optional[str] = None  # comma-separated
-    upload_date: Optional[datetime] = None
-    duration_seconds: Optional[float] = None
-    local_video_path: Optional[str] = None
-    thumbnail_path: Optional[str] = None
+    author: str | None = None
+    caption: str | None = None
+    hashtags: str | None = None  # comma-separated
+    upload_date: datetime | None = None
+    duration_seconds: float | None = None
+    local_video_path: str | None = None
+    thumbnail_path: str | None = None
 
     # From whisper / OCR
-    transcript: Optional[str] = None
-    ocr_text: Optional[str] = None
+    transcript: str | None = None
+    ocr_text: str | None = None
 
     # From Claude analysis
-    category: Optional[str] = None
-    summary: Optional[str] = None
-    tags: Optional[str] = None  # comma-separated
-    worth_rewatching_score: Optional[int] = None  # 1-5
-    worth_rewatching_reason: Optional[str] = None
+    category: str | None = None
+    summary: str | None = None
+    tags: str | None = None  # comma-separated
+    worth_rewatching_score: int | None = None  # 1-5
+    worth_rewatching_reason: str | None = None
     has_promo_code: bool = False
-    promo_code_text: Optional[str] = None
+    promo_code_text: str | None = None
     has_dated_offer: bool = False
-    offer_deadline_text: Optional[str] = None
+    offer_deadline_text: str | None = None
     mentions_link_in_bio: bool = False
-    key_facts: Optional[str] = None  # comma-separated
+    key_facts: str | None = None  # comma-separated
 
     # Analysis usage/cost (for spend tracking)
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    cost_usd: Optional[float] = None
-    batch_id: Optional[str] = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+    batch_id: str | None = None
 
     # Derived
     needs_verification: bool = False  # heuristic relevance flag
 
     # Pipeline state
     status: Status = Field(default=Status.PENDING)
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     # User state
     watched: bool = False
@@ -91,15 +90,15 @@ class ActionStatus(str, Enum):
 class Action(SQLModel, table=True):
     """One actionable thing a saved video pointed at. Kept separate from Video
     so this fast-iterating workflow doesn't require altering the core table."""
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     video_id: int = Field(foreign_key="video.id", index=True)
 
     action_type: ActionType
     status: ActionStatus = Field(default=ActionStatus.QUEUED)
 
-    brief: Optional[str] = None    # JSON: what to do (project spec / skill / company+role+url)
-    result: Optional[str] = None   # JSON: PR url, or {resume_path, cover_letter_path, ...}
-    error_message: Optional[str] = None
+    brief: str | None = None    # JSON: what to do (project spec / skill / company+role+url)
+    result: str | None = None   # JSON: PR url, or {resume_path, cover_letter_path, ...}
+    error_message: str | None = None
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

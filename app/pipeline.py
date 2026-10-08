@@ -7,14 +7,14 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from app.config import DELETE_VIDEO_AFTER_PROCESS
-from app.models import Video, Status, Action, ActionType, ActionStatus
-from app import download as download_mod
-from app import transcribe as transcribe_mod
-from app import ocr as ocr_mod
 from app import analyze as analyze_mod
+from app import download as download_mod
+from app import ocr as ocr_mod
 from app import relevance as relevance_mod
-from app.throttle import throttle, looks_like_throttle
+from app import transcribe as transcribe_mod
+from app.config import DELETE_VIDEO_AFTER_PROCESS
+from app.models import Action, ActionStatus, ActionType, Status, Video
+from app.throttle import looks_like_throttle, throttle
 
 log = logging.getLogger("pipeline")
 

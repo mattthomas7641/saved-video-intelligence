@@ -4,7 +4,7 @@ import time
 import anthropic
 from anthropic import Anthropic
 
-from app.config import get_api_key, ANALYSIS_MODEL, CATEGORIES, normalize_category
+from app.config import ANALYSIS_MODEL, CATEGORIES, get_api_key, normalize_category
 
 _TOOL_SCHEMA = {
     "name": "record_analysis",
