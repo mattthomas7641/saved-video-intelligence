@@ -41,7 +41,7 @@ from app.schemas import (
 )
 from app.services import dashboard_query
 
-app = FastAPI(title="TikTok Saved Scanner")
+app = FastAPI(title="Saved Video Intelligence")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 

@@ -1,6 +1,6 @@
-# TikTok Saved Scanner
+# Saved Video Intelligence
 
-[![CI](https://github.com/mattthomas7641/tiktok-saved-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/tiktok-saved-scanner/actions/workflows/ci.yml)
+[![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
 Go through your entire TikTok Saved/Favorites list, transcribe + summarize each
 video, categorize it, score whether it's worth rewatching, and flag anything
@@ -39,7 +39,7 @@ Mac, see **Deploy your own copy** below.
 
 ### 1. Install system dependencies (Homebrew)
 
-You don't have Homebrew installed yet. Install it first:
+If you don't have Homebrew installed, install it first:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh && bash /tmp/brew-install.sh
@@ -181,7 +181,7 @@ Then open `http://localhost:8787`.
 The Docker image runs anywhere Docker does — a spare machine, a VPS, or a
 PaaS like Render or Railway. One-click option for Render:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mattthomas7641/tiktok-saved-scanner)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mattthomas7641/saved-video-intelligence)
 
 It'll ask for your `ANTHROPIC_API_KEY` during setup. A couple of things to
 know before you do this:

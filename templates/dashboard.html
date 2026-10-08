@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}{{ crumbs[-1][0] }} · Saved Scanner{% endblock %}
+{% block title %}{{ crumbs[-1][0] }} · Saved Video Intelligence{% endblock %}
 
 {% block body %}
 {% macro dots(score) -%}
@@ -63,7 +63,7 @@
 
 <div class="shell">
   <aside class="rail">
-    <a href="/dashboard" class="brand">Saved Scanner</a>
+    <a href="/dashboard" class="brand">Saved Video Intelligence</a>
     <nav style="display:flex;gap:4px" aria-label="Sections">
       <a class="nav-link" href="/actions" style="flex:1">{{ icon("sparkles") }}<span>Ideas</span>{% if action_queue_count %}<span class="count num">{{ action_queue_count }}</span>{% endif %}</a>
       <a class="nav-link" href="/jobs" style="flex:1">{{ icon("briefcase") }}<span>Jobs</span></a>
@@ -118,7 +118,7 @@
     {% if show_setup %}
     <section class="setup" aria-labelledby="setup-h">
       <h2 id="setup-h">Let’s get your saves sorted</h2>
-      <p>Three quick steps. Saved Scanner reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
+      <p>Three quick steps. Saved Video Intelligence reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
       <ol class="steps">
         <li class="step {{ 'done' if setup.key else 'current' }}">
           <span class="mark">{% if setup.key %}{{ icon("check") }}{% else %}{{ icon("key") }}{% endif %}</span>

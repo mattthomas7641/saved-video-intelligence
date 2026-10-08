@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}{{ (video.summary or video.caption or "Video")|headline if video else "Not found" }} · Saved Scanner{% endblock %}
+{% block title %}{{ (video.summary or video.caption or "Video")|headline if video else "Not found" }} · Saved Video Intelligence{% endblock %}
 {% block content %}
 <a class="back" href="/dashboard">{{ icon("back") }} Back to library</a>
 {% if not video %}
