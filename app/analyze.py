@@ -1,4 +1,6 @@
 """Categorize + summarize a video's transcript/caption/OCR text via Claude."""
+import logging
+import os
 import time
 
 import anthropic
@@ -54,6 +56,15 @@ _TOOL_SCHEMA = {
                      "has_promo_code", "has_dated_offer", "mentions_link_in_bio", "key_facts", "is_actionable"],
     },
 }
+
+log = logging.getLogger(__name__)
+
+# Optional LLM Inference Gateway (github.com/mattthomas7641/llm-inference-gateway), which
+# serves this task from a local model and escalates to Claude when the answer fails
+# validation. A dedicated variable rather than ANTHROPIC_BASE_URL: config.py loads .env
+# into os.environ, so ANTHROPIC_BASE_URL would also move the Batch API path in batch.py
+# (already half price, and a gateway can't batch it any cheaper) off the direct route.
+GATEWAY_URL = os.environ.get("LLM_GATEWAY_URL", "").strip()
 
 # $ per million tokens (input, output) for live requests; the Batch API is half price.
 _PRICES = {"claude-haiku-4-5": (1.0, 5.0), "claude-sonnet-5": (2.0, 10.0), "claude-opus-5": (5.0, 25.0)}
@@ -129,15 +140,29 @@ def parse_message(message) -> AnalysisResult:
     raise RuntimeError("Claude did not return an analysis.")
 
 
+def _client(api_key: str, via_gateway: bool) -> Anthropic:
+    if via_gateway:
+        return Anthropic(api_key=api_key, base_url=GATEWAY_URL, default_headers={"x-task": "video-tagging"})
+    return Anthropic(api_key=api_key)
+
+
 def analyze_video(video) -> AnalysisResult:
     api_key = get_api_key()
     if not api_key:
         raise FatalAnalysisError("No Anthropic API key. Add one in Settings.")
-    client = Anthropic(api_key=api_key)
+    via_gateway = bool(GATEWAY_URL)
+    client = _client(api_key, via_gateway)
 
     for attempt in range(4):
         try:
             return parse_message(client.messages.create(**build_params(video)))
+        except anthropic.APIConnectionError:
+            if not via_gateway:
+                raise
+            # Gateway down or timed out: don't fail the video, go straight to Anthropic.
+            log.warning("LLM gateway at %s unreachable; calling Anthropic directly", GATEWAY_URL)
+            via_gateway = False
+            client = _client(api_key, via_gateway)
         except anthropic.RateLimitError:
             time.sleep(15 * (attempt + 1))  # per-minute limits: wait and try again
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:

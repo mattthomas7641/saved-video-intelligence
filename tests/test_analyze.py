@@ -133,3 +133,34 @@ def test_analyze_video_treats_credit_error_as_fatal(monkeypatch):
         mock_messages.create.side_effect = _raise
         with pytest.raises(analyze.FatalAnalysisError):
             analyze.analyze_video(FakeVideo())
+
+
+def test_analyze_video_routes_through_gateway_when_configured(monkeypatch):
+    monkeypatch.setattr(analyze, "get_api_key", lambda: "sk-ant-fake")
+    monkeypatch.setattr(analyze, "GATEWAY_URL", "http://127.0.0.1:8000")
+    inits = []
+    fake_response = _fake_tool_use_message(BASE_FIELDS)
+    with patch.object(analyze.Anthropic, "__init__", lambda self, **kw: inits.append(kw)), \
+         patch.object(analyze.Anthropic, "messages", create=True) as mock_messages:
+        mock_messages.create.return_value = fake_response
+        analyze.analyze_video(FakeVideo())
+    assert inits == [{"api_key": "sk-ant-fake", "base_url": "http://127.0.0.1:8000",
+                      "default_headers": {"x-task": "video-tagging"}}]
+
+
+def test_analyze_video_falls_back_to_anthropic_when_gateway_is_down(monkeypatch):
+    import anthropic as anthropic_pkg
+    import httpx
+
+    monkeypatch.setattr(analyze, "get_api_key", lambda: "sk-ant-fake")
+    monkeypatch.setattr(analyze, "GATEWAY_URL", "http://127.0.0.1:8000")
+    inits = []
+    fake_response = _fake_tool_use_message(BASE_FIELDS)
+    connection_error = anthropic_pkg.APIConnectionError(request=httpx.Request("POST", "http://127.0.0.1:8000"))
+    with patch.object(analyze.Anthropic, "__init__", lambda self, **kw: inits.append(kw)), \
+         patch.object(analyze.Anthropic, "messages", create=True) as mock_messages:
+        mock_messages.create.side_effect = [connection_error, fake_response]
+        result = analyze.analyze_video(FakeVideo())
+    assert result.category == BASE_FIELDS["category"]
+    assert inits[-1] == {"api_key": "sk-ant-fake"}
+
