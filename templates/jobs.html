@@ -2,8 +2,8 @@
 {% from "_icons.html" import icon %}
 {% block title %}Jobs · Saved Video Intelligence{% endblock %}
 {% block content %}
-<header class="page-head" style="display:block">
-  <h1 style="font:500 var(--fs-2xl)/1.1 var(--serif);letter-spacing:-0.02em">Job leads from your saves</h1>
+<header class="page-head">
+  <h1>Job leads from your saves</h1>
   <p class="sub" style="max-width:62ch">
     Videos about an actual hiring post land here. The agent (once its daily schedule is turned on) can draft a
     tailored resume and cover letter for you to review — it will never submit a real application. That step is
@@ -37,10 +37,10 @@
 
     {% if a.result %}
     <details style="margin-bottom:10px"><summary>Drafted materials</summary>
-      <pre style="white-space:pre-wrap;background:var(--sidebar);border:1px solid var(--line);border-radius:7px;padding:12px;margin-top:8px;font:400 0.85rem/1.5 var(--sans)">{{ a.result }}</pre>
+      <pre class="result">{{ a.result }}</pre>
     </details>
     {% endif %}
-    {% if a.error_message %}<p style="color:var(--danger)" class="hint">{{ a.error_message }}</p>{% endif %}
+    {% if a.error_message %}<p style="color:var(--flag)" class="hint">{{ a.error_message }}</p>{% endif %}
 
     {% if a.status.value not in ("done", "dismissed") %}
     <div style="display:flex;gap:8px">
