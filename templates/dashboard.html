@@ -3,8 +3,8 @@
 {% block title %}{{ crumbs[-1][0] }} · Saved Video Intelligence{% endblock %}
 
 {% block body %}
-{% macro dots(score) -%}
-<span class="rating" role="img" aria-label="{{ score }} out of 5">{% for i in range(1, 6) %}<i class="{{ 'on' if i <= score }}"></i>{% endfor %}</span>
+{% macro bar(score) -%}
+<span class="rating {{ 'hi' if score >= 4 }}" role="img" aria-label="{{ score }} out of 5"><i style="width:{{ score / 5 * 100 }}%"></i></span>
 {%- endmacro %}
 
 {% macro row(v) %}
@@ -14,20 +14,21 @@
   <div class="text">
     <h3>{{ (v.summary or v.caption or v.tiktok_url)|headline }}</h3>
     {% set rest = (v.summary or "")|rest %}
-    {% if v.error_message %}<p class="snippet" style="color:var(--danger)">{{ v.error_message }}</p>{% endif %}
-    {% if v.needs_verification or v.has_promo_code or v.watched or v.status.value != "done" %}
+    {% if v.error_message %}<p class="snippet" style="color:var(--flag)">{{ v.error_message }}</p>{% endif %}
+    {% set flag = v.needs_verification or (v.status.value == 'error') %}
+    {% if flag or v.watched or v.status.value not in ("done", "error") %}
     <div class="flags">
       {% if v.needs_verification %}<span class="tag-warn">{{ icon("alert") }} May be expired</span>
-      {% elif v.has_promo_code %}<span class="tag-info">{{ icon("tag") }} Promo code</span>{% endif %}
-      {% if v.status.value != "done" %}<span class="{{ 'tag-err' if v.status.value == 'error' else 'tag-info' }}">{{ v.status.value|capitalize }}</span>{% endif %}
+      {% elif v.status.value == "error" %}<span class="tag-err">{{ icon("alert") }} Failed</span>{% endif %}
+      {% if v.status.value not in ("done", "error") %}<span class="tag-info">{{ v.status.value|capitalize }}</span>{% endif %}
       {% if v.watched %}<span class="tag-info">{{ icon("check") }} Revisited</span>{% endif %}
     </div>
     {% endif %}
   </div>
-  <div class="cell topic c-topic {{ "tint-" ~ (v.category|cat_slug) if v.category }}">{% if v.category %}<span class="ci">{{ icon(v.category|cat_icon) }}</span>{% endif %}<span>{{ v.category or "—" }}</span></div>
+  <div class="cell topic c-topic">{% if v.category %}<span class="ci">{{ icon(v.category|cat_icon) }}</span>{% endif %}<span>{{ v.category or "—" }}</span></div>
   <div class="cell faint c-creator">{% if v.author %}@{{ v.author }}{% else %}—{% endif %}</div>
   <div class="cell faint c-date num">{{ v.saved_date|short_date }}</div>
-  <div class="c-rating">{% if v.worth_rewatching_score %}{{ dots(v.worth_rewatching_score) }}{% else %}<span class="cell faint">—</span>{% endif %}</div>
+  <div class="c-rating">{% if v.worth_rewatching_score %}{{ bar(v.worth_rewatching_score) }}{% else %}<span class="cell faint">—</span>{% endif %}</div>
   <div class="actions c-actions">
     <form action="/video/{{ v.id }}/watched" method="post">
       <input type="hidden" name="next" value="{{ next_url }}">
@@ -64,42 +65,39 @@
 <div class="shell">
   <aside class="rail">
     <a href="/dashboard" class="brand">Saved Video Intelligence</a>
-    <nav style="display:flex;gap:4px" aria-label="Sections">
-      <a class="nav-link" href="/actions" style="flex:1">{{ icon("sparkles") }}<span>Ideas</span>{% if action_queue_count %}<span class="count num">{{ action_queue_count }}</span>{% endif %}</a>
-      <a class="nav-link" href="/jobs" style="flex:1">{{ icon("briefcase") }}<span>Jobs</span></a>
+
+    <nav class="quicklinks" aria-label="Sections">
+      <a href="/actions">{{ icon("sparkles") }}<span>Ideas{% if action_queue_count %} <span class="badge num">{{ action_queue_count }}</span>{% endif %}</span></a>
+      <a href="/jobs">{{ icon("briefcase") }}<span>Jobs</span></a>
+      <a href="/bulk">{{ icon("trending") }}<span>Analyze</span></a>
     </nav>
 
     {% if stats.processed %}
-    <nav aria-label="Topics">
-      <h2>Browse by topic</h2>
-      <div class="tree">
-        <a class="all" href="{{ href(group='', category='', theme='', q='', show='all') }}" {% if not group %}aria-current="page"{% endif %}>
-          <span class="gi tint-other">{{ icon("grid") }}</span><span>All topics</span><span class="count num">{{ "{:,}".format(stats.processed - stats.archived) }}</span>
-        </a>
-        {% for g in tree %}
-        <details {% if group == g.name %}open{% endif %}>
-          <summary><span class="gi tint-{{ g.name|gslug }}">{{ icon(g.name|group_icon) }}</span><span>{{ g.name }}</span><span class="count num">{{ g.count }}</span><span class="chev">{{ icon("chev") }}</span></summary>
-          <div class="sub">
-            <a class="tint-{{ g.name|gslug }}" href="{{ href(group=g.name) }}" {% if group == g.name and not category %}aria-current="page"{% endif %}><span class="ci">{{ icon("library") }}</span><span>All {{ g.name }}</span></a>
-            {% for c, n in g.cats %}
-            <a class="tint-{{ c|cat_slug }}" href="{{ href(category=c) }}" {% if category == c %}aria-current="page"{% endif %}><span class="ci">{{ icon(c|cat_icon) }}</span><span>{{ c }}</span><span class="count num">{{ n }}</span></a>
-            {% endfor %}
-          </div>
-        </details>
-        {% endfor %}
-      </div>
+    <nav class="tabrail" aria-label="Topics">
+      <a class="all" href="{{ href(group='', category='', theme='', q='', show='all') }}" {% if not group %}aria-current="page"{% endif %}>
+        <span class="ci">{{ icon("grid") }}</span><span>All topics</span><span class="count num">{{ "{:,}".format(stats.processed - stats.archived) }}</span>
+      </a>
+      {% for g in tree %}
+      <details {% if group == g.name %}open{% endif %}>
+        <summary><span class="ci">{{ icon(g.name|group_icon) }}</span><span>{{ g.name }}</span><span class="count num">{{ g.count }}</span><span class="chev">{{ icon("chev") }}</span></summary>
+        <div class="sub">
+          <a href="{{ href(group=g.name) }}" {% if group == g.name and not category %}aria-current="page"{% endif %}>All {{ g.name }}</a>
+          {% for c, n in g.cats %}
+          <a href="{{ href(category=c) }}" {% if category == c %}aria-current="page"{% endif %}><span>{{ c }}</span><span class="count num">{{ n }}</span></a>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
     </nav>
     {% endif %}
 
     {% if stats.total %}
     <section class="processing" aria-label="Analysis">
-      <div><strong class="num" style="color:var(--ink)">{{ "{:,}".format(stats.processed) }}</strong> of <span class="num">{{ "{:,}".format(stats.total) }}</span> analyzed</div>
+      <div class="line"><span>{{ "{:,}".format(stats.processed) }} of {{ "{:,}".format(stats.total) }} analyzed</span></div>
       <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="{{ stats.total }}" aria-valuenow="{{ stats.processed }}">
         <span style="width: {{ (stats.processed / stats.total * 100) if stats.total else 0 }}%"></span>
       </div>
-      {% if stats.total %}{{ estimate_form("rail", progress.running) }}{% endif %}
-      <a href="/bulk" class="btn" style="justify-content:flex-start">{{ icon("trending") }} Analyze everything</a>
-      <div style="display:flex;gap:14px"><a href="/onboarding">Import</a><a href="/settings">Settings</a></div>
+      <div class="links"><a href="/onboarding">Import</a><a href="/settings">Settings</a></div>
     </section>
     {% else %}
     <div class="processing"><a href="/settings">Settings</a></div>
@@ -134,7 +132,7 @@
                 <button class="btn btn-primary" type="submit">Save key</button>
                 <a class="btn" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">{{ icon("external") }} Get a key</a>
               </form>
-              {% if request.query_params.get("key") == "invalid" %}<p class="help" style="color:var(--danger)">That key was rejected. Check that you copied all of it.</p>{% endif %}
+              {% if request.query_params.get("key") == "invalid" %}<p class="help" style="color:var(--flag)">That key was rejected. Check that you copied all of it.</p>{% endif %}
               <p class="help">Your key is stored only on this computer.</p>
             {% endif %}
           </div>
@@ -221,7 +219,7 @@
     <div class="drill">
       <span class="lead">{{ drill_label }}</span>
       {% for kind, name, n in drill %}
-      <a class="chip {{ ('tint-' ~ (name|cat_slug)) if kind == 'category' else (('tint-' ~ (name|gslug)) if kind == 'group' else '') }}" href="{{ href(**{kind: name}) }}" {% if (kind == 'theme' and theme|lower == name|lower) or (kind == 'category' and category == name) %}aria-current="true"{% endif %}>{% if kind == 'category' %}<span class="ci">{{ icon(name|cat_icon) }}</span>{% elif kind == 'group' %}<span class="ci">{{ icon(name|group_icon) }}</span>{% endif %}{{ name }} <span class="n num">{{ n }}</span></a>
+      <a class="chip" href="{{ href(**{kind: name}) }}" {% if (kind == 'theme' and theme|lower == name|lower) or (kind == 'category' and category == name) %}aria-current="true"{% endif %}>{% if kind == 'category' %}<span class="ci">{{ icon(name|cat_icon) }}</span>{% elif kind == 'group' %}<span class="ci">{{ icon(name|group_icon) }}</span>{% endif %}{{ name }} <span class="n num">{{ n }}</span></a>
       {% endfor %}
       {% if theme %}<a class="chip" href="{{ href(theme='') }}">Clear theme</a>{% endif %}
     </div>
@@ -233,11 +231,11 @@
         {% for g in panels %}
         <article class="panel">
           <header>
-            <span class="gi lg tint-{{ g.name|gslug }}">{{ icon(g.name|group_icon) }}</span>
+            <span class="gi lg">{{ icon(g.name|group_icon) }}</span>
             <div class="ttl"><h2><a href="{{ href(group=g.name) }}">{{ g.name }}</a></h2><span class="total num">{{ g.count }} video{{ "" if g.count == 1 else "s" }}</span></div>
           </header>
           <ul>
-            {% for c, n in g.cats[:5] %}<li><a class="tint-{{ c|cat_slug }}" href="{{ href(category=c) }}"><span><span class="ci">{{ icon(c|cat_icon) }}</span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
+            {% for c, n in g.cats[:5] %}<li><a href="{{ href(category=c) }}"><span><span class="ci">{{ icon(c|cat_icon) }}</span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
             {% if g.cats|length > 5 %}<li><a href="{{ href(group=g.name) }}"><span>+ {{ g.cats|length - 5 }} more categories</span><span></span></a></li>{% endif %}
           </ul>
           <div class="stats">
