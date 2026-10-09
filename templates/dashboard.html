@@ -227,20 +227,16 @@
 
     {% if overview %}
       <p class="overview-lead">Pick a topic to dig in, or start with the best ones below. Dots show how worth rewatching each video is.</p>
-      <nav class="territory-index" aria-label="Jump to topic">
+      <div class="panels">
         {% for g in panels %}
-        <a href="#t-{{ g.name|gslug }}" data-territory="{{ g.name|gslug }}" style="--tc: var(--t-{{ g.name|gslug }})" title="{{ g.name }}" aria-label="{{ g.name }}"></a>
-        {% endfor %}
-      </nav>
-      <div class="panels" id="map">
-        {% for g in panels %}
-        <article class="panel" id="t-{{ g.name|gslug }}" style="--tc: var(--t-{{ g.name|gslug }})">
+        <article class="panel" style="--tc: var(--t-{{ g.name|gslug }})">
           <header>
             <span class="gi lg">{{ icon(g.name|group_icon) }}</span>
             <div class="ttl"><h2><a href="{{ href(group=g.name) }}">{{ g.name }}</a></h2><span class="total num">{{ g.count }} video{{ "" if g.count == 1 else "s" }}</span></div>
           </header>
           <ul>
-            {% for c, n in g.cats %}<li><a href="{{ href(category=c) }}"><span><span class="ci">{{ icon(c|cat_icon) }}</span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
+            {% for c, n in g.cats[:5] %}<li><a href="{{ href(category=c) }}"><span><span class="ci">{{ icon(c|cat_icon) }}</span>{{ c }}</span><span class="num">{{ n }}</span></a></li>{% endfor %}
+            {% if g.cats|length > 5 %}<li><a href="{{ href(group=g.name) }}"><span>+ {{ g.cats|length - 5 }} more categories</span><span></span></a></li>{% endif %}
           </ul>
           <div class="stats">
             <span title="Worth rewatching">{{ icon("star") }}<span class="num">{{ g.worth }}</span></span>
@@ -251,7 +247,6 @@
             <a href="/video/{{ g.best.id }}">{{ (g.best.summary or g.best.caption or "")|headline }}</a>
           </div>
           {% endif %}
-          <a class="btn cta" href="{{ href(group=g.name) }}">See all {{ g.count }} →</a>
         </article>
         {% endfor %}
       </div>
@@ -302,23 +297,6 @@
     };
     input.addEventListener("input", update); update();
   });
-
-  // Highlight the territory-index dot for whichever map section currently
-  // dominates the viewport, so direct-jump and scroll-snap stay in sync.
-  (function () {
-    const sections = document.querySelectorAll(".panels .panel");
-    const dots = document.querySelectorAll(".territory-index a");
-    if (!sections.length || !dots.length) return;
-    const dotFor = id => document.querySelector(`.territory-index a[href="#${id}"]`);
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (!visible) return;
-      dots.forEach(d => d.classList.remove("current"));
-      const dot = dotFor(visible.target.id);
-      if (dot) dot.classList.add("current");
-    }, { threshold: 0.6 });
-    sections.forEach(s => observer.observe(s));
-  })();
   {% if progress.running %}
   (function poll() {
     fetch("/api/progress").then(r => r.json()).then(p => {

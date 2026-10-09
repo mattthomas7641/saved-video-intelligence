@@ -278,76 +278,33 @@ main.main { padding: 28px 36px 64px; min-width: 0; }
 
 /* ---------- overview: the map ---------- */
 .overview-lead { color: var(--ink-2); margin: 0 0 18px; max-width: 70ch; font-size: var(--fs-sm); }
-
-/* the map: one territory fills the screen at a time, scroll snaps between
-   them. A fixed dot index (below) gives direct jump, not just sequential
-   stepping - important for a 7,300-video library where you usually already
-   know which topic you want. */
-.panels {
-  display: flex; flex-direction: column;
-  margin: 0 -36px 0; /* bleed past main's own padding so each section is truly full-width */
-  /* .panels is its OWN scroll container (not the whole page) - mandatory
-     snap on html/body would make the browser refuse to ever rest the page
-     at the top, permanently hiding the rail/notices/lead paragraph above
-     the map (confirmed live: scrollTo(0,0) got silently overridden back
-     into the first panel). Confining it here keeps snap scoped to the map
-     only; the outer page scrolls freely above and below it as normal, and
-     scroll naturally chains out to the page once this area's own scroll
-     is exhausted. */
-  height: 100svh; overflow-y: auto; scroll-snap-type: y mandatory;
-}
+.panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 10px; }
 .panel {
   --tc: var(--ink);
-  background: var(--tc); color: #fff;
-  min-height: 100svh; scroll-snap-align: start; scroll-margin-top: 0;
-  padding: 72px clamp(28px, 7vw, 96px); display: flex; flex-direction: column; justify-content: center; gap: 18px;
-  position: relative;
+  background: var(--tc); color: #fff; padding: 20px 20px 16px; display: flex; flex-direction: column; gap: 10px;
+  border-radius: 26px; position: relative; overflow: hidden;
+  transition: transform 220ms var(--ease);
 }
-.panel header { display: flex; align-items: center; gap: 18px; position: relative; z-index: 1; }
+.panel:hover { transform: translateY(-3px); }
+.panel header { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; }
 .panel header .ttl { min-width: 0; flex: 1; }
 .panel .gi { background: rgba(255,255,255,0.22); color: #fff; }
-.panel .gi.lg { width: 60px; height: 60px; font-size: 30px; }
 .panel li a span:first-child { display: inline-flex; align-items: center; gap: 9px; }
-.panel .ci { color: rgba(255,255,255,0.8); font-size: 16px; }
-.panel .stats { display: flex; gap: 18px; font: 600 var(--fs-sm)/1 var(--sans); color: rgba(255,255,255,0.85); position: relative; z-index: 1; }
-.panel .stats span { display: inline-flex; gap: 6px; align-items: center; }
+.panel .stats { display: flex; gap: 14px; font: 600 var(--fs-xs)/1 var(--sans); color: rgba(255,255,255,0.85); position: relative; z-index: 1; }
+.panel .stats span { display: inline-flex; gap: 5px; align-items: center; }
 .panel .stats .warn { color: #FFE8A3; }
-.panel h2 { font: 700 var(--fs-2xl)/1.0 var(--display); letter-spacing: -0.025em; color: #fff; }
+.panel h2 { font: 700 var(--fs-md)/1.15 var(--display); letter-spacing: -0.015em; color: #fff; }
 .panel h2 a { text-decoration: none; color: #fff; }
 .panel h2 a:hover { text-decoration: underline; }
-.panel .total { color: rgba(255,255,255,0.8); font: 500 var(--fs-md)/1 var(--sans); }
-.panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; position: relative; z-index: 1; max-width: 520px; }
-.panel li a { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; text-decoration: none; color: rgba(255,255,255,0.92); font: 500 var(--fs-md)/1 var(--sans); border-top: 1px solid rgba(255,255,255,0.18); }
+.panel .total { color: rgba(255,255,255,0.8); font: 500 var(--fs-xs)/1 var(--sans); }
+.panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; position: relative; z-index: 1; }
+.panel li a { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; text-decoration: none; color: rgba(255,255,255,0.92); font: 500 var(--fs-sm)/1 var(--sans); border-top: 1px solid rgba(255,255,255,0.18); }
 .panel li:first-child a { border-top: 0; }
 .panel li a:hover { color: #fff; }
 .panel li a span:last-child { color: rgba(255,255,255,0.7); }
-.panel .best { padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.18); font-size: var(--fs-sm); color: rgba(255,255,255,0.75); position: relative; z-index: 1; max-width: 560px; }
-.panel .best a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #fff; text-decoration: none; font-weight: 500; font-size: 1.05rem; line-height: 1.35; margin-top: 3px; }
+.panel .best { margin-top: auto; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.18); font-size: var(--fs-xs); color: rgba(255,255,255,0.75); position: relative; z-index: 1; }
+.panel .best a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #fff; text-decoration: none; font-weight: 500; font-size: 0.9rem; line-height: 1.35; margin-top: 3px; }
 .panel .best a:hover { text-decoration: underline; }
-.panel .cta {
-  align-self: flex-start; margin-top: 4px; position: relative; z-index: 1;
-  border-color: rgba(255,255,255,0.6); color: #fff; background: transparent;
-}
-.panel .cta:hover { background: #fff; color: var(--tc); border-color: #fff; transform: translateY(-1px); }
-
-.territory-index {
-  position: fixed; right: 18px; top: 50%; translate: 0 -50%; z-index: 20;
-  display: flex; flex-direction: column; gap: 2px; padding: 10px 6px;
-}
-/* Visible dot stays small and elegant; the clickable area is a much larger
-   28px square around it - an 11px target is genuinely too small to hit
-   reliably with a real mouse, let alone touch. */
-.territory-index a {
-  width: 28px; height: 28px; display: grid; place-items: center;
-}
-.territory-index a::after {
-  content: ""; width: 11px; height: 11px; border-radius: var(--pill); background: var(--tc, var(--line-strong));
-  opacity: 0.45; transition: opacity 180ms var(--ease-flat), transform 180ms var(--ease);
-  display: block;
-}
-.territory-index a:hover::after { opacity: 0.8; }
-.territory-index a.current::after { opacity: 1; transform: scale(1.35); }
-@media (max-width: 900px) { .territory-index { right: 10px; } .panel { padding: 56px 24px; } .panels { margin: 0 -16px; } }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 30px 0 12px; }
 .section-head h2 { font: 700 var(--fs-md)/1.2 var(--display); letter-spacing: -0.015em; }
 .section-head a { color: var(--ink-3); font: 600 var(--fs-sm)/1 var(--sans); }
