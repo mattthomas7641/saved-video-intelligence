@@ -37,6 +37,9 @@ class Settings(BaseSettings):
 
     scanner_data_dir: str = Field(default="", alias="SCANNER_DATA_DIR")
     analysis_model: str = Field(default="claude-haiku-4-5-20251001", alias="ANALYSIS_MODEL")
+    agent_model: str = Field(default="claude-sonnet-5", alias="AGENT_MODEL")
+    github_token: str = Field(default="", alias="GITHUB_TOKEN")
+    public_base_url: str = Field(default="http://127.0.0.1:8787", alias="PUBLIC_BASE_URL")
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
     stale_threshold_months: int = Field(default=3, alias="STALE_THRESHOLD_MONTHS")
     workers: int = Field(default=4, alias="WORKERS")
@@ -144,12 +147,59 @@ def save_resume_text(text: str) -> None:
     RESUME_PATH.write_text(text)
 
 
+# ---- Telegram intake + research agent (app/telegram_bot.py, app/agent.py) ----
+
+def get_telegram_settings() -> dict:
+    """Bot token from @BotFather, the one chat it answers to (set by pairing),
+    and the one-time pairing code shown in Settings until a chat is paired."""
+    s = _load_secrets().get("TELEGRAM", {})
+    return {
+        "bot_token": s.get("bot_token", "").strip(),
+        "bot_username": s.get("bot_username", ""),
+        "chat_id": s.get("chat_id"),
+        "pairing_code": s.get("pairing_code", ""),
+    }
+
+
+def save_telegram_settings(**updates) -> dict:
+    current = get_telegram_settings()
+    current.update(updates)
+    _save_secret("TELEGRAM", current)
+    return current
+
+
+def new_pairing_code() -> str:
+    code = secrets.token_hex(3).upper()
+    save_telegram_settings(pairing_code=code, chat_id=None)
+    return code
+
+
+def get_agent_settings() -> dict:
+    """'About me' is injected into every research prompt so 'useful for me'
+    means something; the daily cap bounds what the research agent spends."""
+    s = _load_secrets().get("AGENT", {})
+    return {
+        "about_me": s.get("about_me", ""),
+        "daily_cap_usd": float(s.get("daily_cap_usd", 3.0)),
+    }
+
+
+def save_agent_settings(**updates) -> dict:
+    current = get_agent_settings()
+    current.update({k: v for k, v in updates.items() if v is not None})
+    _save_secret("AGENT", current)
+    return current
+
+
 ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key()
 # Deliberately NOT part of Settings above: the Anthropic key is runtime-mutable
 # secrets.json state (see get_api_key), with this bare env var read as its one
 # fallback for users who prefer .env - not "deployment config" in the same
 # sense as the fields in Settings.
 ANALYSIS_MODEL = settings.analysis_model.strip()
+AGENT_MODEL = settings.agent_model.strip()
+GITHUB_TOKEN = settings.github_token.strip()
+PUBLIC_BASE_URL = settings.public_base_url.strip().rstrip("/")
 WHISPER_MODEL = settings.whisper_model.strip()
 STALE_THRESHOLD_MONTHS = settings.stale_threshold_months
 DEFAULT_WORKERS = settings.workers

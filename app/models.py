@@ -24,6 +24,7 @@ class Video(SQLModel, table=True):
     tiktok_url: str = Field(index=True, unique=True)
     saved_date: datetime | None = None
     user_note: str | None = None  # your own note when sharing to the bot account; null for export-upload imports
+    source: str | None = None  # "telegram" for videos you shared to the bot; null for export/inbox imports
 
     # From yt-dlp
     author: str | None = None
@@ -76,6 +77,10 @@ class ActionType(str, Enum):
     SKILL = "skill"      # a tool/technique/snippet worth adopting
     PROJECT = "project"  # a buildable project/agent shown in the video
     JOB = "job"          # a job posting worth tracking/applying to
+    REPO = "repo"        # GitHub repos/tools worth evaluating
+    RESEARCH = "research"  # news, a new AI product, a claim worth looking into
+    PLACE = "place"      # a restaurant, bar, shop or spot to visit
+    OTHER = "other"      # shared on purpose, but none of the above
 
 
 class ActionStatus(str, Enum):
@@ -100,6 +105,12 @@ class Action(SQLModel, table=True):
     brief: str | None = None    # JSON: what to do (project spec / skill / company+role+url)
     result: str | None = None   # JSON: PR url, or {resume_path, cover_letter_path, ...}
     error_message: str | None = None
+
+    # Research agent (app/agent.py) - set for videos shared through Telegram
+    verdict: str | None = None  # worth_it | maybe | skip
+    cost_usd: float | None = None
+    telegram_chat_id: int | None = None
+    telegram_message_id: int | None = None  # the status message the bot keeps editing
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

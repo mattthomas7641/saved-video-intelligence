@@ -164,3 +164,22 @@ def test_analyze_video_falls_back_to_anthropic_when_gateway_is_down(monkeypatch)
     assert result.category == BASE_FIELDS["category"]
     assert inits[-1] == {"api_key": "sk-ant-fake"}
 
+
+def test_build_params_forces_actionable_for_shared_videos():
+    v = FakeVideo()
+    v.source = "telegram"
+    content = analyze.build_params(v)["messages"][0]["content"]
+    assert "deliberately shared this video" in content
+
+
+def test_build_params_leaves_export_videos_on_the_default_rule():
+    content = analyze.build_params(FakeVideo())["messages"][0]["content"]
+    assert "deliberately shared" not in content
+
+
+def test_action_type_enum_covers_research_agent_types():
+    enum = analyze._TOOL_SCHEMA["input_schema"]["properties"]["action_type"]["enum"]
+    assert {"repo", "research", "place", "other"} <= set(enum)
+    result = analyze.AnalysisResult(**{**BASE_FIELDS, "is_actionable": True, "action_type": "place",
+                                        "action_brief": "Joe's Pizza, Philly"})
+    assert result.action_type == "place"

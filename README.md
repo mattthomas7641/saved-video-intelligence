@@ -2,20 +2,29 @@
 
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
-Go through your entire TikTok Saved/Favorites list, transcribe + summarize each
-video, categorize it, score whether it's worth rewatching, and flag anything
-with a promo code or dated offer that might be stale.
+Two things, one pipeline:
+
+- **Share a TikTok, get the follow-up done.** Share a video to your own
+  Telegram bot and a Claude research agent acts on it within minutes: checks
+  every GitHub repo a "10 repos you need" video names against the live GitHub
+  API and says which fit your projects, traces an AI-news claim back to its
+  primary source, or turns a food video into an address, hours and the best
+  day to go. A short answer comes back in the chat; the full report lands on
+  the dashboard. See **Share to Telegram → research agent**, below.
+- **Make a 7,000-video Saved list usable.** Transcribe, OCR, categorize and
+  summarize your whole TikTok Saved/Favorites list, score what's worth
+  rewatching, and flag promo codes or dated offers that may be stale.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline/data-model diagrams
 and the reasoning behind the bigger design decisions (separate `Action`
-table, the Batch API, scoped bearer auth, the dedicated-bot-account sync).
+table, the Batch API, Telegram long-polling, the in-app research loop, scoped
+bearer auth).
 
-Runs entirely on your own machine (or your own server). You can feed it from
-your own official TikTok data export (ToS-compliant, but manual — see
-**How it works**), or opt into an optional daily sync that reads the inbox of
-a second, dedicated TikTok account you create for this purpose (see
-**Daily agent**, below — off by default, and your real account's session is
-never automated).
+Runs entirely on your own machine (or your own server). Videos come in from
+the Telegram bot, from your own official TikTok data export (ToS-compliant,
+but manual — see **How it works**), or from an optional inbox sync on a
+second, dedicated TikTok account (see **Daily agent**, below — off by
+default, and your real account's session is never automated).
 
 **This is a self-hosted, single-user app, by design.** There's no central
 service you sign up for — you (or anyone else who wants this) run your own
@@ -93,6 +102,44 @@ through uploading your export, then click **Process saved videos** on the
 dashboard to start the pipeline. It processes one video at a time in the
 background — you can keep using the dashboard while it runs, and it resumes
 where it left off if you stop and restart the app.
+
+## Share to Telegram → research agent
+
+The fastest way in: share a TikTok to your own Telegram bot. Within a few
+minutes a research agent has looked into it and replies in the same chat; the
+full report lands on the dashboard's **Agent** page.
+
+- **Repo/tool videos** ("10 GitHub repos for building an OS"): every repo is
+  checked against the live GitHub API (stars, last push, license, README), judged
+  for fit with *your* projects, with concrete ways to use the good ones.
+- **AI / news videos**: finds the primary source, says what's actually new and
+  what the video overstated, and what it means for you.
+- **Food spots / places**: address, hours, which days to go, price, how to book,
+  and whether it's still open.
+- **Skills, projects, jobs**: same types as before, researched (jobs are
+  research-only; nothing is ever submitted).
+
+Setup takes about a minute:
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`,
+   and copy the token.
+2. Paste it in **Settings → Telegram**, then send the bot the `/start CODE`
+   shown there. The bot only ever answers that one chat.
+3. Fill in **Settings → Research agent → About me** (your projects, interests,
+   city). It's what makes "useful for me" mean something.
+
+Then, from TikTok: **Share → Telegram → your bot**. Text you send with the link
+becomes a note the agent reads ("useful for my OS project?"). A bare GitHub or
+article link works too. In the chat: `/status`, `/pause`, `/resume`.
+
+How it runs: the app long-polls Telegram, so there's nothing to expose to the
+internet and no tunnel to set up; it works the same on your Mac or on a server.
+Shared videos go through their own fast lane (collect → analyze → research),
+separate from bulk jobs, and only videos you share are researched, never the
+export backlog. Research uses `AGENT_MODEL` (default `claude-sonnet-5`, roughly
+$0.08–0.15 per video) with web search, web fetch and a GitHub lookup tool, under
+a daily spending cap you set in Settings (default $3). Set `PUBLIC_BASE_URL` if
+you want "Full report" links in Telegram to open the dashboard from your phone.
 
 ## Daily agent (optional, not yet scheduled)
 
