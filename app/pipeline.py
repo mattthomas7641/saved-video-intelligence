@@ -140,3 +140,95 @@ def _touch(session: Session, video: Video) -> None:
     session.add(video)
     session.commit()
     session.refresh(video)
+
+
+# ---------------- shared-video fast lane (Telegram) ----------------
+# A video you deliberately shared gets the whole path at once - collect, analyze,
+# research - on its own thread (see app/telegram_bot.py), independent of any bulk
+# job running in worker.py. Bulk/export videos never reach the research agent.
+
+def agent_spend_today(session: Session) -> float:
+    start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = session.exec(select(Action.cost_usd).where(Action.updated_at >= start)).all()
+    return sum(r or 0.0 for r in rows)
+
+
+def _action_for(session: Session, video: Video) -> Action:
+    action = session.exec(select(Action).where(Action.video_id == video.id)).first()
+    if action:
+        return action
+    # Analysis is told shared videos are always actionable, but don't depend on it.
+    action = Action(video_id=video.id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED, brief=video.summary)
+    session.add(action)
+    session.commit()
+    session.refresh(action)
+    return action
+
+
+def process_shared_video(session: Session, video: Video, on_progress=lambda text: None,
+                         chat_id: int | None = None, message_id: int | None = None) -> Action:
+    """Collect -> analyze -> research for one shared video. Returns its Action, whose
+    status/result/error_message say how it went. Raises FatalAnalysisError for
+    problems only you can fix (no key, no credit)."""
+    from app import agent as agent_mod
+    from app.config import get_action_settings, get_agent_settings
+
+    if video.status in (Status.PENDING, Status.ERROR, Status.DOWNLOADING, Status.TRANSCRIBING, Status.DOWNLOADED):
+        on_progress("Downloading and transcribing…")
+        collect_video(session, video)
+        if video.status != Status.TRANSCRIBED:
+            raise RuntimeError(video.error_message or "Couldn't download this video.")
+
+    has_action = session.exec(select(Action.id).where(Action.video_id == video.id)).first() is not None
+    if video.status in (Status.TRANSCRIBED, Status.ANALYZING, Status.SUBMITTED) or (
+            video.status == Status.DONE and not has_action):
+        on_progress("Reading the video…")
+        analyze_video(session, video)
+        if video.status != Status.DONE:
+            raise RuntimeError(video.error_message or "Analysis failed.")
+
+    action = _action_for(session, video)
+    action.telegram_chat_id = chat_id or action.telegram_chat_id
+    action.telegram_message_id = message_id or action.telegram_message_id
+
+    if get_action_settings()["agent_paused"]:
+        action.status = ActionStatus.QUEUED
+        action.error_message = "Research agent is paused in Settings."
+        _touch_action(session, action)
+        return action
+
+    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)
+    action.status = ActionStatus.IN_PROGRESS
+    action.error_message = None
+    _touch_action(session, action)
+    on_progress(f"Researching ({action.action_type.value})…")
+    try:
+        findings = agent_mod.run(video, action.action_type.value, action.brief, budget, on_progress=on_progress)
+    except agent_mod.CapReached as e:
+        action.status = ActionStatus.NEEDS_INPUT
+        action.error_message = f"{e} Raise the daily cap in Settings, then re-run it from the Agent page."
+    except (agent_mod.AgentError, RuntimeError) as e:
+        action.status = ActionStatus.FAILED
+        action.error_message = str(e)[:500]
+    except analyze_mod.FatalAnalysisError:
+        action.status = ActionStatus.QUEUED
+        _touch_action(session, action)
+        raise
+    except Exception as e:  # noqa: BLE001 - report it on the card and in Telegram, don't kill the lane
+        log.exception("Research failed for video %s", video.id)
+        action.status = ActionStatus.FAILED
+        action.error_message = f"Research failed: {e}"[:500]
+    else:
+        action.status = ActionStatus.DRAFTED
+        action.verdict = findings.verdict
+        action.cost_usd = findings.cost_usd
+        action.result = findings.to_json()
+    _touch_action(session, action)
+    return action
+
+
+def _touch_action(session: Session, action: Action) -> None:
+    action.updated_at = datetime.utcnow()
+    session.add(action)
+    session.commit()
+    session.refresh(action)

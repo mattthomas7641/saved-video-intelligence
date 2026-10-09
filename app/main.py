@@ -6,21 +6,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app import batch, worker
+from app import batch, telegram_bot, worker
 from app.config import (
     BASE_DIR,
     DEFAULT_WORKERS,
     STALE_THRESHOLD_MONTHS,
     get_action_settings,
+    get_agent_settings,
     get_agent_token,
     get_api_key,
     get_resume_text,
+    get_telegram_settings,
     get_trusted_sender,
     group_of,
+    new_pairing_code,
     regenerate_agent_token,
     save_action_settings,
+    save_agent_settings,
     save_api_key,
     save_resume_text,
+    save_telegram_settings,
     save_trusted_sender,
 )
 from app.db import get_db, init_db
@@ -87,9 +92,28 @@ templates.env.filters["cat_slug"] = lambda c: _GROUP_SLUGS.get(group_of(c), "oth
 templates.env.filters["short_date"] = lambda d: d.strftime("%b %-d, %y") if d else "—"
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
+
+def _render_markdown(text: str | None) -> str:
+    """Agent reports are model output built partly from web pages: escape any raw
+    HTML first, render Markdown, then drop links that aren't plain http(s)."""
+    import html as _html
+    import re
+
+    import markdown
+    from markupsafe import Markup
+
+    rendered = markdown.markdown(_html.escape(text or "", quote=False), extensions=["sane_lists"])
+    rendered = re.sub(r'href="(?!https?://)[^"]*"', 'href="#"', rendered)
+    rendered = rendered.replace("<a href=", '<a target="_blank" rel="noopener" href=')
+    return Markup(rendered)
+
+
+templates.env.filters["markdown"] = _render_markdown
+
 init_db()
 worker.recover_stuck()
 batch.start_poller()
+telegram_bot.start_poller()
 
 
 @app.get("/")
@@ -410,6 +434,90 @@ def job_mark_applied(action_id: int, session: Session = Depends(get_db)):
     return RedirectResponse("/jobs", status_code=303)
 
 
+# ---------------- Research agent (videos shared through Telegram) ----------------
+AGENT_TYPES = ["repo", "research", "place", "project", "skill", "job", "other"]
+AGENT_TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Places", "project": "Projects",
+                     "skill": "Skills", "job": "Jobs", "other": "Other"}
+
+
+@app.get("/agent")
+def agent_page(request: Request, session: Session = Depends(get_db), type: str = "", verdict: str = ""):
+    import json as _json
+
+    from app.pipeline import agent_spend_today
+
+    rows = session.exec(
+        select(Action, Video).join(Video, Video.id == Action.video_id)
+        .where((Video.source == "telegram") | (Action.result.is_not(None) & Action.verdict.is_not(None)))
+        .order_by(Action.updated_at.desc())).all()
+    all_items = []
+    for a, v in rows:
+        try:
+            report = _json.loads(a.result) if a.result and a.verdict else None
+        except ValueError:
+            report = None
+        all_items.append({"action": a, "video": v, "report": report})
+    type_counts = {t: sum(1 for i in all_items if i["action"].action_type.value == t) for t in AGENT_TYPES}
+    items = [i for i in all_items
+             if (not type or i["action"].action_type.value == type)
+             and (not verdict or i["action"].verdict == verdict)]
+    working = [i for i in items if i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)
+               and not i["report"]]
+    stuck = [i for i in items if i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT)]
+    done = [i for i in items if i["report"] and i not in stuck and i["action"].status != ActionStatus.DISMISSED]
+    tg = get_telegram_settings()
+    return templates.TemplateResponse(request, "agent.html", {
+        "working": working, "stuck": stuck, "done": done, "total": len(all_items),
+        "type_counts": type_counts, "type_labels": AGENT_TYPE_LABELS, "types": AGENT_TYPES,
+        "type": type, "verdict": verdict,
+        "spent_today": agent_spend_today(session), "agent_settings": get_agent_settings(),
+        "paused": get_action_settings()["agent_paused"],
+        "telegram_ready": bool(tg["bot_token"] and tg["chat_id"]),
+    })
+
+
+@app.post("/agent/{action_id}/rerun")
+def agent_rerun(action_id: int):
+    telegram_bot.rerun(action_id)
+    return RedirectResponse("/agent", status_code=303)
+
+
+@app.post("/agent/{action_id}/dismiss")
+def agent_dismiss(action_id: int, session: Session = Depends(get_db)):
+    action = session.get(Action, action_id)
+    if action:
+        action.status = ActionStatus.DISMISSED
+        session.add(action)
+        session.commit()
+    return RedirectResponse("/agent", status_code=303)
+
+
+@app.post("/settings/telegram")
+def settings_telegram(token: str = Form("")):
+    token = token.strip()
+    if not token:
+        return RedirectResponse("/settings?key=tg_empty#telegram", status_code=303)
+    bot_username = telegram_bot.check_token(token)
+    if not bot_username:
+        return RedirectResponse("/settings?key=tg_invalid#telegram", status_code=303)
+    save_telegram_settings(bot_token=token, bot_username=bot_username, chat_id=None)
+    new_pairing_code()
+    return RedirectResponse("/settings?key=tg_saved#telegram", status_code=303)
+
+
+@app.post("/settings/telegram/pair")
+def settings_telegram_pair():
+    new_pairing_code()
+    return RedirectResponse("/settings#telegram", status_code=303)
+
+
+@app.post("/settings/agent")
+def settings_agent(about_me: str = Form(""), daily_cap_usd: str = Form("")):
+    cap = _optional_money(daily_cap_usd)
+    save_agent_settings(about_me=about_me.strip(), daily_cap_usd=cap)
+    return RedirectResponse("/settings?key=agent_saved#research", status_code=303)
+
+
 @app.post("/settings/resume")
 async def settings_resume(file: UploadFile | None = File(None), text: str = Form("")):
     content = text.strip()
@@ -473,6 +581,8 @@ def settings_page(request: Request, key: str = ""):
         "trusted_sender": get_trusted_sender(),
         "action_settings": get_action_settings(),
         "resume_text": get_resume_text(),
+        "telegram": get_telegram_settings(),
+        "agent_settings": get_agent_settings(),
     })
 
 

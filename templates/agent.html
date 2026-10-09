@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Agent · Saved Video Intelligence{% endblock %}
+{% macro type_icon(t) -%}
+{{ icon({"repo": "code", "research": "news", "place": "utensils", "project": "wrench", "skill": "sparkles", "job": "briefcase"}.get(t, "grid")) }}
+{%- endmacro %}
+{% macro verdict_tag(v) -%}
+{% if v == "worth_it" %}<span class="verdict v-yes">{{ icon("check") }} Worth it</span>
+{% elif v == "maybe" %}<span class="verdict v-maybe">Maybe</span>
+{% elif v == "skip" %}<span class="verdict v-skip">Skip</span>{% endif %}
+{%- endmacro %}
+{% block content %}
+{% if working %}<meta http-equiv="refresh" content="15">{% endif %}
+
+<header class="page-head agent-head">
+  <div>
+    <h1>Agent</h1>
+    <p class="sub">Videos you shared to Telegram, researched. Newest first.</p>
+  </div>
+  <div class="spend" title="Research spend today (resets at midnight UTC)">
+    <div class="line"><span>Today</span><span class="num">${{ "%.2f"|format(spent_today) }} <span class="of">of ${{ "%.2f"|format(agent_settings.daily_cap_usd) }}</span></span></div>
+    <div class="meter"><span style="width:{{ [100, (spent_today / agent_settings.daily_cap_usd * 100) if agent_settings.daily_cap_usd else 100]|min }}%"></span></div>
+  </div>
+</header>
+
+{% if not telegram_ready %}
+<div class="notice">{{ icon("inbox") }}<span>Telegram isn't connected yet. <a href="/settings#telegram">Set it up in Settings</a>; it takes about a minute.</span></div>
+{% endif %}
+{% if paused %}
+<div class="notice warn">{{ icon("alert") }}<span>The agent is paused. Shared videos are saved and analyzed, but not researched until you send /resume or unpause it in Settings.</span></div>
+{% endif %}
+{% if not agent_settings.about_me %}
+<div class="notice">{{ icon("bulb") }}<span>Tell the agent about yourself in <a href="/settings#research">Settings</a>, so “useful for you” means your projects and your city.</span></div>
+{% endif %}
+
+{% if total %}
+<nav class="drill" aria-label="Filter by type">
+  <a class="chip" href="/agent{{ '?verdict=' ~ verdict if verdict }}" {% if not type %}aria-current="true"{% endif %}>All <span class="n">{{ total }}</span></a>
+  {% for t in types if type_counts[t] %}
+  <a class="chip" href="/agent?type={{ t }}{{ '&verdict=' ~ verdict if verdict }}" {% if type == t %}aria-current="true"{% endif %}>
+    <span class="ci">{{ type_icon(t) }}</span>{{ type_labels[t] }} <span class="n">{{ type_counts[t] }}</span></a>
+  {% endfor %}
+  <span class="drill-sep" aria-hidden="true"></span>
+  {% for v, label in [("worth_it", "Worth it"), ("maybe", "Maybe"), ("skip", "Skip")] %}
+  <a class="chip" href="/agent?{{ 'type=' ~ type ~ '&' if type }}{{ '' if verdict == v else 'verdict=' ~ v }}" {% if verdict == v %}aria-current="true"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if working %}
+<section class="agent-group">
+  <h2>Working on it <span class="n">{{ working|length }}</span></h2>
+  {% for item in working %}{% set a = item.action %}{% set v = item.video %}
+  <div class="work-row" id="a{{ a.id }}">
+    <span class="pulse" aria-hidden="true"></span>
+    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}</span>
+    <span class="faint">{{ type_labels.get(a.action_type.value, "") }}</span>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if stuck %}
+<section class="agent-group">
+  <h2>Needs attention <span class="n">{{ stuck|length }}</span></h2>
+  {% for item in stuck %}{% set a = item.action %}{% set v = item.video %}
+  <div class="work-row stuck" id="a{{ a.id }}">
+    <span class="ci">{{ icon("alert") }}</span>
+    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ a.error_message }}</span></span>
+    <form action="/agent/{{ a.id }}/rerun" method="post"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
+    <form action="/agent/{{ a.id }}/dismiss" method="post"><button class="btn btn-quiet" type="submit" title="Dismiss">{{ icon("archive") }}</button></form>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if done %}
+<section class="agent-group">
+  {% if working or stuck %}<h2>Reports <span class="n">{{ done|length }}</span></h2>{% endif %}
+  {% for item in done %}{% set a = item.action %}{% set v = item.video %}{% set r = item.report %}
+  <article class="report" id="a{{ a.id }}">
+    <details>
+      <summary>
+        <div class="r-meta">
+          <span class="r-type">{{ type_icon(a.action_type.value) }} {{ {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project", "skill": "Skill", "job": "Job"}.get(a.action_type.value, "Other") }}</span>
+          {{ verdict_tag(a.verdict) }}
+          <span class="faint">{{ a.updated_at|short_date }}</span>
+        </div>
+        <h3>{{ r.headline }}</h3>
+        <p class="r-tldr">{{ r.telegram_text }}</p>
+        {% if r.place %}<p class="r-key">{{ icon("home") }} {{ r.place.name }}{% if r.place.neighborhood or r.place.city %} · {{ r.place.neighborhood or "" }}{{ ", " if r.place.neighborhood and r.place.city }}{{ r.place.city or "" }}{% endif %}{% if r.place.best_times %} · {{ r.place.best_times }}{% endif %}</p>
+        {% elif r.repos %}<p class="r-key">{{ icon("code") }} {{ r.repos|selectattr("fit", "equalto", "worth_it")|list|length }} of {{ r.repos|length }} repos worth a look</p>
+        {% elif r.ideas %}<p class="r-key">{{ icon("bulb") }} {{ r.ideas[0] }}</p>{% endif %}
+        <span class="r-more">Full report {{ icon("chev") }}</span>
+      </summary>
+
+      <div class="r-body">
+        {% if r.place %}
+        <dl class="facts">
+          {% for k, label in [("address", "Address"), ("hours", "Hours"), ("best_times", "Best time"), ("price", "Price"), ("reservations", "Reservations"), ("status", "Status")] if r.place[k] %}
+          <div><dt>{{ label }}</dt><dd>{{ r.place[k] }}</dd></div>
+          {% endfor %}
+        </dl>
+        {% endif %}
+
+        {% if r.repos %}
+        <div class="repo-table" role="table" aria-label="Repos checked">
+          <div class="rt-head" role="row"><span>Repo</span><span>Fit</span><span class="num">Stars</span><span>Last push</span></div>
+          {% for repo in r.repos %}
+          <div class="rt-row" role="row">
+            <span class="rt-name">
+              {% if repo.url and repo.url.startswith("http") %}<a href="{{ repo.url }}" target="_blank" rel="noopener">{{ repo.name }}</a>{% else %}{{ repo.name }}{% endif %}
+              {% if repo.what_it_does %}<span class="faint">{{ repo.what_it_does }}</span>{% endif %}
+              {% if repo.how_to_use and repo.fit != "skip" %}<span class="use">{{ repo.how_to_use }}</span>{% endif %}
+            </span>
+            <span>{{ verdict_tag(repo.fit) }}</span>
+            <span class="num">{{ "{:,}".format(repo.stars) if repo.stars is number else "—" }}</span>
+            <span class="faint">{{ repo.last_push or "—" }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="prose">{{ r.report_markdown|markdown }}</div>
+
+        {% if r.ideas %}
+        <h4>Ideas for you</h4>
+        <ul class="ideas">{% for idea in r.ideas %}<li>{{ idea }}</li>{% endfor %}</ul>
+        {% endif %}
+
+        {% if r.links %}
+        <h4>Sources</h4>
+        <ul class="links">{% for l in r.links %}<li><a href="{{ l.url if l.url.startswith('http') else '#' }}" target="_blank" rel="noopener">{{ l.title }} {{ icon("external") }}</a></li>{% endfor %}</ul>
+        {% endif %}
+
+        <footer class="r-foot">
+          {% if v.user_note %}<span class="note">Your note: “{{ v.user_note }}”</span>{% endif %}
+          <a href="{{ v.tiktok_url }}" target="_blank" rel="noopener">Original {{ icon("external") }}</a>
+          <a href="/video/{{ v.id }}">Video details</a>
+          {% if a.cost_usd %}<span class="faint num">${{ "%.2f"|format(a.cost_usd) }}</span>{% endif %}
+          <span class="spacer"></span>
+          <form action="/agent/{{ a.id }}/rerun" method="post"><button class="btn btn-quiet" type="submit">{{ icon("refresh") }} Re-run</button></form>
+          <form action="/agent/{{ a.id }}/dismiss" method="post"><button class="btn btn-quiet" type="submit">{{ icon("archive") }} Dismiss</button></form>
+        </footer>
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if not total %}
+<div class="empty">
+  <span class="big">{{ icon("inbox") }}</span>
+  <h2>Nothing shared yet</h2>
+  <p>In TikTok, tap Share, then Telegram, then your bot. The report shows up here a few minutes later, and a short version arrives in the chat.</p>
+  {% if not telegram_ready %}<a class="btn btn-primary" href="/settings#telegram">Connect Telegram</a>{% endif %}
+</div>
+{% elif not working and not stuck and not done %}
+<div class="empty"><h2>Nothing matches</h2><p><a href="/agent">Clear filters</a></p></div>
+{% endif %}
+
+<script>
+  // Opening /agent#a12 (the "Full report" link in Telegram) expands that report.
+  (function () {
+    var el = location.hash && document.querySelector(location.hash + " details");
+    if (el) { el.open = true; el.scrollIntoView({ block: "start" }); }
+  })();
+</script>
+{% endblock %}

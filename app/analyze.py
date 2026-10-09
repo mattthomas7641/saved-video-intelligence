@@ -42,13 +42,26 @@ _TOOL_SCHEMA = {
                     "Default to false - most saved videos are entertainment or general advice with nothing concrete to act on."
                 ),
             },
-            "action_type": {"type": "string", "enum": ["skill", "project", "job"], "description": "Required if is_actionable is true; omit/ignore otherwise."},
+            "action_type": {
+                "type": "string",
+                "enum": ["skill", "project", "job", "repo", "research", "place", "other"],
+                "description": (
+                    "Required if is_actionable is true; omit/ignore otherwise. skill/project/job as above; "
+                    "repo = names specific GitHub repos, libraries or dev tools worth evaluating; "
+                    "research = news, a new AI model/product, or a claim worth looking into; "
+                    "place = a specific restaurant, bar, cafe, shop or spot to visit; "
+                    "other = only when the user shared it on purpose and none of the others fit."
+                ),
+            },
             "action_brief": {
                 "type": "string",
                 "description": (
                     "Required if is_actionable is true. For skill: the specific technique and how to use it. "
                     "For project: a short build spec (what it does, suggested stack/approach). "
-                    "For job: 'Company | Role | any URL or application info mentioned, or none given'."
+                    "For job: 'Company | Role | any URL or application info mentioned, or none given'. "
+                    "For repo: every repo/tool named, as owner/name when shown, one per line. "
+                    "For research: the specific topic or claim to look into. "
+                    "For place: name, city/neighborhood if mentioned, what to order."
                 ),
             },
         },
@@ -115,6 +128,11 @@ def build_params(video) -> dict:
         f"inferred content): {user_note}\n"
         if user_note else ""
     )
+    if getattr(video, "source", None) == "telegram":
+        note_block += (
+            "\nThe user deliberately shared this video to have it acted on: set is_actionable to true "
+            "and pick the best-fitting action_type, even if it would not otherwise qualify.\n"
+        )
     content = f"""Saved TikTok video.
 Author: {video.author or "unknown"}
 Caption: {_clip(video.caption) or "(none)"}

@@ -18,6 +18,7 @@ flowchart LR
     subgraph Ingest
         A1[Export upload] --> V[(Video row<br/>status=PENDING)]
         A2[Inbox sync] --> V
+        A3[Telegram share] --> V
     end
 
     V --> C1[Download<br/>yt-dlp]
@@ -32,6 +33,9 @@ flowchart LR
     AQ --> AG[Daily agent<br/>separate scheduled session]
     AG -->|skill / project| PR[Draft PR in<br/>tiktok-ideas repo]
     AG -->|job| JD[Drafted resume +<br/>cover letter, local files]
+    AQ -. shared via Telegram .-> RA[Research agent<br/>app/agent.py]
+    RA --> RP[(Action.result<br/>report + verdict)]
+    RP --> TG[Telegram reply +<br/>Agent page]
 ```
 
 **Collect** (`app/pipeline.py:collect_video`) and **analyze**
@@ -130,6 +134,24 @@ headless CLI invocation — would be more code for a worse version of a
 capability that already exists. The app's job is narrower: be a reliable,
 testable data layer (ingest, collect, analyze, queue) that something with
 real tool access can drive.
+
+#### Telegram as the share target, long-polled rather than webhooked
+TikTok's own share sheet lists Telegram, so sharing a video is as short as
+sharing to any other app, and the same chat carries the result back. Long
+polling (`getUpdates`) instead of a webhook means a laptop install needs no
+public URL or tunnel, and a cloud install needs no extra config. The bot pairs
+to exactly one chat with a one-time code from Settings and ignores every other
+chat. This replaces the DM-scraping inbox sync as the main intake: that path
+depended on a browser session TikTok kept revoking.
+
+#### The research agent is in-app API calls, not a scheduled session
+Unlike the daily agent below, research has to come back within minutes of a
+share, and it needs no repo or filesystem access, only the web. So it's a
+small manual tool loop in `app/agent.py`: server-side web search/fetch, one
+client tool (`github_repo`, live facts rather than the video's claims), and a
+`record_findings` tool that ends the run with a structured report. Only videos
+you share are researched (never the export backlog), and a daily dollar cap is
+checked between requests.
 
 #### Never fully automate a job application submission
 This isn't a configurable setting — it's a hard boundary regardless of how

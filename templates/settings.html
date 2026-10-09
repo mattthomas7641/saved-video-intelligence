@@ -20,6 +20,57 @@
   <p style="margin-top:12px">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. It’s stored only on this computer, in the <code>data</code> folder.</p>
 </section>
 
+<section class="plain-card" id="telegram">
+  <h2>Telegram</h2>
+  <p style="margin-bottom:12px">
+    {% if telegram.bot_token and telegram.chat_id %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected{% if telegram.bot_username %} to @{{ telegram.bot_username }}{% endif %}</span>
+    {% elif telegram.bot_token %}<span class="tag-warn">{{ icon("alert") }} Waiting for pairing</span>
+    {% else %}<span class="tag-warn">{{ icon("alert") }} Not set up</span>{% endif %}
+  </p>
+  <p style="margin-bottom:10px">Share a TikTok to your own Telegram bot and the research agent looks into it. You get a short reply in the chat and the full report on the <a href="/agent">Agent</a> page.</p>
+
+  {% if not telegram.bot_token %}
+  <ol style="margin-bottom:14px">
+    <li>In Telegram, message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, send <code>/newbot</code> and pick any name.</li>
+    <li>Paste the token it gives you below.</li>
+  </ol>
+  {% endif %}
+  <form action="/settings/telegram" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input class="field" style="flex:1;min-width:240px" type="password" name="token" autocomplete="off" aria-label="Telegram bot token"
+           placeholder="{{ 'Paste a new token to replace it' if telegram.bot_token else 'Bot token from @BotFather' }}" required>
+    <button class="btn btn-primary" type="submit">Save token</button>
+  </form>
+  {% if key_status == "tg_invalid" %}<p style="margin-top:10px;color:var(--flag)">Telegram didn't accept that token. Copy it again from @BotFather.</p>{% endif %}
+  {% if key_status == "tg_saved" %}<p style="margin-top:10px;color:var(--family)">Token saved.</p>{% endif %}
+
+  {% if telegram.bot_token and not telegram.chat_id %}
+  <div class="notice" style="margin:14px 0 0">{{ icon("key") }}<span>
+    Open {% if telegram.bot_username %}<a href="https://t.me/{{ telegram.bot_username }}" target="_blank" rel="noopener">@{{ telegram.bot_username }}</a>{% else %}your bot{% endif %}
+    and send <code>/start {{ telegram.pairing_code }}</code>. Only that chat will be able to use it. Refresh this page after.
+  </span></div>
+  {% endif %}
+  {% if telegram.chat_id %}
+  <p style="margin-top:14px">From TikTok: <strong>Share → Telegram → {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}your bot{% endif %}</strong>. Anything you type with the link becomes a note the agent reads, like “useful for my OS project?”. In the chat, <code>/status</code>, <code>/pause</code> and <code>/resume</code> also work.</p>
+  <form action="/settings/telegram/pair" method="post" style="margin-top:12px" onsubmit="return confirm('This disconnects the current chat until you pair again.')">
+    <button class="btn" type="submit">{{ icon("refresh") }} Pair a different chat</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="plain-card" id="research">
+  <h2>Research agent</h2>
+  <p style="margin-bottom:10px">Tell the agent about yourself. It reads this every time it decides whether something is “useful for you”.</p>
+  <form action="/settings/agent" method="post" style="display:grid;gap:10px">
+    <textarea class="field" name="about_me" rows="5" placeholder="e.g. CS student in Philadelphia. Building a hobby OS in Rust and an LLM inference gateway. Into agents, systems programming, cheap good food.">{{ agent_settings.about_me }}</textarea>
+    <label style="display:flex;gap:10px;align-items:center;color:var(--ink-2)">
+      Daily spending cap $<input class="field num" type="number" name="daily_cap_usd" min="0" step="0.5" value="{{ '%.2f'|format(agent_settings.daily_cap_usd) }}">
+      <span class="hint" style="margin:0">A typical video costs about $0.08–$0.15 to research.</span>
+    </label>
+    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+  </form>
+  {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+</section>
+
 <section class="plain-card">
   <h2>Daily agent</h2>
   <p style="margin-bottom:10px">Controls for the (not-yet-scheduled) daily pipeline that detects and acts on skill/project/job videos.</p>
@@ -72,6 +123,9 @@
   <h2>Other options</h2>
   <ul style="padding-left:1.1em;display:grid;gap:6px;margin:0;color:var(--ink-2)">
     <li><code>ANALYSIS_MODEL</code>: the Claude model used to summarize</li>
+    <li><code>AGENT_MODEL</code>: the Claude model that researches shared videos</li>
+    <li><code>PUBLIC_BASE_URL</code>: where “Full report” links in Telegram point</li>
+    <li><code>GITHUB_TOKEN</code>: optional, raises the GitHub lookup limit for repo videos</li>
     <li><code>WHISPER_MODEL</code>: speech-to-text size (tiny, base, small, medium)</li>
     <li><code>DELETE_VIDEO_AFTER_PROCESS</code>: free disk space after each video</li>
   </ul>

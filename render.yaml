@@ -8,6 +8,12 @@ services:
         sync: false
       - key: ANALYSIS_MODEL
         value: claude-haiku-4-5-20251001
+      - key: AGENT_MODEL
+        value: claude-sonnet-5
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
       - key: WHISPER_MODEL
         value: base
       - key: STALE_THRESHOLD_MONTHS
