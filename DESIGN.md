@@ -71,7 +71,11 @@ One typeface throughout — **Archivo** (grotesque sans) — used for both displ
 
 ## Layout
 
-Same two-level shell as before (sticky rail + main), but the rail's territory list is now colorized per-group (each `<details>` carries its own `--t-group` custom property, so the open/active topic tints its own row). The real structural shift is the **overview**: eight flat-color territory tiles (`.panel`, 24px radius, white text, color = `--tc` set inline per territory) replace the previous bordered gray cards — this is the page's first viewport and the thing that actually signals "this is a different idea," not just a different palette.
+Same two-level shell as before (sticky rail + main), rail's territory list colorized per-group (each `<details>` carries its own `--t-group` custom property). The real structural shift is the **overview map**: `.panels` is its own nested scroll container (`height: 100svh; overflow-y: auto; scroll-snap-type: y mandatory`) holding eight full-viewport territory sections (`.panel`, `min-height: 100svh`, `scroll-snap-align: start`) — **one territory fills the screen at a time**, scrolling snaps cleanly to the next. This is the page's actual first-viewport signature, not a grid of tiles (an earlier pass built a conventional grid showing all 8 simultaneously; the user caught that it didn't match the committed direction and it was rebuilt as this one-at-a-time takeover).
+
+Scroll-snap deliberately lives on `.panels` itself, not `html`/`body`: snapping the whole document would make the browser refuse to ever rest scroll position at the natural page top, permanently hiding the rail/notice-banner/lead-paragraph content above the map (a real bug hit and fixed during this build — confirmed live via `scrollTo(0,0)` silently getting overridden). Scroll chains naturally from the nested map out to the page once the map's own scroll is exhausted, so "Best of everything" below it is still reachable by continuing to scroll past "Other."
+
+A fixed `.territory-index` dot strip (one dot per topic, each tinted its own territory color) sits at the right edge for **direct jump** — click any dot to go straight to that territory via its `#t-<slug>` anchor, not just step sequentially. The visible dot is 11px but its clickable hit area is a full 28px square (an 11px target alone is too small to click reliably with a real pointer). `IntersectionObserver` toggles `.current` on the dot matching whichever section is actually in view as you scroll.
 
 ## Shapes
 
@@ -79,9 +83,10 @@ Full capsule radius (999px) on every control — buttons, fields, chips, tags �
 
 ## Components
 
-- **Territory tiles** (`.panel`): flat full-strength fill, white text, 24px radius, lifts 3px on hover with the overshoot ease. This is the page's signature moment.
-- **Score bar** (`.rating`): unchanged in concept from the prior iteration — a filled pill-capped bar, length = value/5. Colors in the active territory's accent when ≥4, ink-gray otherwise.
-- **Buttons**: full pill capsules; primary fills with the current context's accent (ink when none is active); hover inverts to solid ink.
+- **Territory sections** (`.panel`): flat full-strength fill, white text, full-viewport scale, generous padding, content vertically centered. The page's signature moment — not a hover-lift tile, a full takeover.
+- **Territory index** (`.territory-index`): fixed-position dot nav, direct-jump to any territory, current-section highlight via `IntersectionObserver`.
+- **Score bar** (`.rating`): a filled pill-capped bar, length = value/5. Colors in the active territory's accent when ≥4, ink-gray otherwise.
+- **Buttons**: full pill capsules; primary fills with the current context's accent (ink when none is active); hover inverts to solid ink. Each territory section also gets an outlined white `.cta` ("See all N →") so the map stays a fast on-ramp into the dense list, not a dead end.
 - **Tabrail**: flat list, each topic's `<details>` tints its own open-state background with its own territory color via an inline custom property — browsing stays monochrome until you open a topic, which then owns the color.
 
 ## Do's and Don'ts
