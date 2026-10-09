@@ -1,38 +1,38 @@
 ---
 name: Saved Video Intelligence
-description: A naturalist's field guide for your saved TikTok library — organized by family, identified by terse marks, color reserved for exactly two things.
+description: Your library as a guide map — eight flat, fully-saturated topic territories; color marks where you are, never scattered per-row.
 colors:
-  bg: "oklch(90% 0.026 88)"
-  surface: "oklch(94% 0.016 88)"
-  surface-raised: "oklch(97% 0.008 85)"
-  rail: "oklch(87% 0.030 88)"
-  ink: "oklch(16% 0.010 80)"
-  ink-2: "oklch(34% 0.014 80)"
-  ink-3: "oklch(46% 0.016 80)"
-  line: "oklch(80% 0.020 80)"
-  line-strong: "oklch(68% 0.024 80)"
-  family: "oklch(47% 0.085 142)"
-  family-ink: "oklch(98% 0.01 142)"
-  family-soft: "oklch(89% 0.035 142)"
-  flag: "oklch(47% 0.135 35)"
-  flag-ink: "oklch(98% 0.01 35)"
-  flag-soft: "oklch(90% 0.05 35)"
+  bg: "#F7F7F5"
+  surface: "#FFFFFF"
+  rail: "#EEEEEA"
+  ink: "#1E1E1C"
+  ink-2: "#4E4E48"
+  ink-3: "#6A6A65"
+  line: "#E1E0DA"
+  line-strong: "#C7C6BD"
+  t-tech: "#1F6FB8"
+  t-money: "#8A6600"
+  t-learn: "#6A42B8"
+  t-home: "#B83D1F"
+  t-health: "#B82E63"
+  t-travel: "#146E64"
+  t-fun: "#3D7A1C"
+  t-other: "#6E6859"
+  flag: "#A8321E"
+  flag-soft: "#F3DCD2"
 typography:
   display:
-    fontFamily: "Spectral, Iowan Old Style, Georgia, serif"
-    fontWeight: 600
-    lineHeight: 1.1
-    letterSpacing: "-0.01em"
+    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
+    fontWeight: 700
+    letterSpacing: "-0.02em"
   body:
-    fontFamily: "Work Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
     fontWeight: 400
-    lineHeight: 1.55
-  dense:
-    fontFamily: "Barlow Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontWeight: 500
-    letterSpacing: "0.01em"
 rounded:
-  all: "0px"
+  pill: "999px"
+  lg: "24px"
+  md: "18px"
+  sm: "14px"
 spacing:
   xs: "4px"
   sm: "8px"
@@ -41,65 +41,53 @@ spacing:
 components:
   btn-primary:
     backgroundColor: "{colors.ink}"
-    textColor: "{colors.surface-raised}"
-    typography: "{typography.dense}"
-    rounded: "{rounded.all}"
-    padding: "9px 15px"
-  btn-primary-hover:
-    backgroundColor: "{colors.family}"
-    textColor: "{colors.family-ink}"
+    textColor: "#FFFFFF"
+    rounded: "{rounded.pill}"
+    padding: "10px 17px"
+  panel:
+    rounded: "{rounded.lg}"
+    textColor: "#FFFFFF"
   tag-warn:
     backgroundColor: "{colors.flag-soft}"
     textColor: "{colors.flag}"
-    typography: "{typography.dense}"
-    rounded: "{rounded.all}"
-  chip-active:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.surface-raised}"
-    rounded: "{rounded.all}"
+    rounded: "{rounded.pill}"
 ---
 
 ## Overview
 
-**Creative North Star: The Field Guide.** Every saved video is treated as a species entry in a naturalist's field guide — filed under a family (topic group), identified at a glance by a few terse marks (category, a filled-bar score, status), and browsed via a flat tab index rather than a nested tree. The direction was chosen through Impeccable's direction-roll process (seed `07e8fd5a`, re-roll round 1, candidate 6 of 7) against six catalog challengers; see `.impeccable/surfaces/templates-dashboard-html.md` for the full contract and the weighing record.
+**Creative North Star: The Guide Map.** The library is a park/zoo guide map: eight topic groups as flat, fully-saturated color territories, sized by how much they hold. Color marks WHERE you are — applied at the overview map and as the current territory's contextual accent — never scattered per-row across a dense list, which is what made an earlier, more muted attempt (also tried and rejected by the user as "basically the same, just reskinned") feel cluttered.
 
-The system refuses two defaults on purpose: the generic white-card/blue-accent SaaS dashboard (every AI-generated admin panel), and a rainbow-per-category tint system (the incumbent design's main source of visual noise). Color is reserved for exactly two signals — **family** (green, the active topic / "this is browsable now") and **flag** (rust, "this needs your attention" — an expired-looking promo, a failed analysis, an actionable queue item). Nothing else on the page ever takes a hue.
+Chosen through Impeccable's bolder-register direction roll (seed `07e8fd5a`, challenger `challenger-zoo-map`) after the user explicitly rejected the first committed direction ("Field Guide") as insufficiently different — both in structure (still a sidebar+table shell) and in palette (a monochromatic warm-tan wash that read as "unreadable"). This system corrects both: eight real, saturated hues replace the single muted accent, and the base ground was pushed to neutral near-white specifically because the user flagged "tan" twice.
 
 ## Colors
 
-Background runs cream-to-manila (`bg` → `rail`, darkest for the nav rail, lightest for raised surfaces) evoking real field-guide page stock, not a "safe tasteful" default — it was pushed deliberately buff/manila rather than pure warm-pink-cream specifically to read as printed stock rather than wall paint. Ink is a warm near-black, never pure `#000`. The only two chromatic colors: `family` (muted forest green) for active/browsable state, `flag` (muted rust) for anything needing attention. Every other UI element — category icons, secondary text, borders — stays strictly monochrome on the ink/line scale.
+Base ground and surfaces are neutral near-white/light-gray (`bg`/`surface`/`rail`) — deliberately NOT warm-cream, after the mechanical slop detector flagged a cream-palette default twice during iteration and the user independently called the same thing out as illegible. Ink is near-black, never pure `#000`. Eight topic territories each own one full-strength flat color (verified ≥4.5:1 with white text on every one). The `flag` rust/red is independent of territory color and always means "needs attention" (a stale-looking promo, a failed analysis).
+
+**Contextual accent rule**: `--accent` defaults to ink-neutral. A `[data-territory="<slug>"]` attribute (set on the dashboard shell from the active topic group, or on `<body>` from a single video's own category on the detail page) swaps `--accent`/`--accent-ink`/`--accent-soft` to that territory's color, which then drives the active nav tab, filled tabs, chips, and score bars for that view only. Outside an active territory context, everything stays ink/gray monochrome — this is the mechanism that keeps eight bold hues from becoming eight-hue row-level noise.
 
 ## Typography
 
-Three faces, each doing one job, none of them Instrument Sans or Newsreader (the incumbent's defaults, both on the common-AI-default list):
-
-- **Display** (`Spectral`) — page titles, video headlines, section headers. A naturalist-publishing serif with real character.
-- **Body** (`Work Sans`) — paragraphs: summaries, transcripts, descriptions. Normal-width for actual reading.
-- **Dense** (`Barlow Condensed`) — everything else: nav labels, table cells, badges, counts, form labels. Condensed on purpose — it fits more terse data per row without feeling cramped, which is the direct, functional answer to "the dashboard feels cluttered": more information in less visual space, not less information.
-
-`.num` (counts, scores, dates) always renders in the dense face with tabular figures.
+One typeface throughout — **Archivo** (grotesque sans) — used for both display headings (700 weight, tight -0.02em tracking) and body/UI text (400-600 weight). Deliberately a single face this time, not a three-font system: hierarchy comes from size, weight, and territory color, not from mixing serif/sans/condensed families.
 
 ## Layout
 
-Two-level shell: a sticky left rail (236px) is the family tab index — flat, not nested-and-expanding the way the incumbent's tree was; drilling into a category happens as chips in the main content area, not deeper rail nesting. The rail collapses to a horizontal scrolling strip under 900px. Main content is a dense entry list (`.table`/`.trow`) with a fixed-column grid that sheds columns at breakpoints (1180px drops creator/date; 900px drops everything but thumbnail, title, and score). The "processing" status block sits quiet at the rail's bottom, a single line + hairline meter — not a competing bordered section with its own buttons.
+Same two-level shell as before (sticky rail + main), but the rail's territory list is now colorized per-group (each `<details>` carries its own `--t-group` custom property, so the open/active topic tints its own row). The real structural shift is the **overview**: eight flat-color territory tiles (`.panel`, 24px radius, white text, color = `--tc` set inline per territory) replace the previous bordered gray cards — this is the page's first viewport and the thing that actually signals "this is a different idea," not just a different palette.
 
 ## Shapes
 
-Zero border-radius, everywhere, without exception — the field guide's hairline-ruled, letterpress character. No rounded corners, no pill shapes except the already-established `.chip`/`.tag-*` family (kept for familiar legibility as inline status markers, not cards). Borders are 1px hairlines in `line`/`line-strong`; nothing heavier.
+Full capsule radius (999px) on every control — buttons, fields, chips, tags — a direct reversal of the previous (Field Guide) direction's zero-radius rule, earned by this world's "map legend / capsule control" material, not arbitrary. Panels and cards use large radii (18-28px) rather than hairline-bordered rectangles.
 
 ## Components
 
-- **Buttons**: ink-filled primary, hairline-bordered secondary, borderless quiet variant for row-level actions. Hover shifts the primary to `family`, never a generic darken.
-- **Score bar** (`.rating`): the worth-rewatching score renders as a filled horizontal bar (length = value / 5), not five dots — a value read from shape, not a count. Scores ≥4 render in `family` green; lower scores stay ink-gray.
-- **Notice/alert strip** (`.notice`): a plain hairline-bounded strip (top + bottom rule, no card, no colored left border — the left-accent-border pattern was flagged by Impeccable's mechanical detector as a recognizable AI-UI tell and deliberately removed). The icon alone carries the color signal.
-- **Tabs/chips**: active state is a 3px left rule in `family` (rail/tree) or a solid ink fill (toolbar chips) — never a background tint per topic.
-- **Panels** (overview grid): bordered cards with real `14px` gaps — deliberately NOT a gapless hairline mosaic (an earlier draft used `gap:1px` + background-as-grid-line, which broke visibly on an incomplete last row; reverted to individually-bordered cards for robustness).
+- **Territory tiles** (`.panel`): flat full-strength fill, white text, 24px radius, lifts 3px on hover with the overshoot ease. This is the page's signature moment.
+- **Score bar** (`.rating`): unchanged in concept from the prior iteration — a filled pill-capped bar, length = value/5. Colors in the active territory's accent when ≥4, ink-gray otherwise.
+- **Buttons**: full pill capsules; primary fills with the current context's accent (ink when none is active); hover inverts to solid ink.
+- **Tabrail**: flat list, each topic's `<details>` tints its own open-state background with its own territory color via an inline custom property — browsing stays monochrome until you open a topic, which then owns the color.
 
 ## Do's and Don'ts
 
-- **Do** reserve color for family-active and flag-attention states only. Everything else is ink/line monochrome.
-- **Do** use the dense condensed face for anything tabular or terse; reserve the display serif for actual headlines.
-- **Do** keep border-radius at zero across the whole system.
-- **Don't** reintroduce a per-category color-tint system (`.tint-*` classes) — this was the incumbent design's primary source of visual noise and was removed deliberately.
-- **Don't** use a colored `border-left` accent on cards/alerts — flagged explicitly by the mechanical detector; use a plain hairline top/bottom rule with a colored icon instead.
-- **Don't** add shadows or multi-level card nesting; depth comes from hairline rules and the rail/main two-level shell only.
+- **Do** keep territory color contextual (nav/accent/score-bar for the CURRENT view) — never apply a different hue to every row simultaneously.
+- **Do** keep the base ground neutral near-white. Cream/tan was tried twice and rejected both by the mechanical detector and by the user directly.
+- **Don't** reintroduce a three-typeface system; Archivo alone carries the whole hierarchy.
+- **Don't** flatten the overview back into gray bordered cards — the flat-color territory tiles are the direction's signature first viewport.
+- **Don't** treat `cubic-bezier(0.34, 1.56, 0.64, 1)` (bounce/overshoot) as a mistake if the detector flags it again — it's a deliberate, direction-specified motion choice, not an accidental default.

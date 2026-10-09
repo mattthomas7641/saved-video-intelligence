@@ -62,7 +62,7 @@
 </form>
 {% endmacro %}
 
-<div class="shell">
+<div class="shell" {% if group %}data-territory="{{ group|gslug }}"{% endif %}>
   <aside class="rail">
     <a href="/dashboard" class="brand">Saved Video Intelligence</a>
 
@@ -78,7 +78,7 @@
         <span class="ci">{{ icon("grid") }}</span><span>All topics</span><span class="count num">{{ "{:,}".format(stats.processed - stats.archived) }}</span>
       </a>
       {% for g in tree %}
-      <details {% if group == g.name %}open{% endif %}>
+      <details style="--t-group: var(--t-{{ g.name|gslug }})" {% if group == g.name %}open{% endif %}>
         <summary><span class="ci">{{ icon(g.name|group_icon) }}</span><span>{{ g.name }}</span><span class="count num">{{ g.count }}</span><span class="chev">{{ icon("chev") }}</span></summary>
         <div class="sub">
           <a href="{{ href(group=g.name) }}" {% if group == g.name and not category %}aria-current="page"{% endif %}>All {{ g.name }}</a>
@@ -229,7 +229,7 @@
       <p class="overview-lead">Pick a topic to dig in, or start with the best ones below. Dots show how worth rewatching each video is.</p>
       <div class="panels">
         {% for g in panels %}
-        <article class="panel">
+        <article class="panel" style="--tc: var(--t-{{ g.name|gslug }})">
           <header>
             <span class="gi lg">{{ icon(g.name|group_icon) }}</span>
             <div class="ttl"><h2><a href="{{ href(group=g.name) }}">{{ g.name }}</a></h2><span class="total num">{{ g.count }} video{{ "" if g.count == 1 else "s" }}</span></div>
