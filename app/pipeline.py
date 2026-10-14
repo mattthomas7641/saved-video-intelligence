@@ -83,8 +83,13 @@ def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.A
     """Idempotent: one Action per video, created the first time analysis flags it actionable."""
     if not analysis.is_actionable:
         return
-    existing = session.exec(select(Action.id).where(Action.video_id == video.id)).first()
+    existing = session.exec(select(Action).where(Action.video_id == video.id)).first()
     if existing:
+        if existing.brief is None and existing.action_type == ActionType.OTHER:
+            # The placeholder intake creates so a shared item shows up at once: fill it in now.
+            existing.action_type = ActionType(analysis.action_type)
+            existing.brief = analysis.action_brief
+            session.add(existing)
         return
     session.add(Action(
         video_id=video.id,
@@ -189,6 +194,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     from app.config import get_action_settings, get_agent_settings
 
     provider = get_agent_settings()["provider"]
+    download_failed = False
     analyzer = None
     if provider == "gemini":
         from app import gemini_client
@@ -209,6 +215,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                 raise RuntimeError(video.error_message or "Couldn't download this video.")
             # Blocked or private (common on Instagram): judge it from the link instead of failing.
             log.warning("Download failed for shared video %s (%s); using the link", video.id, video.error_message)
+            download_failed = True
             on_progress("Couldn't download it; working from the link…")
             video.status = Status.TRANSCRIBED
             video.caption = video.caption or video.tiktok_url
@@ -218,9 +225,10 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
             _touch(session, video)
 
     analysis_cost = 0.0
-    has_action = session.exec(select(Action.id).where(Action.video_id == video.id)).first() is not None
+    action_row = session.exec(select(Action).where(Action.video_id == video.id)).first()
+    needs_analysis = action_row is None or (action_row.brief is None and action_row.action_type == ActionType.OTHER)
     if video.status in (Status.TRANSCRIBED, Status.ANALYZING, Status.SUBMITTED) or (
-            video.status == Status.DONE and not has_action):
+            video.status == Status.DONE and needs_analysis):
         on_progress("Watching the video…" if provider == "gemini" and video.local_video_path else "Reading it…")
         analysis_cost = analyze_video(session, video, analyzer)
         _drop_video_file(session, video)
@@ -274,6 +282,9 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
             log.exception("Research failed for video %s", video.id)
             action.error_message = f"Research failed: {e}"[:500]
     else:
+        if download_failed:
+            findings.report_markdown = ("> Couldn't download this video (the site blocked it), so this was judged "
+                                        "from the link and caption only.\n\n" + findings.report_markdown)
         action.status = ActionStatus.DRAFTED
         action.verdict = findings.verdict
         action.cost_usd = round(findings.cost_usd + plan_cost + analysis_cost, 4)

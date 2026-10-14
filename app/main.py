@@ -127,6 +127,7 @@ templates.env.filters["markdown"] = _render_markdown
 
 init_db()
 worker.recover_stuck()
+intake.recover_interrupted()
 batch.start_poller()
 telegram_bot.start_poller()
 ntfy_intake.start()

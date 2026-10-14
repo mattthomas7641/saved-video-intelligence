@@ -95,6 +95,17 @@ def _status(e: Exception) -> int | None:
     return getattr(e, "status_code", None) or getattr(e, "code", None)
 
 
+def _is_network_error(e: Exception) -> bool:
+    import ssl
+
+    chain, seen = e, 0
+    while chain is not None and seen < 5:
+        if isinstance(chain, httpx.TransportError | ssl.SSLError | ConnectionError | TimeoutError):
+            return True
+        chain, seen = chain.__cause__ or chain.__context__, seen + 1
+    return False
+
+
 def _create(client, retries: int = 2, **params):
     """One Interactions API call. 429s are retried with a short backoff, then raised as
     Throttled; a rejected key becomes FatalAnalysisError (only you can fix it)."""
@@ -105,6 +116,11 @@ def _create(client, retries: int = 2, **params):
             status, text = _status(e), str(e).lower()
             if status in (401, 403) and ("key" in text or "permission" in text or "unauthor" in text):
                 raise FatalAnalysisError("Gemini rejected the API key. Check it in Settings.") from e
+            transient = status in (500, 502, 503, 504) or (status is None and _is_network_error(e))
+            if transient and attempt < retries:
+                log.warning("Gemini call dropped (%s); retrying", str(e)[:120])
+                time.sleep(2 * (attempt + 1))
+                continue
             if status != 429:
                 raise
             if attempt == retries:

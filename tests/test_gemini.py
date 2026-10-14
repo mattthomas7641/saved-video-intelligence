@@ -219,3 +219,19 @@ def test_persistent_rate_limit_becomes_a_readable_failure(monkeypatch, session):
     vid = intake.ingest_shared_text("some text about a new AI model release")
     action = pipeline.process_shared_video(session, session.get(Video, vid))
     assert action.status.value == "failed" and "rate limiting" in action.error_message
+
+
+def test_network_drop_is_retried(monkeypatch):
+    import ssl
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class Flaky(FakeGenAI):
+        def _create(self, **params):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("wrapped") from ssl.SSLEOFError("EOF occurred in violation of protocol")
+            return super()._create(**params)
+    client = Flaky([_ix([_call("record_findings", FINDINGS)])])
+    assert gemini_client.research(V(), "repo", None, 1.0, client=client, web=False).verdict == "worth_it"
+    assert calls["n"] == 2
