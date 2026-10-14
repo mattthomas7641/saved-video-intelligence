@@ -1,4 +1,4 @@
-# Saved Video Intelligence
+# Sidequest (Saved Video Intelligence)
 
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
