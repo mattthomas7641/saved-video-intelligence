@@ -56,3 +56,16 @@ def extract_on_screen_text(video_path: str, duration_seconds: float | None, num_
                 seen.add(line.lower())
                 deduped.append(line)
     return "\n".join(deduped)
+
+
+def extract_image_text(image_path: str) -> str:
+    """OCR for a shared screenshot or photo. Returns "" without tesseract."""
+    if not image_path or not _tesseract_available():
+        return ""
+    import pytesseract
+    from PIL import Image
+
+    try:
+        return pytesseract.image_to_string(Image.open(image_path)).strip()
+    except OSError:
+        return ""

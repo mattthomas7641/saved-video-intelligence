@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app import agent, pipeline
+from app import agent, gemini_client, pipeline, prefetch
 from app import telegram_bot as tb
 from app.analyze import AnalysisResult
 from app.config import save_action_settings, save_agent_settings
@@ -36,23 +36,36 @@ def transcribed(session):
     return v
 
 
+@pytest.fixture(autouse=True)
+def no_network_prefetch(monkeypatch):
+    monkeypatch.setattr(prefetch, "gather", lambda video: {"repos": [], "pages": []})
+
+
 @pytest.fixture
 def stub_analysis(monkeypatch):
-    monkeypatch.setattr(pipeline.analyze_mod, "analyze_video", lambda video: AnalysisResult(**ANALYSIS))
+    """Gemini is the default analyzer for shared items; Claude must never be called."""
+    def grok(video):
+        result = AnalysisResult(**ANALYSIS)
+        result.cost_usd = 0.003
+        return result
+    monkeypatch.setattr(gemini_client, "analyze_video", grok)
+    monkeypatch.setattr(pipeline.analyze_mod, "analyze_video", lambda video: pytest.fail("Claude was called"))
 
 
 def test_shared_video_is_analyzed_routed_and_researched(session, transcribed, stub_analysis, monkeypatch):
     seen = {}
-    def fake_run(video, action_type, brief, budget, on_progress):
-        seen.update(type=action_type, brief=brief, budget=budget)
+    def fake_run(video, action_type, brief, budget, on_progress, **kw):
+        seen.update(type=action_type, brief=brief, budget=budget, **kw)
         return _findings()
     monkeypatch.setattr(agent, "run", fake_run)
     progress = []
     action = pipeline.process_shared_video(session, transcribed, progress.append, chat_id=42, message_id=7)
     assert seen["type"] == "place" and seen["brief"] == "Dalessandro's, Philly"
-    assert action.status == ActionStatus.DRAFTED and action.verdict == "worth_it" and action.cost_usd == 0.21
+    assert action.status == ActionStatus.DRAFTED and action.verdict == "worth_it"
+    assert action.cost_usd == pytest.approx(0.213)  # research + Gemini analysis
+    assert seen["web"] is True and seen["provider"] == "gemini"  # Gemini search is free: always allowed
     assert action.telegram_chat_id == 42 and json.loads(action.result)["place"]["name"] == "Dalessandro's"
-    assert progress[0] == "Reading the video…"
+    assert progress[0] == "Reading it…"  # already transcribed: nothing to watch
 
 
 def test_budget_passed_to_agent_subtracts_todays_spend(session, transcribed, stub_analysis, monkeypatch):
@@ -63,9 +76,9 @@ def test_budget_passed_to_agent_subtracts_todays_spend(session, transcribed, stu
     session.add(Action(video_id=other.id, action_type=ActionType.REPO, cost_usd=0.5))
     session.commit()
     budgets = []
-    monkeypatch.setattr(agent, "run", lambda v, t, b, budget, on_progress: budgets.append(budget) or _findings())
+    monkeypatch.setattr(agent, "run", lambda v, t, b, budget, on_progress, **kw: budgets.append(budget) or _findings())
     pipeline.process_shared_video(session, transcribed)
-    assert budgets == [pytest.approx(1.5)]
+    assert budgets == [pytest.approx(1.5 - 0.003)]  # cap - today's spend - this video's analysis
 
 
 def test_cap_reached_leaves_action_needing_input(session, transcribed, stub_analysis, monkeypatch):
@@ -84,7 +97,7 @@ def test_paused_agent_analyzes_but_does_not_research(session, transcribed, stub_
 
 
 def test_missing_action_falls_back_to_other(session, transcribed, monkeypatch):
-    monkeypatch.setattr(pipeline.analyze_mod, "analyze_video",
+    monkeypatch.setattr(gemini_client, "analyze_video",
                         lambda video: AnalysisResult(**{**ANALYSIS, "is_actionable": False}))
     monkeypatch.setattr(agent, "run", lambda *a, **k: _findings())
     action = pipeline.process_shared_video(session, transcribed)
@@ -95,7 +108,7 @@ def test_format_result_for_a_finished_report(session, transcribed, stub_analysis
     monkeypatch.setattr(agent, "run", lambda *a, **k: _findings())
     action = pipeline.process_shared_video(session, transcribed)
     text = tb.format_result(action, transcribed)
-    assert "<b>Go on a weekday before 6pm</b>" in text and "Worth it" in text and "Place" in text
+    assert "<b>Go on a weekday before 6pm</b>" in text and "Do it" in text and "Place" in text
     assert "Pair with a Wissahickon hike" in text
 
 
@@ -105,14 +118,23 @@ def test_format_result_escapes_html(session, transcribed):
     assert "&lt;script&gt;" in tb.format_result(action, transcribed)
 
 
-def test_agent_page_renders_reports_and_filters(session, transcribed, stub_analysis, monkeypatch):
+def test_home_renders_reports_by_topic_and_tab(session, transcribed, stub_analysis, monkeypatch):
     monkeypatch.setattr(agent, "run", lambda *a, **k: _findings())
-    pipeline.process_shared_video(session, transcribed)
+    action = pipeline.process_shared_video(session, transcribed)
     client = TestClient(app)
-    page = client.get("/agent").text
+    page = client.get("/").text
     assert "Go on a weekday before 6pm" in page and "Dalessandro" in page and "<strong>Order</strong>" in page
-    assert "Go on a weekday" not in client.get("/agent?type=repo").text
-    assert "Go on a weekday" in client.get("/agent?verdict=worth_it").text
+    assert "Food &amp; Home" in page  # Recipe / Cooking files under the Food & Home topic
+    assert "Go on a weekday" in client.get("/?group=home").text
+    assert "Go on a weekday" not in client.get("/?group=tech").text
+    assert "Go on a weekday" not in client.get("/?tab=done").text
+    client.post(f"/agent/{action.id}/done", data={"next": "/"})
+    assert "Go on a weekday" in client.get("/?tab=done").text and "Go on a weekday" not in client.get("/").text
+    client.post(f"/agent/{action.id}/dismiss", data={"next": "/"})
+    assert "Go on a weekday" in client.get("/?tab=skipped").text
+    client.post(f"/agent/{action.id}/reopen", data={"next": "/"})
+    assert "Go on a weekday" in client.get("/").text
+    assert "Go on a weekday" in client.get("/agent").text  # old address still works
 
 
 def test_agent_page_markdown_cannot_inject_html(session, transcribed, stub_analysis, monkeypatch):
@@ -125,7 +147,7 @@ def test_agent_page_markdown_cannot_inject_html(session, transcribed, stub_analy
 
 
 def test_agent_page_empty_state():
-    assert "Nothing shared yet" in TestClient(app).get("/agent").text
+    assert "No sidequests yet" in TestClient(app).get("/").text
 
 
 def test_settings_page_shows_pairing_code():
@@ -134,3 +156,29 @@ def test_settings_page_shows_pairing_code():
     code = new_pairing_code()
     page = TestClient(app).get("/settings").text
     assert f"/start {code}" in page and "@mybot" in page
+
+
+def test_agent_page_shows_project_fit_and_deeper_button(session, transcribed, stub_analysis, monkeypatch):
+    f = _findings()
+    f.project_fit = [{"project": "llm-inference-gateway", "fit": "worth_it", "where": "gateway/batcher.py",
+                      "architecture_impact": "Replaces the fixed-window batcher", "effort": "S"}]
+    f.new_project_idea = "A Philly food map"
+    monkeypatch.setattr(agent, "run", lambda *a, **k: f)
+    pipeline.process_shared_video(session, transcribed)
+    page = TestClient(app).get("/agent").text
+    assert "Fits your projects" in page and "Replaces the fixed-window batcher" in page
+    assert "A Philly food map" in page and "Research deeper" in page
+
+
+def test_deep_rerun_route_forces_web(session, transcribed, stub_analysis, monkeypatch):
+    calls = []
+    monkeypatch.setattr("app.intake.rerun", lambda action_id, deep=False: calls.append((action_id, deep)) or True)
+    TestClient(app).post("/agent/7/rerun", data={"deep": "true"})
+    assert calls == [(7, True)]
+
+
+def test_settings_page_shows_send_to_agent_setup():
+    from app.config import new_ntfy_setup
+    s = new_ntfy_setup()
+    page = TestClient(app).get("/settings").text
+    assert s["inbox_topic"] in page and s["token"] in page and "Your projects" in page

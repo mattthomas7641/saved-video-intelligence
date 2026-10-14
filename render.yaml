@@ -8,6 +8,8 @@ services:
         sync: false
       - key: ANALYSIS_MODEL
         value: claude-haiku-4-5-20251001
+      - key: AGENT_PROVIDER
+        value: gemini
       - key: AGENT_MODEL
         value: claude-sonnet-5
       - key: PUBLIC_BASE_URL

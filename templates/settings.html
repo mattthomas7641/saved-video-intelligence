@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}Settings · Saved Video Intelligence{% endblock %}
+{% block title %}Settings · Sidequest{% endblock %}
 {% block content %}
 <header class="page-head"><h1>Settings</h1></header>
 
@@ -20,8 +20,120 @@
   <p style="margin-top:12px">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. It’s stored only on this computer, in the <code>data</code> folder.</p>
 </section>
 
+<section class="plain-card" id="send">
+  <h2>Send to Sidequest</h2>
+  <p style="margin-bottom:12px">
+    {% if ntfy.inbox_topic %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Set up</span>
+    {% else %}<span class="tag-warn">{{ icon("alert") }} Not set up</span>{% endif %}
+  </p>
+  <p style="margin-bottom:10px">From TikTok, Instagram, YouTube, Safari, Photos or a fresh screenshot: <strong>Share → Send to Sidequest</strong>. Videos, links, screenshots and text all work. They go through a private relay (ntfy.sh, free), this app picks them up, and the result comes back as a phone notification. Nothing on this computer is exposed to the internet.</p>
+  {% if not ntfy.inbox_topic %}
+  <form action="/settings/ntfy" method="post"><button class="btn btn-primary" type="submit">Create my private channel</button></form>
+  {% else %}
+  <ol class="steps">
+    <li>On your iPhone, install the free <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">ntfy</a> app, tap <strong>+</strong> and subscribe to:
+      <code class="copy">{{ ntfy.results_topic }}</code></li>
+    <li>Open <strong>Shortcuts</strong> → <strong>+</strong> → name it <strong>Send to Sidequest</strong>. Tap ⓘ, turn on <strong>Show in Share Sheet</strong>, and set it to receive <strong>URLs, Text and Images</strong>.</li>
+    <li>Add <strong>If</strong>: <em>Shortcut Input</em> <strong>is</strong> <em>Image</em> (tap the input to pick its type).</li>
+    <li>Inside the <strong>If</strong>, for screenshots and photos:
+      <ul>
+        <li><strong>Convert Image</strong> Shortcut Input to <strong>JPEG</strong></li>
+        <li><strong>Get Contents of URL</strong>: URL <code class="copy">{{ ntfy.server }}/{{ ntfy.inbox_topic }}</code>, Method <strong>PUT</strong>, Request Body <strong>File</strong> = Converted Image</li>
+        <li>Add two headers: <code>Filename</code> = <code>shot.jpg</code>, and <code>Message</code> = <code class="copy">{"v":1,"token":"{{ ntfy.token }}"}</code></li>
+      </ul></li>
+    <li>In <strong>Otherwise</strong>, for links and text:
+      <ul>
+        <li><strong>Get Contents of URL</strong>: same URL, Method <strong>POST</strong>, Request Body <strong>JSON</strong> with three fields:</li>
+        <li><code>v</code> (Number) = <code>1</code>, <code>token</code> (Text) = <code class="copy">{{ ntfy.token }}</code>, <code>url</code> (Text) = <em>Shortcut Input</em></li>
+      </ul></li>
+    <li>After <strong>End If</strong>, optionally add <strong>Show Notification</strong> “Sent to agent”. The first time you share from TikTok or Instagram, tap <strong>More</strong> → <strong>Edit Actions</strong> and add Send to Sidequest to Favorites so it sits at the top.</li>
+  </ol>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+    <form action="/settings/ntfy/test" method="post"><button class="btn btn-primary" type="submit">Send a test notification</button></form>
+    <form action="/settings/ntfy" method="post" onsubmit="return confirm('This creates new channel names and a new token. You will need to update the Shortcut and the ntfy subscription.')">
+      <button class="btn" type="submit">{{ icon("refresh") }} New channel</button></form>
+  </div>
+  {% if key_status == "ntfy_sent" %}<p style="margin-top:10px;color:var(--family)">Sent. It should appear in the ntfy app within a few seconds.</p>{% endif %}
+  {% if key_status == "ntfy_failed" %}<p style="margin-top:10px;color:var(--flag)">Couldn't reach ntfy.sh. Check this computer's internet connection.</p>{% endif %}
+  <p class="hint">Privacy: links and result summaries pass through ntfy.sh. Anyone who knew a channel name could read it, which is why the names are long and random; incoming links also need the token.</p>
+  {% endif %}
+</section>
+
+<section class="plain-card" id="research">
+  <h2>Research agent</h2>
+  <p style="margin-bottom:12px">Gemini watches each video you send (audio and picture), then researches it with Google Search and Maps. About $0.01–0.03 per item.</p>
+
+  <div class="key-row">
+    <div><strong>Gemini API key</strong> {% if has_gemini_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="tag-warn">{{ icon("alert") }} Needed</span>{% endif %}
+      <p class="hint" style="margin-top:4px">From <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>, with billing turned on: video input isn't on the free tier. Search is free up to 5,000 a month.</p></div>
+    <form action="/settings/gemini" method="post" class="inline-form">
+      <input class="field" type="password" name="key" autocomplete="off" aria-label="Gemini API key" placeholder="{{ 'Paste a new key to replace it' if has_gemini_key else 'AIza…' }}" required>
+      <button class="btn btn-primary" type="submit">Save</button></form>
+    {% if key_status == "gemini_invalid" %}<p style="color:var(--flag)">Google didn't accept that key.</p>{% endif %}
+    {% if key_status == "gemini_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
+  </div>
+
+  <details class="key-row" {% if has_xai_key or key_status.startswith("xai") %}open{% endif %}>
+    <summary class="settings-summary"><strong>xAI API key</strong> <span class="hint" style="margin:0">optional: only if you switch research to Grok</span></summary>
+    <form action="/settings/xai" method="post" class="inline-form" style="margin-top:8px">
+      <input class="field" type="password" name="key" autocomplete="off" aria-label="xAI API key" placeholder="{{ 'Paste a new key to replace it' if has_xai_key else 'xai-…' }}" required>
+      <button class="btn btn-primary" type="submit">Save</button></form>
+    {% if key_status == "xai_invalid" %}<p style="color:var(--flag)">xAI didn't accept that key.</p>{% endif %}
+    {% if key_status == "xai_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
+  </details>
+
+  <form action="/settings/agent" method="post" style="display:grid;gap:10px;margin-top:16px">
+    <label for="about_me"><strong>About me</strong> <span class="hint" style="margin:0">read every time it decides what's “useful for you”</span></label>
+    <textarea class="field" id="about_me" name="about_me" rows="4" placeholder="e.g. Technology consultant in Philadelphia. Building a personal AI stack: an LLM gateway, a TikTok research agent, a ticket price monitor. Into agents, data pipelines, cheap good food.">{{ agent_settings.about_me }}</textarea>
+    <label for="planned_ideas"><strong>Ideas I haven't started yet</strong> <span class="hint" style="margin:0">judged alongside your project folders and PLAN.md</span></label>
+    <textarea class="field" id="planned_ideas" name="planned_ideas" rows="3" placeholder="e.g. A budget agent on Plaid. A job-search agent that tailors resumes nightly.">{{ agent_settings.planned_ideas }}</textarea>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--ink-2)">
+      <label>Research with
+        <select class="field" name="provider" style="width:auto;padding:8px 14px">
+          <option value="gemini" {{ "selected" if agent_settings.provider == "gemini" }}>Gemini (watches the video)</option>
+          <option value="xai" {{ "selected" if agent_settings.provider == "xai" }}>Grok</option>
+          <option value="anthropic" {{ "selected" if agent_settings.provider == "anthropic" }}>Claude</option>
+        </select></label>
+      <label>Daily cap $<input class="field num" type="number" name="daily_cap_usd" min="0" step="0.5" value="{{ '%.2f'|format(agent_settings.daily_cap_usd) }}"></label>
+    </div>
+    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+  </form>
+  {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+</section>
+
+<section class="plain-card" id="projects">
+  <h2>Your projects</h2>
+  <p style="margin-bottom:12px">The agent judges every video against these: whether it's worth adding, where it plugs in, and what it does to the architecture. Found in your Projects folder; secrets, data and .env files are never read.</p>
+  {% if projects %}
+  <ul class="proj-list">
+    {% for p in projects %}{% set status = project_overrides.get(p.name, p.status) %}
+    <li>
+      <details>
+        <summary><strong>{{ p.name }}</strong> <span class="tag-info">{{ status }}</span>{% if p.card_source == "readme" %} <span class="hint" style="margin:0">basic card until a Gemini key is added</span>{% endif %}</summary>
+        <p class="proj-card">{{ p.card }}</p>
+      </details>
+      {% if p.name != "planned-ideas" %}
+      <form action="/settings/projects/{{ p.name }}" method="post">
+        <select class="field" name="status" onchange="this.form.submit()" aria-label="Status for {{ p.name }}" style="width:auto;padding:6px 12px">
+          {% for opt in ["", "active", "planned", "ignore"] %}
+          <option value="{{ opt }}" {{ "selected" if project_overrides.get(p.name, "") == opt }}>{{ "auto (" ~ p.status ~ ")" if not opt else opt }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">No projects scanned yet.</p>
+  {% endif %}
+  <form action="/settings/projects/rescan" method="post" style="margin-top:12px"><button class="btn" type="submit">{{ icon("refresh") }} Rescan now</button></form>
+  {% if key_status == "projects_rescanned" %}<p style="color:var(--family);margin-top:8px">Rescanned.</p>{% endif %}
+</section>
+
 <section class="plain-card" id="telegram">
-  <h2>Telegram</h2>
+  <details {% if telegram.bot_token or key_status.startswith("tg_") %}open{% endif %}>
+  <summary class="settings-summary"><h2 style="display:inline">Telegram</h2> <span class="hint" style="margin:0">optional second doorway</span></summary>
   <p style="margin-bottom:12px">
     {% if telegram.bot_token and telegram.chat_id %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected{% if telegram.bot_username %} to @{{ telegram.bot_username }}{% endif %}</span>
     {% elif telegram.bot_token %}<span class="tag-warn">{{ icon("alert") }} Waiting for pairing</span>
@@ -55,20 +167,7 @@
     <button class="btn" type="submit">{{ icon("refresh") }} Pair a different chat</button>
   </form>
   {% endif %}
-</section>
-
-<section class="plain-card" id="research">
-  <h2>Research agent</h2>
-  <p style="margin-bottom:10px">Tell the agent about yourself. It reads this every time it decides whether something is “useful for you”.</p>
-  <form action="/settings/agent" method="post" style="display:grid;gap:10px">
-    <textarea class="field" name="about_me" rows="5" placeholder="e.g. CS student in Philadelphia. Building a hobby OS in Rust and an LLM inference gateway. Into agents, systems programming, cheap good food.">{{ agent_settings.about_me }}</textarea>
-    <label style="display:flex;gap:10px;align-items:center;color:var(--ink-2)">
-      Daily spending cap $<input class="field num" type="number" name="daily_cap_usd" min="0" step="0.5" value="{{ '%.2f'|format(agent_settings.daily_cap_usd) }}">
-      <span class="hint" style="margin:0">A typical video costs about $0.08–$0.15 to research.</span>
-    </label>
-    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
-  </form>
-  {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  </details>
 </section>
 
 <section class="plain-card">

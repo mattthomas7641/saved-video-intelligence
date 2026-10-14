@@ -114,3 +114,18 @@ class Action(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Project(SQLModel, table=True):
+    """One of your own projects (from PROJECTS_DIR), summarized into a short card
+    the research agent reads when judging whether a video fits it."""
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    path: str
+    status: str = "active"            # detected: active | planned
+    content_hash: str | None = None   # hash of the scanned files; the card is rebuilt only when it changes
+    card: str | None = None           # ~200-word summary: purpose, stack, architecture, next steps
+    card_source: str | None = None    # "grok" or "readme" (no xAI key yet)
+    cost_usd: float | None = None
+    scanned_at: datetime = Field(default_factory=datetime.utcnow)
+    card_updated_at: datetime | None = None

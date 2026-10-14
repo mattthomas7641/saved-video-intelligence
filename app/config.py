@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     scanner_data_dir: str = Field(default="", alias="SCANNER_DATA_DIR")
     analysis_model: str = Field(default="claude-haiku-4-5-20251001", alias="ANALYSIS_MODEL")
     agent_model: str = Field(default="claude-sonnet-5", alias="AGENT_MODEL")
+    agent_provider: str = Field(default="gemini", alias="AGENT_PROVIDER")
+    agent_model_gemini: str = Field(default="gemini-3.8-flash", alias="AGENT_MODEL_GEMINI")
+    analysis_model_gemini: str = Field(default="gemini-3.8-flash", alias="ANALYSIS_MODEL_GEMINI")
+    agent_model_xai: str = Field(default="grok-4.3", alias="AGENT_MODEL_XAI")
+    analysis_model_xai: str = Field(default="grok-4.3", alias="ANALYSIS_MODEL_XAI")
+    projects_dir: str = Field(default="", alias="PROJECTS_DIR")
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
     public_base_url: str = Field(default="http://127.0.0.1:8787", alias="PUBLIC_BASE_URL")
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
@@ -158,6 +164,7 @@ def get_telegram_settings() -> dict:
         "bot_username": s.get("bot_username", ""),
         "chat_id": s.get("chat_id"),
         "pairing_code": s.get("pairing_code", ""),
+        "muted": bool(s.get("muted", False)),
     }
 
 
@@ -176,11 +183,15 @@ def new_pairing_code() -> str:
 
 def get_agent_settings() -> dict:
     """'About me' is injected into every research prompt so 'useful for me'
-    means something; the daily cap bounds what the research agent spends."""
+    means something; the daily cap bounds what the research agent spends.
+    `provider` picks who watches and researches: "gemini" (default), "xai" (Grok) or "anthropic"."""
     s = _load_secrets().get("AGENT", {})
+    provider = s.get("provider") or settings.agent_provider.strip() or "gemini"
     return {
         "about_me": s.get("about_me", ""),
         "daily_cap_usd": float(s.get("daily_cap_usd", 3.0)),
+        "provider": provider if provider in PROVIDERS else "gemini",
+        "planned_ideas": s.get("planned_ideas", ""),
     }
 
 
@@ -191,6 +202,69 @@ def save_agent_settings(**updates) -> dict:
     return current
 
 
+def get_xai_key() -> str:
+    return _load_secrets().get("XAI_API_KEY", "").strip() or os.environ.get("XAI_API_KEY", "").strip()
+
+
+def save_xai_key(key: str) -> None:
+    _save_secret("XAI_API_KEY", key.strip())
+
+
+def get_gemini_key() -> str:
+    return _load_secrets().get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+
+
+def save_gemini_key(key: str) -> None:
+    _save_secret("GEMINI_API_KEY", key.strip())
+
+
+PROVIDERS = ("gemini", "xai", "anthropic")
+
+
+def get_project_overrides() -> dict:
+    """Per-project status chosen in Settings: active | planned | ignore."""
+    return _load_secrets().get("PROJECT_OVERRIDES", {})
+
+
+def save_project_override(name: str, status: str) -> None:
+    overrides = get_project_overrides()
+    if status in ("active", "planned", "ignore"):
+        overrides[name] = status
+    else:
+        overrides.pop(name, None)
+    _save_secret("PROJECT_OVERRIDES", overrides)
+
+
+def get_ntfy_settings() -> dict:
+    """The "Send to Sidequest" Shortcut posts to `inbox_topic`; results go to
+    `results_topic`. Both names are long and random (on ntfy.sh a topic name is
+    effectively its password), and every inbox message must also carry `token`."""
+    s = _load_secrets().get("NTFY", {})
+    return {
+        "server": (s.get("server") or "https://ntfy.sh").rstrip("/"),
+        "inbox_topic": s.get("inbox_topic", ""),
+        "results_topic": s.get("results_topic", ""),
+        "token": s.get("token", ""),
+        "since": s.get("since", ""),
+    }
+
+
+def save_ntfy_settings(**updates) -> dict:
+    current = get_ntfy_settings()
+    current.update(updates)
+    _save_secret("NTFY", current)
+    return current
+
+
+def new_ntfy_setup() -> dict:
+    return save_ntfy_settings(
+        inbox_topic=f"svi-in-{secrets.token_hex(18)}",
+        results_topic=f"svi-out-{secrets.token_hex(18)}",
+        token=secrets.token_urlsafe(32),
+        since="",
+    )
+
+
 ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key()
 # Deliberately NOT part of Settings above: the Anthropic key is runtime-mutable
 # secrets.json state (see get_api_key), with this bare env var read as its one
@@ -198,6 +272,11 @@ ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key(
 # sense as the fields in Settings.
 ANALYSIS_MODEL = settings.analysis_model.strip()
 AGENT_MODEL = settings.agent_model.strip()
+AGENT_MODEL_XAI = settings.agent_model_xai.strip()
+ANALYSIS_MODEL_XAI = settings.analysis_model_xai.strip()
+AGENT_MODEL_GEMINI = settings.agent_model_gemini.strip()
+ANALYSIS_MODEL_GEMINI = settings.analysis_model_gemini.strip()
+PROJECTS_DIR = Path(settings.projects_dir.strip()).expanduser() if settings.projects_dir.strip() else Path.home() / "Projects"
 GITHUB_TOKEN = settings.github_token.strip()
 PUBLIC_BASE_URL = settings.public_base_url.strip().rstrip("/")
 WHISPER_MODEL = settings.whisper_model.strip()

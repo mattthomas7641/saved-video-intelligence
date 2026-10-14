@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}{{ crumbs[-1][0] }} · Saved Video Intelligence{% endblock %}
+{% block title %}{{ crumbs[-1][0] }} · Sidequest{% endblock %}
 
 {% block body %}
 {% macro bar(score) -%}
@@ -64,13 +64,12 @@
 
 <div class="shell" {% if group %}data-territory="{{ group|gslug }}"{% endif %}>
   <aside class="rail">
-    <a href="/dashboard" class="brand">Saved Video Intelligence</a>
+    <a href="/" class="brand">Sidequest</a>
 
     <nav class="quicklinks" aria-label="Sections">
-      <a href="/agent">{{ icon("inbox") }}<span>Agent</span></a>
+      <a href="/">{{ icon("inbox") }}<span>Quests</span></a>
       <a href="/actions">{{ icon("sparkles") }}<span>Ideas{% if action_queue_count %} <span class="badge num">{{ action_queue_count }}</span>{% endif %}</span></a>
       <a href="/jobs">{{ icon("briefcase") }}<span>Jobs</span></a>
-      <a href="/bulk">{{ icon("trending") }}<span>Analyze</span></a>
     </nav>
 
     {% if stats.processed %}
@@ -92,17 +91,7 @@
     </nav>
     {% endif %}
 
-    {% if stats.total %}
-    <section class="processing" aria-label="Analysis">
-      <div class="line"><span>{{ "{:,}".format(stats.processed) }} of {{ "{:,}".format(stats.total) }} analyzed</span></div>
-      <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="{{ stats.total }}" aria-valuenow="{{ stats.processed }}">
-        <span style="width: {{ (stats.processed / stats.total * 100) if stats.total else 0 }}%"></span>
-      </div>
-      <div class="links"><a href="/onboarding">Import</a><a href="/settings">Settings</a></div>
-    </section>
-    {% else %}
     <div class="processing"><a href="/settings">Settings</a></div>
-    {% endif %}
   </aside>
 
   <main class="main">
@@ -110,14 +99,11 @@
     <div class="notice">{{ icon("check") }}<span>Imported {{ "{:,}".format(imported) }} saved videos.</span></div>
     {% endif %}
     {% if request.query_params.get("key") == "saved" %}<div class="notice">{{ icon("check") }}<span>API key saved.</span></div>{% endif %}
-    {% if stats.errors and tab != "queue" and not show_setup %}
-    <div class="notice warn">{{ icon("alert") }}<span>{{ stats.errors }} video{{ "" if stats.errors == 1 else "s" }} couldn't be analyzed. <a href="{{ href(tab='queue') }}">See why</a>.</span></div>
-    {% endif %}
 
     {% if show_setup %}
     <section class="setup" aria-labelledby="setup-h">
       <h2 id="setup-h">Let’s get your saves sorted</h2>
-      <p>Three quick steps. Saved Video Intelligence reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
+      <p>Three quick steps. Sidequest reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
       <ol class="steps">
         <li class="step {{ 'done' if setup.key else 'current' }}">
           <span class="mark">{% if setup.key %}{{ icon("check") }}{% else %}{{ icon("key") }}{% endif %}</span>
@@ -210,8 +196,7 @@
         ("worth_rewatching", "Worth rewatching", "star", stats.worth, false),
         ("flagged", "May be expired", "alert", stats.flagged, true),
         ("unwatched", "Not revisited", "eye", stats.unwatched, false),
-        ("archived", "Archived", "archive", stats.archived, false),
-        ("queue", "Waiting &amp; errors", "inbox", stats.queue, false)] %}
+        ("archived", "Archived", "archive", stats.archived, false)] %}
       <a href="{{ href(tab=key, show='') }}" class="{{ 'alert' if alert and n }}" {% if tab == key %}aria-current="page"{% endif %}>{{ icon(ico) }}<span>{{ label|safe }}</span> <span class="n num">{{ "{:,}".format(n) }}</span></a>
       {% endfor %}
     </nav>

@@ -1,10 +1,24 @@
 """Database engine/session helpers."""
+from sqlalchemy import event
 from sqlmodel import Session, create_engine
 
 from app.config import BASE_DIR, DB_PATH
 
 # Several worker threads write concurrently; wait for locks instead of failing.
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False, "timeout": 30})
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _record):
+    """Wait out short write locks (the dashboard, the research lane and background
+    rescans share this file; each commits promptly). Deliberately NOT WAL: WAL's
+    shared-memory index doesn't work across Docker Desktop's file sharing, so opening
+    the database from the host while the container runs can delete the live WAL file
+    and silently lose the container's writes (this happened, 2026-10-11)."""
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=DELETE")
+    cur.execute("PRAGMA busy_timeout=30000")
+    cur.close()
 
 
 def init_db() -> None:

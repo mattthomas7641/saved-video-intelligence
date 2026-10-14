@@ -6,13 +6,14 @@ Send it anything you come across. It does the follow-up and tells you if it's wo
 
 Two things, one pipeline:
 
-- **Share a TikTok, get the follow-up done.** Share a video to your own
-  Telegram bot and a Claude research agent acts on it within minutes: checks
-  every GitHub repo a "10 repos you need" video names against the live GitHub
-  API and says which fit your projects, traces an AI-news claim back to its
-  primary source, or turns a food video into an address, hours and the best
-  day to go. A short answer comes back in the chat; the full report lands on
-  the dashboard. See **Share to Telegram → research agent**, below.
+- **Share a TikTok, get the follow-up done.** Tap Share → Send to Sidequest and a
+  research agent (about $0.01–0.03 an item) acts
+  on it within minutes: Gemini watches the video, then it vets every GitHub repo
+  a "10 repos you need" video names against the live API, traces AI news to its source, turns a food video
+  into an address, hours and the best day to go, and judges it against your own
+  projects: where it would plug in and what it would do to their
+  architecture. The answer arrives as a phone notification; the full report
+  lands on the dashboard. See **Send to Sidequest → research agent**, below.
 - **Make a 7,000-video Saved list usable.** Transcribe, OCR, categorize and
   summarize your whole TikTok Saved/Favorites list, score what's worth
   rewatching, and flag promo codes or dated offers that may be stale.
@@ -23,7 +24,7 @@ table, the Batch API, Telegram long-polling, the in-app research loop, scoped
 bearer auth).
 
 Runs entirely on your own machine (or your own server). Videos come in from
-the Telegram bot, from your own official TikTok data export (ToS-compliant,
+the Send to Sidequest Shortcut (or a Telegram bot), from your own official TikTok data export (ToS-compliant,
 but manual — see **How it works**), or from an optional inbox sync on a
 second, dedicated TikTok account (see **Daily agent**, below — off by
 default, and your real account's session is never automated).
@@ -105,43 +106,85 @@ dashboard to start the pipeline. It processes one video at a time in the
 background — you can keep using the dashboard while it runs, and it resumes
 where it left off if you stop and restart the app.
 
-## Share to Telegram → research agent
+## Send to Sidequest → research agent
 
-The fastest way in: share a TikTok to your own Telegram bot. Within a few
-minutes a research agent has looked into it and replies in the same chat; the
-full report lands on the dashboard's **Agent** page.
+From anywhere with a share sheet: **Share → Send to Sidequest**. That covers TikTok,
+Instagram, YouTube, X, Safari, Photos, or a fresh screenshot.
+- Video links are downloaded and transcribed. If a download is blocked, the
+  agent judges it from the link instead.
+- Screenshots and photos are OCR'd and shown to the model.
+- Articles, product pages and plain text are read as they are.
+
+Within a few minutes a research agent has looked into it and sent the answer to
+your phone as a notification. The full report lands on the dashboard's
+**Agent** page.
+
+**Tech content** (code, AI, dev tools, repos) is judged against your own projects.
+**Everyday content** (food, products, fitness, money, travel) gets a different review:
+- whether it's worth it for you
+- real prices and costs
+- red flags such as paid promotions
+- better alternatives
+- the practical next step
+
+It never touches your projects.
 
 - **Repo/tool videos** ("10 GitHub repos for building an OS"): every repo is
-  checked against the live GitHub API (stars, last push, license, README), judged
-  for fit with *your* projects, with concrete ways to use the good ones.
-- **AI / news videos**: finds the primary source, says what's actually new and
-  what the video overstated, and what it means for you.
+  checked against the live GitHub API (stars, last push, license, README).
+- **AI / news videos**: traced to the primary source, with X search for
+  breaking news; says what's actually new and what the video overstated.
 - **Food spots / places**: address, hours, which days to go, price, how to book,
   and whether it's still open.
-- **Skills, projects, jobs**: same types as before, researched (jobs are
-  research-only; nothing is ever submitted).
+- **Skills, projects, jobs**: same as before (jobs are research-only; nothing
+  is ever submitted).
+- **Products, recipes, fitness, money, travel**: real price and cheapest
+  source, whether the claim holds up, risks and red flags, what to do next.
+- **Project fit, for tech content**: for each of your projects (active or
+  planned) it could matter to, whether it's worth adding, where exactly it
+  plugs in, and what it does to that project's architecture: what it replaces,
+  simplifies, or makes faster or cheaper. It opens your project files to back
+  that up, and suggests a new project when something fits none of them.
 
-Setup takes about a minute:
+**How it works (~$0.01–0.03 per item):**
 
-1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`,
-   and copy the token.
-2. Paste it in **Settings → Telegram**, then send the bot the `/start CODE`
-   shown there. The bot only ever answers that one chat.
-3. Fill in **Settings → Research agent → About me** (your projects, interests,
-   city). It's what makes "useful for me" mean something.
+1. **Free first:** the app downloads the video on your machine, and looks up any
+   GitHub repos and links in it.
+2. **Gemini watches it.** The downloaded file goes to Gemini (`gemini-3.8-flash`),
+   which takes in the audio and the frames together, so there's no Whisper/OCR
+   step and it reads what's on screen (code, menus, prices). This one call fills
+   the library's analysis and saves a transcript and the on-screen text.
+3. **Gemini researches it.** A tool loop combines Google Search and Google Maps
+   (free up to 5,000 grounded requests a month on paid Gemini 3 models) with the
+   app's own tools: GitHub lookups, reading your project files (tech only), and
+   filing the report. It works from the saved text, so the video is paid for once.
 
-Then, from TikTok: **Share → Telegram → your bot**. Text you send with the link
-becomes a note the agent reads ("useful for my OS project?"). A bare GitHub or
-article link works too. In the chat: `/status`, `/pause`, `/resume`.
+Bulk analysis of the export backlog stays on Claude's half-price Batch API, and
+research can be switched to Grok or Claude in Settings.
 
-How it runs: the app long-polls Telegram, so there's nothing to expose to the
-internet and no tunnel to set up; it works the same on your Mac or on a server.
-Shared videos go through their own fast lane (collect → analyze → research),
-separate from bulk jobs, and only videos you share are researched, never the
-export backlog. Research uses `AGENT_MODEL` (default `claude-sonnet-5`, roughly
-$0.08–0.15 per video) with web search, web fetch and a GitHub lookup tool, under
-a daily spending cap you set in Settings (default $3). Set `PUBLIC_BASE_URL` if
-you want "Full report" links in Telegram to open the dashboard from your phone.
+**Setup (about 5 minutes, all in Settings):**
+
+1. **Research agent:** paste a **Gemini API key** from
+   [aistudio.google.com](https://aistudio.google.com/apikey) with billing turned
+   on (video input isn't on the free tier). Fill in **About me**, and list any
+   ideas you haven't started yet.
+2. **Send to Sidequest:** click **Create my private channel**, then follow the steps
+   shown:
+   - subscribe to your results channel in the free ntfy iPhone app
+   - build the 2-step "Send to Sidequest" Shortcut (Get Contents of URL, with the
+     values shown)
+3. **Your projects:** found automatically in `~/Projects` (`PROJECTS_DIR`).
+   Mark each one active, planned or ignored.
+
+**How it's wired:**
+
+- **Delivery:** the Shortcut posts to a private ntfy.sh topic, which this app
+  streams. Like Telegram long-polling, there's no tunnel and nothing on your
+  machine is exposed. Topic names are long and random, and every message must
+  also carry a secret token.
+- **Your projects:** read through a secret-safe reader that refuses `.env`
+  files, `secrets/`, `data/`, databases, keys, binaries, and any path that
+  resolves outside the project. In Docker they're mounted read-only.
+- **Telegram** still works as an optional second doorway (Settings → Telegram).
 
 ## Daily agent (optional, not yet scheduled)
 
