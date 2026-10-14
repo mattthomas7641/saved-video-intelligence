@@ -1,6 +1,6 @@
-# Sidequest
+# Sidequest (Saved Video Intelligence)
 
-*Formerly Saved Video Intelligence.* Send it anything you come across. It does the follow-up and tells you if it's worth your time.
+Send it anything you come across. It does the follow-up and tells you if it's worth your time.
 
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
