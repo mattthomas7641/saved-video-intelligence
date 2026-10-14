@@ -103,9 +103,23 @@ def is_media(url: str) -> bool:
     return bool(MEDIA_RE.match(url))
 
 
+def canonical_url(url: str) -> str:
+    """Drop tracking parameters from Instagram/YouTube-Shorts/X links (?igsh=, ?exln=...)
+    so the same post shared twice is one item. Other links keep their query string."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if any(h in host for h in ("instagram.com", "x.com", "twitter.com", "threads.net")) or "/shorts/" in parts.path:
+        path = parts.path if parts.path.endswith("/") or "x.com" in host or "twitter" in host else parts.path + "/"
+        return urlunsplit((parts.scheme, host.removeprefix("m.").replace("instagram.com", "www.instagram.com")
+                           .replace("www.www.", "www."), path, "", ""))
+    return url
+
+
 def ingest_shared_link(url: str, note: str) -> int:
     """Find or create the Video for a shared link and mark it as shared."""
-    canonical = canonical_tiktok_url(url) if is_tiktok(url) else url
+    canonical = canonical_tiktok_url(url) if is_tiktok(url) else canonical_url(url)
     # A GitHub/article/product link has nothing to download or transcribe: the
     # agent reads the page itself, so it skips straight to analysis.
     return _upsert(canonical, note, downloadable=is_media(url), caption=None if is_media(url) else canonical)
@@ -154,7 +168,46 @@ def _upsert(key: str, note: str, downloadable: bool, caption: str | None = None,
         session.add(video)
         session.commit()
         session.refresh(video)
+        _ensure_placeholder_action(session, video.id)
         return video.id
+
+
+def _ensure_placeholder_action(session, video_id: int) -> None:
+    """Give a new share its card at once ("Looking into it"); analysis fills in the type."""
+    from app.models import Action, ActionStatus, ActionType
+
+    if session.exec(select(Action.id).where(Action.video_id == video_id)).first() is None:
+        session.add(Action(video_id=video_id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED))
+        session.commit()
+
+
+def recover_interrupted() -> int:
+    """At startup nothing is running, so any share still marked in progress was cut off
+    by a restart: mark it so the home page offers Retry (never re-run it silently: that
+    would spend without being asked)."""
+    from app.db import get_session
+    from app.models import Action, ActionStatus, ActionType, Video
+
+    with get_session() as session:
+        rows = session.exec(select(Action).join(Video, Video.id == Action.video_id)
+                            .where(Video.source == "telegram")
+                            .where(Action.status.in_([ActionStatus.IN_PROGRESS, ActionStatus.QUEUED]))).all()
+        n = 0
+        for a in rows:
+            if a.status == ActionStatus.QUEUED and a.error_message:  # deliberately parked (agent paused)
+                continue
+            a.status, a.error_message = ActionStatus.FAILED, "Interrupted by an app restart. Tap Retry."
+            session.add(a)
+            n += 1
+        # Shares from before intake created cards up front may have none at all: give them one.
+        with_action = select(Action.video_id)
+        for v in session.exec(select(Video).where(Video.source == "telegram")
+                              .where(Video.id.not_in(with_action))).all():
+            session.add(Action(video_id=v.id, action_type=ActionType.OTHER, status=ActionStatus.FAILED,
+                               error_message="Interrupted by an app restart. Tap Retry."))
+            n += 1
+        session.commit()
+        return n
 
 
 def shared_image_path(video) -> str | None:

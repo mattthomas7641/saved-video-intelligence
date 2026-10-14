@@ -152,3 +152,68 @@ def test_telegram_text_and_short_text(monkeypatch, session):
     tb.handle_update(upd("best tacos in south philly"), tg, submit=lambda *a: submitted.append(a))
     tb.handle_update(upd("hi"), tg, submit=lambda *a: submitted.append(a))
     assert len(submitted) == 1 and session.exec(select(Video)).one().tiktok_url.startswith("text:")
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://www.instagram.com/reel/DeZRVmkvhiR/?exln=NGRw", "https://www.instagram.com/reel/DeZRVmkvhiR/"),
+    ("https://instagram.com/reel/abc?igsh=xyz", "https://www.instagram.com/reel/abc/"),
+    ("https://m.instagram.com/p/abc/?utm_source=ig", "https://www.instagram.com/p/abc/"),
+    ("https://x.com/someone/status/123?s=20", "https://x.com/someone/status/123"),
+    ("https://www.youtube.com/shorts/xyz?si=abc", "https://www.youtube.com/shorts/xyz/"),
+    ("https://example.com/post?id=7", "https://example.com/post?id=7"),
+])
+def test_canonical_url_drops_tracking(url, expected):
+    assert intake.canonical_url(url) == expected
+
+
+def test_same_reel_twice_is_one_item_with_a_card_at_once(session):
+    from app.models import Action
+    a = intake.ingest_shared_link("https://www.instagram.com/reel/DeZ/?exln=1", "")
+    b = intake.ingest_shared_link("https://www.instagram.com/reel/DeZ/?exln=2", "")
+    assert a == b
+    acts = session.exec(select(Action).where(Action.video_id == a)).all()
+    assert len(acts) == 1 and acts[0].status.value == "queued" and acts[0].brief is None
+
+
+def test_placeholder_is_filled_by_analysis(monkeypatch, session):
+    from app.models import Action
+    seen = _run_lane(monkeypatch, session, _analysis())
+    action = session.exec(select(Action)).one()
+    assert action.action_type.value == "place" and action.brief == "Joe's Pizza" and seen["tech"] is False
+
+
+def test_restart_marks_interrupted_shares_for_retry(session):
+    from app.models import Action, ActionStatus
+    vid = intake.ingest_shared_link("https://www.instagram.com/reel/zzz/", "")
+    a = session.exec(select(Action).where(Action.video_id == vid)).one()
+    a.status = ActionStatus.IN_PROGRESS
+    session.add(a)
+    session.commit()
+    assert intake.recover_interrupted() == 1
+    session.refresh(a)
+    assert a.status == ActionStatus.FAILED and "Retry" in a.error_message
+
+
+def test_blocked_download_is_flagged_in_the_report(monkeypatch, session):
+    vid = intake.ingest_shared_link("https://www.instagram.com/reel/blocked/", "")
+    video = session.get(Video, vid)
+
+    def blocked(session_, v, should_stop=None, transcribe=True):
+        v.status = Status.ERROR
+        v.error_message = "login required"
+    monkeypatch.setattr(pipeline, "collect_video", blocked)
+    monkeypatch.setattr(gemini_client, "analyze_video", lambda v: _analysis())
+    monkeypatch.setattr(prefetch, "gather", lambda v: {"repos": [], "pages": []})
+    monkeypatch.setattr(agent, "run", lambda *a, **k: agent.Findings(verdict="maybe", headline="h",
+                                                                      telegram_text="t", report_markdown="body"))
+    action = pipeline.process_shared_video(session, video)
+    assert json.loads(action.result)["report_markdown"].startswith("> Couldn't download this video")
+
+
+def test_restart_gives_cardless_shares_a_retry_card(session):
+    from app.models import Action
+    session.add(Video(tiktok_url="https://www.instagram.com/reel/old/", source="telegram"))
+    session.commit()
+    assert intake.recover_interrupted() == 1
+    a = session.exec(select(Action)).one()
+    assert a.status.value == "failed" and "Retry" in a.error_message
