@@ -1,8 +1,19 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}Agent · Saved Video Intelligence{% endblock %}
+{% block title %}Quests · Sidequest{% endblock %}
 {% macro type_icon(t) -%}
 {{ icon({"repo": "code", "research": "news", "place": "utensils", "project": "wrench", "skill": "sparkles", "job": "briefcase"}.get(t, "grid")) }}
+{%- endmacro %}
+{% macro next_step_tag(v) -%}
+{% if v == "worth_it" %}<span class="verdict v-yes">{{ icon("check") }} Do it</span>
+{% elif v == "maybe" %}<span class="verdict v-maybe">Optional</span>
+{% elif v == "skip" %}<span class="verdict v-skip">Nothing to do</span>{% endif %}
+{%- endmacro %}
+{% macro value_tag(v) -%}
+{% if v == "personal_and_resume" %}<span class="value val-strong">Personal use + resume boost</span>
+{% elif v == "fun" %}<span class="value val-fun">Fun / personal use</span>
+{% elif v == "weak_resume" %}<span class="value val-weak">Weak resume boost</span>
+{% elif v == "not_worth_it" %}<span class="value val-none">Not worth it</span>{% endif %}
 {%- endmacro %}
 {% macro verdict_tag(v) -%}
 {% if v == "worth_it" %}<span class="verdict v-yes">{{ icon("check") }} Worth it</span>
@@ -11,11 +22,12 @@
 {%- endmacro %}
 {% block content %}
 {% if working %}<meta http-equiv="refresh" content="15">{% endif %}
+{% set here = "/?tab=" ~ tab ~ ("&group=" ~ group if group else "") %}
 
 <header class="page-head agent-head">
   <div>
-    <h1>Agent</h1>
-    <p class="sub">Videos you shared to Telegram, researched. Newest first.</p>
+    <h1>Your sidequests</h1>
+    <p class="sub">Everything you've sent, looked into and sorted. From any app: Share → Send to Sidequest.</p>
   </div>
   <div class="spend" title="Research spend today (resets at midnight UTC)">
     <div class="line"><span>Today</span><span class="num">${{ "%.2f"|format(spent_today) }} <span class="of">of ${{ "%.2f"|format(agent_settings.daily_cap_usd) }}</span></span></div>
@@ -23,8 +35,11 @@
   </div>
 </header>
 
-{% if not telegram_ready %}
-<div class="notice">{{ icon("inbox") }}<span>Telegram isn't connected yet. <a href="/settings#telegram">Set it up in Settings</a>; it takes about a minute.</span></div>
+{% if not intake_ready %}
+<div class="notice">{{ icon("inbox") }}<span>“Send to Sidequest” isn't set up yet. <a href="/settings#send">Set it up in Settings</a>; it takes about two minutes.</span></div>
+{% endif %}
+{% if not has_research_key %}
+<div class="notice warn">{{ icon("alert") }}<span>No research key yet: videos you send are saved and transcribed but not researched. <a href="/settings#research">Add a Gemini API key</a>.</span></div>
 {% endif %}
 {% if paused %}
 <div class="notice warn">{{ icon("alert") }}<span>The agent is paused. Shared videos are saved and analyzed, but not researched until you send /resume or unpause it in Settings.</span></div>
@@ -33,23 +48,25 @@
 <div class="notice">{{ icon("bulb") }}<span>Tell the agent about yourself in <a href="/settings#research">Settings</a>, so “useful for you” means your projects and your city.</span></div>
 {% endif %}
 
-{% if total %}
-<nav class="drill" aria-label="Filter by type">
-  <a class="chip" href="/agent{{ '?verdict=' ~ verdict if verdict }}" {% if not type %}aria-current="true"{% endif %}>All <span class="n">{{ total }}</span></a>
-  {% for t in types if type_counts[t] %}
-  <a class="chip" href="/agent?type={{ t }}{{ '&verdict=' ~ verdict if verdict }}" {% if type == t %}aria-current="true"{% endif %}>
-    <span class="ci">{{ type_icon(t) }}</span>{{ type_labels[t] }} <span class="n">{{ type_counts[t] }}</span></a>
+<nav class="tabs quest-tabs" aria-label="Status">
+  {% for key, label in tabs %}
+  <a href="/?tab={{ key }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label }} <span class="n">{{ tab_counts[key] }}</span></a>
   {% endfor %}
-  <span class="drill-sep" aria-hidden="true"></span>
-  {% for v, label in [("worth_it", "Worth it"), ("maybe", "Maybe"), ("skip", "Skip")] %}
-  <a class="chip" href="/agent?{{ 'type=' ~ type ~ '&' if type }}{{ '' if verdict == v else 'verdict=' ~ v }}" {% if verdict == v %}aria-current="true"{% endif %}>{{ label }}</a>
+</nav>
+
+{% if groups|length > 1 or group %}
+<nav class="drill" aria-label="Topic">
+  <a class="chip" href="/?tab={{ tab }}" {% if not group %}aria-current="true"{% endif %}>All topics</a>
+  {% for name, slug, n in groups %}
+  <a class="chip" data-territory="{{ slug }}" href="/?tab={{ tab }}&group={{ slug }}" {% if group == slug %}aria-current="true"{% endif %}>
+    <span class="ci">{{ icon(name|group_icon) }}</span>{{ name }} <span class="n">{{ n }}</span></a>
   {% endfor %}
 </nav>
 {% endif %}
 
 {% if working %}
 <section class="agent-group">
-  <h2>Working on it <span class="n">{{ working|length }}</span></h2>
+  <h2>Looking into it <span class="n">{{ working|length }}</span></h2>
   {% for item in working %}{% set a = item.action %}{% set v = item.video %}
   <div class="work-row" id="a{{ a.id }}">
     <span class="pulse" aria-hidden="true"></span>
@@ -62,13 +79,13 @@
 
 {% if stuck %}
 <section class="agent-group">
-  <h2>Needs attention <span class="n">{{ stuck|length }}</span></h2>
+  <h2>Couldn't finish <span class="n">{{ stuck|length }}</span></h2>
   {% for item in stuck %}{% set a = item.action %}{% set v = item.video %}
   <div class="work-row stuck" id="a{{ a.id }}">
     <span class="ci">{{ icon("alert") }}</span>
     <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ a.error_message }}</span></span>
-    <form action="/agent/{{ a.id }}/rerun" method="post"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
-    <form action="/agent/{{ a.id }}/dismiss" method="post"><button class="btn btn-quiet" type="submit" title="Dismiss">{{ icon("archive") }}</button></form>
+    <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
+    <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me">{{ icon("archive") }}</button></form>
   </div>
   {% endfor %}
 </section>
@@ -76,20 +93,23 @@
 
 {% if done %}
 <section class="agent-group">
-  {% if working or stuck %}<h2>Reports <span class="n">{{ done|length }}</span></h2>{% endif %}
+  {% if working or stuck %}<h2>Ready <span class="n">{{ done|length }}</span></h2>{% endif %}
   {% for item in done %}{% set a = item.action %}{% set v = item.video %}{% set r = item.report %}
-  <article class="report" id="a{{ a.id }}">
+  <article class="report" id="a{{ a.id }}" data-territory="{{ item.slug }}">
     <details>
       <summary>
         <div class="r-meta">
+          <span class="r-topic">{{ item.group }}</span>
           <span class="r-type">{{ type_icon(a.action_type.value) }} {{ {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project", "skill": "Skill", "job": "Job"}.get(a.action_type.value, "Other") }}</span>
-          {{ verdict_tag(a.verdict) }}
+          {{ next_step_tag(a.verdict) }}
           <span class="faint">{{ a.updated_at|short_date }}</span>
         </div>
         <h3>{{ r.headline }}</h3>
         <p class="r-tldr">{{ r.telegram_text }}</p>
         {% if r.place %}<p class="r-key">{{ icon("home") }} {{ r.place.name }}{% if r.place.neighborhood or r.place.city %} · {{ r.place.neighborhood or "" }}{{ ", " if r.place.neighborhood and r.place.city }}{{ r.place.city or "" }}{% endif %}{% if r.place.best_times %} · {{ r.place.best_times }}{% endif %}</p>
         {% elif r.repos %}<p class="r-key">{{ icon("code") }} {{ r.repos|selectattr("fit", "equalto", "worth_it")|list|length }} of {{ r.repos|length }} repos worth a look</p>
+        {% elif r.project_fit and r.project_fit[0].fit != "skip" %}<p class="r-key">{{ icon("wrench") }} Fits {{ r.project_fit[0].project }}: {{ r.project_fit[0].where }} {{ value_tag(r.project_fit[0].value) }}</p>
+        {% elif r.new_project %}<p class="r-key">{{ icon("bulb") }} New project: {{ r.new_project.idea }} {{ value_tag(r.new_project.value) }}</p>
         {% elif r.ideas %}<p class="r-key">{{ icon("bulb") }} {{ r.ideas[0] }}</p>{% endif %}
         <span class="r-more">Full report {{ icon("chev") }}</span>
       </summary>
@@ -101,6 +121,37 @@
           <div><dt>{{ label }}</dt><dd>{{ r.place[k] }}</dd></div>
           {% endfor %}
         </dl>
+        {% endif %}
+
+        {% if r.project_fit or r.new_project or r.new_project_idea %}
+        <h4>Fits your projects</h4>
+        <div class="fit-list">
+          {% for f in r.project_fit %}
+          <div class="fit-row">
+            <div class="fit-head">
+              <strong>{{ f.project }}</strong>
+              {% if project_status.get(f.project) %}<span class="tag-info">{{ project_status[f.project] }}</span>{% endif %}
+              {{ verdict_tag(f.fit) }}
+              {% if f.effort %}<span class="faint" title="Effort: S an afternoon, M a few days, L a week or more">Effort {{ f.effort }}</span>{% endif %}
+              {{ value_tag(f.value) }}
+            </div>
+            {% if f.value_reason %}<p><span class="faint">Worth:</span> {{ f.value_reason }}</p>{% endif %}
+            {% if f.where %}<p><span class="faint">Where:</span> {{ f.where }}</p>{% endif %}
+            {% if f.architecture_impact %}<p><span class="faint">Architecture:</span> {{ f.architecture_impact }}</p>{% endif %}
+          </div>
+          {% endfor %}
+          {% if r.new_project %}
+          <div class="fit-row new-proj">
+            <div class="fit-head"><strong>New project to test it</strong>
+              {% if r.new_project.effort %}<span class="faint">Effort {{ r.new_project.effort }}</span>{% endif %}
+              {{ value_tag(r.new_project.value) }}</div>
+            <p>{{ r.new_project.idea }}</p>
+            {% if r.new_project.value_reason %}<p><span class="faint">Worth:</span> {{ r.new_project.value_reason }}</p>{% endif %}
+          </div>
+          {% elif r.new_project_idea %}
+          <div class="fit-row"><div class="fit-head"><strong>New project idea</strong></div><p>{{ r.new_project_idea }}</p></div>
+          {% endif %}
+        </div>
         {% endif %}
 
         {% if r.repos %}
@@ -135,15 +186,24 @@
 
         <footer class="r-foot">
           {% if v.user_note %}<span class="note">Your note: “{{ v.user_note }}”</span>{% endif %}
-          <a href="{{ v.tiktok_url }}" target="_blank" rel="noopener">Original {{ icon("external") }}</a>
-          <a href="/video/{{ v.id }}">Video details</a>
+          {% if v.tiktok_url.startswith("http") %}<a href="{{ v.tiktok_url }}" target="_blank" rel="noopener">Original {{ icon("external") }}</a>
+          {% elif v.tiktok_url.startswith("image:") %}<a href="/media/thumb/{{ v.id }}" target="_blank" rel="noopener">Your screenshot {{ icon("external") }}</a>{% endif %}
+          <a href="/video/{{ v.id }}">Details</a>
           {% if a.cost_usd %}<span class="faint num">${{ "%.2f"|format(a.cost_usd) }}</span>{% endif %}
           <span class="spacer"></span>
-          <form action="/agent/{{ a.id }}/rerun" method="post"><button class="btn btn-quiet" type="submit">{{ icon("refresh") }} Re-run</button></form>
-          <form action="/agent/{{ a.id }}/dismiss" method="post"><button class="btn btn-quiet" type="submit">{{ icon("archive") }} Dismiss</button></form>
+          <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="deep" value="true"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">{{ icon("search") }} Research deeper</button></form>
+          <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">{{ icon("refresh") }} Re-run</button></form>
         </footer>
       </div>
     </details>
+    <div class="r-actions">
+      {% if tab == "todo" %}
+      <form action="/agent/{{ a.id }}/done" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-primary" type="submit">{{ icon("check") }} Done</button></form>
+      <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">Not for me</button></form>
+      {% else %}
+      <form action="/agent/{{ a.id }}/reopen" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("back") }} Back to To do</button></form>
+      {% endif %}
+    </div>
   </article>
   {% endfor %}
 </section>
@@ -152,12 +212,16 @@
 {% if not total %}
 <div class="empty">
   <span class="big">{{ icon("inbox") }}</span>
-  <h2>Nothing shared yet</h2>
-  <p>In TikTok, tap Share, then Telegram, then your bot. The report shows up here a few minutes later, and a short version arrives in the chat.</p>
-  {% if not telegram_ready %}<a class="btn btn-primary" href="/settings#telegram">Connect Telegram</a>{% endif %}
+  <h2>No sidequests yet</h2>
+  <p>See something worth following up on, in TikTok, Instagram, a screenshot or a link? Tap Share → Send to Sidequest. A few minutes later you get the answer on your phone, and it shows up here, sorted.</p>
+  {% if not intake_ready %}<a class="btn btn-primary" href="/settings#send">Set up Send to Sidequest</a>{% endif %}
 </div>
 {% elif not working and not stuck and not done %}
-<div class="empty"><h2>Nothing matches</h2><p><a href="/agent">Clear filters</a></p></div>
+<div class="empty">
+  {% if tab == "todo" %}<h2>All caught up</h2><p>Nothing waiting on you. Send something new from any app.</p>
+  {% elif tab == "done" %}<h2>Nothing done yet</h2><p>Mark a sidequest Done when you've acted on it.</p>
+  {% else %}<h2>Nothing set aside</h2><p>“Not for me” items land here.</p>{% endif %}
+</div>
 {% endif %}
 
 <script>

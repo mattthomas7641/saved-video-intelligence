@@ -55,11 +55,16 @@ class FakeClient:
 def test_build_request_has_web_tools_github_and_findings():
     params = agent.build_request(FakeVideo(), "repo", "limine, redox", model="claude-opus-5")
     names = [t["name"] for t in params["tools"]]
-    assert names == ["web_search", "web_fetch", "github_repo", "record_findings"]
+    assert names == ["web_search", "web_fetch", "github_repo", "read_project_file", "record_findings"]
     assert params["tools"][0]["type"] == "web_search_20260209"
     assert params["fallbacks"] == "default"
     content = params["messages"][0]["content"]
     assert "useful for my rust kernel?" in content and "Type: repo" in content
+
+
+def test_build_request_without_web_drops_server_tools():
+    names = [t["name"] for t in agent.build_request(FakeVideo(), "repo", None, web=False)["tools"]]
+    assert names == ["github_repo", "read_project_file", "record_findings"]
 
 
 def test_build_request_uses_basic_web_tools_and_no_fallbacks_on_older_models():
@@ -81,7 +86,7 @@ def test_run_executes_github_tool_then_returns_findings(monkeypatch):
         _msg([_tool("github_repo", {"repo": "limine-bootloader/limine"})]),
         _msg([_tool("record_findings", FINDINGS, id_="t2")], searches=2),
     ])
-    findings = agent.run(FakeVideo(), "repo", "limine", budget_usd=5.0, client=client)
+    findings = agent.run(FakeVideo(), "repo", "limine", budget_usd=5.0, client=client, provider="anthropic")
     assert calls == ["limine-bootloader/limine"]
     assert findings.verdict == "worth_it" and findings.repos[0]["name"] == "limine-bootloader/limine"
     tool_result = client.requests[1]["messages"][-1]["content"][0]
@@ -94,7 +99,7 @@ def test_run_resumes_after_pause_turn_without_adding_a_user_message():
         _msg([SimpleNamespace(type="server_tool_use", name="web_search", input={}, id="s1")], stop="pause_turn"),
         _msg([_tool("record_findings", FINDINGS)]),
     ])
-    agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client)
+    agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client, provider="anthropic")
     assert client.requests[1]["messages"][-1]["role"] == "assistant"
 
 
@@ -103,7 +108,7 @@ def test_run_nudges_once_when_model_stops_without_a_report():
         _msg([SimpleNamespace(type="text", text="Here's what I found...")], stop="end_turn"),
         _msg([_tool("record_findings", FINDINGS)]),
     ])
-    findings = agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client)
+    findings = agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client, provider="anthropic")
     assert "record_findings" in client.requests[1]["messages"][-1]["content"]
     assert findings.headline
 
@@ -112,25 +117,25 @@ def test_run_fails_after_a_second_reportless_stop():
     text = SimpleNamespace(type="text", text="done")
     client = FakeClient([_msg([text], stop="end_turn"), _msg([text], stop="end_turn")])
     with pytest.raises(agent.AgentError):
-        agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client)
+        agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client, provider="anthropic")
 
 
 def test_run_raises_on_refusal():
     client = FakeClient([_msg([], stop="refusal")])
     with pytest.raises(agent.AgentError):
-        agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client)
+        agent.run(FakeVideo(), "research", None, budget_usd=5.0, client=client, provider="anthropic")
 
 
 def test_run_refuses_to_start_with_no_budget_left():
     with pytest.raises(agent.CapReached):
-        agent.run(FakeVideo(), "research", None, budget_usd=0, client=FakeClient([]))
+        agent.run(FakeVideo(), "research", None, budget_usd=0, client=FakeClient([]), provider="anthropic")
 
 
 def test_run_stops_mid_loop_when_budget_runs_out(monkeypatch):
     monkeypatch.setattr(agent, "github_repo", lambda repo: {"stars": 1})
     client = FakeClient([_msg([_tool("github_repo", {"repo": "a/b"})], i=2_000_000)])  # ~$10 of input
     with pytest.raises(agent.CapReached):
-        agent.run(FakeVideo(), "repo", None, budget_usd=1.0, client=client)
+        agent.run(FakeVideo(), "repo", None, budget_usd=1.0, client=client, provider="anthropic")
 
 
 def test_findings_with_unknown_verdict_fall_back_to_maybe():
@@ -161,3 +166,35 @@ def test_github_repo_reports_missing_repo_as_error_not_exception():
 
 def test_github_repo_rejects_bare_names():
     assert "owner/name" in agent.github_repo("limine")["error"]
+
+
+def test_prompt_ignores_calls_to_action_and_asks_for_value():
+    tech = agent.system_prompt(True)
+    assert "comment X and I'll DM you" in tech and "don't mention them" in tech
+    assert "adding to one of their existing projects, or worth building as a new project" in tech
+    assert "weak resume boost" in tech
+    general = agent.system_prompt(False)
+    assert "Ignore calls to action" in general and "resume" not in general
+
+
+def test_value_and_new_project_are_parsed():
+    f = agent._findings_from({**FINDINGS, "project_fit": [
+        {"project": "gateway", "fit": "worth_it", "where": "batcher.py", "architecture_impact": "x",
+         "value": "personal_and_resume", "value_reason": "Measured latency win."}],
+        "new_project": {"idea": "A tiny Rust kernel", "value": "fun", "effort": "L"}}, 0.0)
+    assert f.project_fit[0]["value"] == "personal_and_resume"
+    assert f.new_project["value"] == "fun" and f.new_project_idea == "A tiny Rust kernel"
+    tools = {t["name"]: t for t in agent.client_tools(True)}
+    props = tools["record_findings"]["input_schema"]["properties"]
+    assert props["project_fit"]["items"]["properties"]["value"]["enum"] == agent.PROJECT_VALUES
+    general = {t["name"]: t for t in agent.client_tools(False)}["record_findings"]["input_schema"]["properties"]
+    assert "new_project" not in general and "project_fit" not in general
+
+
+def test_fit_line_shows_value():
+    from app.telegram_bot import fit_line
+    assert "personal use + resume boost" in fit_line({"project_fit": [
+        {"project": "gateway", "fit": "worth_it", "effort": "S", "value": "personal_and_resume",
+         "architecture_impact": "drops a dep"}]})
+    assert fit_line({"project_fit": [], "new_project": {"idea": "Rust kernel", "value": "weak_resume"}}) == \
+        "New project (weak resume boost): Rust kernel"

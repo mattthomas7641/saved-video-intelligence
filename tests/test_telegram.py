@@ -6,6 +6,7 @@ these tests check routing decisions, not the pipeline itself.
 import pytest
 from sqlmodel import select
 
+from app import intake
 from app import telegram_bot as tb
 from app.config import get_action_settings, get_telegram_settings, new_pairing_code, save_telegram_settings
 from app.models import Status, Video
@@ -32,7 +33,7 @@ def paired():
 
 @pytest.fixture(autouse=True)
 def no_redirect_resolution(monkeypatch):
-    monkeypatch.setattr(tb, "canonical_tiktok_url", lambda url: url)
+    monkeypatch.setattr(intake, "canonical_tiktok_url", lambda url: url)
 
 
 @pytest.mark.parametrize("text,url,note", [
