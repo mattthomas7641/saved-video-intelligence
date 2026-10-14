@@ -4,18 +4,25 @@ Send it anything you come across. It does the follow-up and tells you if it's wo
 
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
-Two things, one pipeline:
+Send it anything you come across — a TikTok, an Instagram Reel, a YouTube Short,
+a link or a screenshot — and a research agent (about $0.01–0.03 an item) does the
+follow-up within minutes and puts a clear next step on your **To do** list, so
+you actually act on it instead of it sitting in your saves.
 
-- **Share a TikTok, get the follow-up done.** Tap Share → Send to Sidequest and a
-  research agent (about $0.01–0.03 an item) acts
-  on it within minutes: Gemini watches the video, then it vets every GitHub repo
-  a "10 repos you need" video names against the live API, traces AI news to its source, turns a food video
-  into an address, hours and the best day to go, and judges it against your own
-  projects: where it would plug in and what it would do to their
-  architecture. The answer arrives as a phone notification; the full report
-  lands on the dashboard. See **Send to Sidequest → research agent**, below.
-- **Make a 7,000-video Saved list usable.** Transcribe, OCR, categorize and
-  summarize your whole TikTok Saved/Favorites list, score what's worth
+- **New tools and agent skills, judged against your own projects.** The most
+  common use: a video about a new agent skill or dev tool. The agent reads your
+  project code and tells you whether it's worth adopting, where it would plug in
+  and what it would change. Repos a video names are vetted against the live
+  GitHub API.
+- **Everything else, too.** AI news is traced to its source; a food video becomes
+  an address, hours and the best day to go; products get real prices and red
+  flags like paid promotions.
+- **A to-do list that makes you follow through.** Each result arrives as a phone
+  notification and stays on the To do list with its next step (try, build, buy,
+  go or skip) until you mark it done or "not for me". See
+  **Send to Sidequest → research agent**, below.
+- **Bonus: your whole Saved list.** The same pipeline can transcribe, OCR,
+  categorize and summarize a 7,000-video TikTok Saved list, score what's worth
   rewatching, and flag promo codes or dated offers that may be stale.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline/data-model diagrams
