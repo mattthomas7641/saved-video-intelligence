@@ -1,5 +1,7 @@
 # Sidequest (Saved Video Intelligence)
 
+Send it anything you come across. It does the follow-up and tells you if it's worth your time.
+
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
 Two things, one pipeline:
