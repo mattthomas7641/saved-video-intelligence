@@ -131,7 +131,9 @@ def build_params(video) -> dict:
     if getattr(video, "source", None) == "telegram":
         note_block += (
             "\nThe user deliberately shared this video to have it acted on: set is_actionable to true "
-            "and pick the best-fitting action_type, even if it would not otherwise qualify.\n"
+            "and pick the best-fitting action_type, even if it would not otherwise qualify. Ignore calls to "
+            "action (\"comment X and I'll DM you\", link in bio, follow for more, courses): base the summary, "
+            "type and action_brief only on the actual content.\n"
         )
     content = f"""Saved TikTok video.
 Author: {video.author or "unknown"}

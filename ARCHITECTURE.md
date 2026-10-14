@@ -18,7 +18,7 @@ flowchart LR
     subgraph Ingest
         A1[Export upload] --> V[(Video row<br/>status=PENDING)]
         A2[Inbox sync] --> V
-        A3[Telegram share] --> V
+        A3[Send to Sidequest / Telegram] --> V
     end
 
     V --> C1[Download<br/>yt-dlp]
@@ -33,9 +33,10 @@ flowchart LR
     AQ --> AG[Daily agent<br/>separate scheduled session]
     AG -->|skill / project| PR[Draft PR in<br/>tiktok-ideas repo]
     AG -->|job| JD[Drafted resume +<br/>cover letter, local files]
-    AQ -. shared via Telegram .-> RA[Research agent<br/>app/agent.py]
+    AQ -. shared on purpose .-> RA[Gemini: watch, then research<br/>app/gemini_client.py]
+    PJ[(Your project cards<br/>app/projects.py)] --> RA
     RA --> RP[(Action.result<br/>report + verdict)]
-    RP --> TG[Telegram reply +<br/>Agent page]
+    RP --> TG[Phone notification +<br/>Agent page]
 ```
 
 **Collect** (`app/pipeline.py:collect_video`) and **analyze**
@@ -152,6 +153,33 @@ client tool (`github_repo`, live facts rather than the video's claims), and a
 `record_findings` tool that ends the run with a structured report. Only videos
 you share are researched (never the export backlog), and a daily dollar cap is
 checked between requests.
+
+#### Gemini watches the video; searches are effectively free
+Research on Claude cost $0.10–0.50 per item, mostly from looping and paid web
+searches. A Grok + Jev design (Jev, a cheap decision model, gating which items
+got paid searches) brought that to ~$0.01–0.05, but still transcribed with
+Whisper and read four OCR'd frames. Gemini replaced both steps: it takes the
+downloaded video file and processes audio and frames together, so it reads code,
+menus and prices on screen. Grounded Google Search is free up to 5,000 requests
+a month on paid Gemini 3 models, which made the gate pointless, and Google Maps
+grounding covers places. The video is watched once; the analysis call saves a
+transcript and on-screen text, and the research loop works from that text.
+Grok and Claude remain switchable providers behind the same prompts and tools.
+
+#### Judging videos against your own projects, without leaking secrets
+Every project in `~/Projects` gets a short card (purpose, stack, architecture,
+pain points, next steps). Grok writes it once, and it's rebuilt only when the
+project's files change. The agent reads the relevant cards and can open files to back
+up claims about where something plugs in. Everything goes through one reader
+that refuses secret-looking paths, data folders, binaries and anything that
+resolves outside the project, and Docker mounts the folders read-only.
+
+#### A Shortcut + ntfy as the doorway, Telegram optional
+The share sheet is the most convenient place to start from, and an iOS
+Shortcut sits right in it. ntfy.sh relays the link the same way Telegram did:
+the app pulls from it, so nothing needs a tunnel or a public URL. The trade-off
+is that ntfy topics are secret only by obscurity, so topic names are long and
+random and every inbound message must also carry a separate token.
 
 #### Never fully automate a job application submission
 This isn't a configurable setting — it's a hard boundary regardless of how

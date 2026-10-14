@@ -1,5 +1,5 @@
 ---
-name: Saved Video Intelligence
+name: Sidequest
 description: Your library as a guide map — eight flat, fully-saturated topic territories; color marks where you are, never scattered per-row.
 colors:
   bg: "#F7F7F5"
