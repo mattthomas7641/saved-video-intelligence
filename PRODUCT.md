@@ -36,7 +36,7 @@ Self-hosted and single-user by deliberate design, not as a limitation: no centra
 
 ## Brand Commitments
 
-None fixed. Product is currently named "Saved Video Intelligence" (recently renamed from "TikTok Saved Scanner") but the name itself, along with all colors/typography/visual identity, is explicitly open for the redesign to reconsider.
+Product is named "Sidequest" (renamed from "Saved Video Intelligence", originally "TikTok Saved Scanner") but the name itself, along with all colors/typography/visual identity, is explicitly open for the redesign to reconsider.
 
 ## Evidence on Hand
 

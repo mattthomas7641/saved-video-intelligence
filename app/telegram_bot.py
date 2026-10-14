@@ -1,26 +1,26 @@
-"""Telegram intake: share a TikTok to your bot, get research back in the same chat.
+"""Telegram doorway (optional): share a TikTok to your bot, get research back in the same chat.
 
 Long-polls the Bot API (`getUpdates`) from a daemon thread, so it needs no public
 URL, port forwarding or tunnel: it works the same on a laptop as on a server.
 The bot answers exactly one chat, the one paired from Settings with a one-time
-code; everything else is ignored.
+code; everything else is ignored. Off until a bot token is saved in Settings;
+the "Send to Sidequest" Shortcut (app/ntfy_intake.py) is the main doorway.
 
 Each shared link gets one status message that's edited in place as the video
 moves through collect -> analyze -> research, ending with the verdict and a
 short summary. The full report lives on the dashboard's Agent page.
 """
 import html
+import json
 import logging
 import os
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
 import httpx
-from sqlmodel import select
 
+from app import intake
 from app.config import (
     PUBLIC_BASE_URL,
     get_action_settings,
@@ -29,23 +29,25 @@ from app.config import (
     save_action_settings,
     save_telegram_settings,
 )
+from app.intake import extract_link, ingest_shared_link, is_tiktok  # noqa: F401 - re-exported for callers
 
 log = logging.getLogger(__name__)
 
 POLL_TIMEOUT = 50  # seconds Telegram holds a getUpdates request open
-LANE_WORKERS = 2   # shared videos processed at once, independent of bulk jobs
 
-URL_RE = re.compile(r"https?://[^\s<>\"']+")
-TIKTOK_HOST_RE = re.compile(r"^https?://([\w-]+\.)*tiktok(v)?\.com/", re.I)
+VERDICT_LABELS = {"worth_it": "✅ Do it", "maybe": "🤔 Optional", "skip": "💤 Nothing to do"}
+TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project",
+               "skill": "Skill", "job": "Job", "other": "Other"}
+FIT_LABELS = {"worth_it": "worth it", "maybe": "maybe", "skip": "skip"}
+VALUE_LABELS = {"fun": "fun / personal use", "personal_and_resume": "personal use + resume boost",
+                "weak_resume": "weak resume boost", "not_worth_it": "not worth it"}
 
-_VERDICT_LABELS = {"worth_it": "✅ Worth it", "maybe": "🤔 Maybe", "skip": "⏭️ Skip"}
-_TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project",
-                "skill": "Skill", "job": "Job", "other": "Other"}
-
-_lane = ThreadPoolExecutor(max_workers=LANE_WORKERS, thread_name_prefix="shared-video")
-_in_flight: set[int] = set()
-_in_flight_lock = threading.Lock()
 _poller_started = False
+
+
+def ready() -> bool:
+    s = get_telegram_settings()
+    return bool(s["bot_token"] and s["chat_id"]) and not s.get("muted")
 
 
 class TelegramClient:
@@ -75,55 +77,69 @@ class TelegramClient:
                 log.warning("%s", e)
 
 
-# ---------------- pure helpers (tested directly) ----------------
+class TelegramReporter(intake.Reporter):
+    """Edits one status message in place as the video moves through the lane."""
 
-def extract_link(text: str) -> tuple[str | None, str]:
-    """First URL in the message, plus everything else as your note. TikTok's
-    share text ("Check out this video…") is dropped so it doesn't pose as a note."""
-    m = URL_RE.search(text or "")
-    if not m:
-        return None, (text or "").strip()
-    url = m.group(0).rstrip(").,!?")
-    note = (text[: m.start()] + " " + text[m.end():]).strip()
-    if re.fullmatch(r"(?is).*(check out|watch).*tiktok.*", note) or note.lower().startswith("#"):
-        note = ""
-    return url, note
+    def __init__(self, chat_id: int, message_id: int, tg: TelegramClient | None = None):
+        self.chat_id, self.message_id = chat_id, message_id
+        self.tg = tg or TelegramClient(get_telegram_settings()["bot_token"])
+
+    def _edit(self, text: str) -> None:
+        if not get_telegram_settings().get("muted"):  # Settings → Telegram → mute
+            self.tg.edit(self.chat_id, self.message_id, text)
+
+    def progress(self, text: str) -> None:
+        self._edit(f"⏳ {html.escape(text)}")
+
+    def finished(self, action, video) -> None:
+        self._edit(format_result(action, video))
+
+    def failed(self, text: str) -> None:
+        log.warning("Shared item failed: %s", text)
+        self._edit(f"⚠️ {html.escape(text)}")
 
 
-def is_tiktok(url: str) -> bool:
-    return bool(TIKTOK_HOST_RE.match(url))
-
-
-def canonical_tiktok_url(url: str, http: httpx.Client | None = None) -> str:
-    """Short share links (vm./vt.tiktok.com, tiktok.com/t/…) redirect to the real
-    video URL; resolve them so the same video shared twice dedupes."""
-    from app.ingest import _normalize
-
-    direct = _normalize(url)
-    if direct:
-        return direct
-    client = http or httpx.Client(timeout=15, follow_redirects=True,
-                                  headers={"User-Agent": "Mozilla/5.0 (Macintosh) AppleWebKit/537.36"})
+def reporter_new_message(chat_id: int, text: str) -> intake.Reporter:
+    tg = TelegramClient(get_telegram_settings()["bot_token"])
     try:
-        final = str(client.head(url).url)
-        return _normalize(final) or url
-    except httpx.HTTPError:
-        return url
-    finally:
-        if http is None:
-            client.close()
+        return TelegramReporter(chat_id, tg.send(chat_id, text), tg)
+    except (RuntimeError, httpx.HTTPError):
+        return intake.Reporter()
+
+
+# ---------------- formatting ----------------
+
+def fit_line(report: dict) -> str:
+    """'Fits: llm-inference-gateway (worth it, S) - replaces the hand-rolled batcher'"""
+    fits = [f for f in report.get("project_fit") or [] if f.get("fit") != "skip"]
+    if fits:
+        f = fits[0]
+        effort = f", {f['effort']}" if f.get("effort") else ""
+        value = f" · {VALUE_LABELS[f['value']]}" if f.get("value") in VALUE_LABELS else ""
+        return (f"Fits: {f['project']} ({FIT_LABELS.get(f.get('fit'), f.get('fit'))}{effort}{value}): "
+                f"{f.get('architecture_impact', '')}")
+    new = report.get("new_project") or {}
+    if new.get("idea"):
+        value = f" ({VALUE_LABELS[new['value']]})" if new.get("value") in VALUE_LABELS else ""
+        return f"New project{value}: {new['idea']}"
+    if report.get("new_project_idea"):
+        return f"New project idea: {report['new_project_idea']}"
+    if report.get("project_fit"):
+        return "Doesn't fit your current projects."
+    return ""
 
 
 def format_result(action, video) -> str:
     """The final, edited-in-place status message."""
-    import json
-
     title = html.escape(video.author and f"@{video.author}" or "Shared link")
     if action.status.value == "drafted" and action.result:
         r = json.loads(action.result)
         lines = [f"<b>{html.escape(r.get('headline', ''))}</b>",
-                 f"{_VERDICT_LABELS.get(action.verdict, '')} · {_TYPE_LABELS.get(action.action_type.value, '')}",
+                 f"{VERDICT_LABELS.get(action.verdict, '')} · {TYPE_LABELS.get(action.action_type.value, '')}",
                  "", html.escape(r.get("telegram_text", ""))]
+        fit = fit_line(r)
+        if fit:
+            lines += ["", f"🧩 {html.escape(fit)}"]
         if r.get("ideas"):
             lines += ["", "<b>Ideas</b>"] + [f"• {html.escape(i)}" for i in r["ideas"][:3]]
         lines += ["", _links_line(action, video)]
@@ -134,16 +150,25 @@ def format_result(action, video) -> str:
     return f"⚠️ Couldn't finish researching this.\n{reason}\n\n{_links_line(action, video)}"
 
 
+def report_link(action) -> str | None:
+    """Dashboard link for a report, if PUBLIC_BASE_URL is reachable from a phone."""
+    if re.search(r"//(127\.0\.0\.1|localhost)", PUBLIC_BASE_URL):
+        return None
+    return f"{PUBLIC_BASE_URL}/agent#a{action.id}"
+
+
 def _links_line(action, video) -> str:
-    parts = [f'<a href="{html.escape(video.tiktok_url)}">Video</a>']
-    if not re.search(r"//(127\.0\.0\.1|localhost)", PUBLIC_BASE_URL):
-        parts.insert(0, f'<a href="{PUBLIC_BASE_URL}/agent#a{action.id}">Full report</a>')
-    else:
-        parts.insert(0, "Full report on the Agent page")
+    parts = [f'<a href="{html.escape(video.tiktok_url)}">Original</a>'] if video.tiktok_url.startswith("http") else []
+    link = report_link(action)
+    parts.insert(0, f'<a href="{link}">Full report</a>' if link else "Full report on the Agent page")
     return " · ".join(parts)
 
 
 # ---------------- update handling ----------------
+
+def _submit(video_id: int, chat_id: int, message_id: int, deep: bool = False) -> None:
+    intake.submit(video_id, TelegramReporter(chat_id, message_id), deep=deep)
+
 
 def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
     """Route one Telegram update. `submit(video_id, chat_id, message_id)` starts the
@@ -165,7 +190,7 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
             save_telegram_settings(chat_id=chat_id, pairing_code="")
             tg.send(chat_id, "✅ Paired. From TikTok: Share → Telegram → this chat. Add a note if you want "
                              "something specific checked (\"useful for my OS project?\").\n\n"
-                             "/status · /pause · /resume")
+                             "/status · /pause · /resume · reply /deep to a report to research it further")
         elif paired is None:
             tg.send(chat_id, "Not paired yet. Send /start followed by the code shown in the dashboard's Settings.")
         return
@@ -184,45 +209,63 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
         save_action_settings(agent_paused=False)
         tg.send(chat_id, "▶️ Research agent is back on.")
         return
+    if text.startswith("/deep"):
+        _deep(msg, chat_id, tg)
+        return
     if text.startswith("/"):
-        tg.send(chat_id, "Share a TikTok (or any link) and I'll research it.\n/status · /pause · /resume")
+        tg.send(chat_id, "Share a TikTok (or any link) and I'll research it.\n/status · /pause · /resume · /deep")
         return
 
     url, note = extract_link(text)
-    if not url:
-        tg.send(chat_id, "Send me a link: TikTok → Share → Telegram. Text with it becomes your note.")
+    if msg.get("photo"):
+        video_id = _ingest_photo(msg["photo"], tg, text)
+        if video_id is None:
+            tg.send(chat_id, "I couldn't download that photo. Try again, or send it as a screenshot.")
+            return
+    elif url:
+        video_id = ingest_shared_link(url, note)
+    elif len(text.split()) >= 3:
+        video_id = intake.ingest_shared_text(text)
+    else:
+        tg.send(chat_id, "Send me a link, a screenshot or a few words: anything you want looked into.")
         return
-    video_id = ingest_shared_link(url, note)
     status_id = tg.send(chat_id, "📥 Got it. Queued…", reply_to=msg.get("message_id"))
     submit(video_id, chat_id, status_id)
 
 
-def ingest_shared_link(url: str, note: str) -> int:
-    """Find or create the Video for a shared link and mark it as shared."""
-    from app.db import get_session
-    from app.models import Status, Video
+def _ingest_photo(sizes: list, tg: TelegramClient, caption: str) -> int | None:
+    """Download the largest size of a shared photo through the Bot API."""
+    try:
+        file_path = tg.call("getFile", file_id=sizes[-1]["file_id"])["file_path"]
+        r = tg.http.get(f"https://api.telegram.org/file/bot{tg.token}/{file_path}")
+        r.raise_for_status()
+    except (RuntimeError, httpx.HTTPError, KeyError, IndexError):
+        return None
+    if len(r.content) > intake.MAX_IMAGE_BYTES:
+        return None
+    return intake.ingest_shared_image(r.content, file_path, caption)
 
-    is_tt = is_tiktok(url)
-    canonical = canonical_tiktok_url(url) if is_tt else url
+
+def _deep(msg: dict, chat_id: int, tg: TelegramClient) -> None:
+    """Reply /deep to a report message to re-run it with web research forced on."""
+    from sqlmodel import select
+
+    from app.db import get_session
+    from app.models import Action
+
+    replied = (msg.get("reply_to_message") or {}).get("message_id")
+    if not replied:
+        tg.send(chat_id, "Reply /deep to one of my report messages to research that video further.")
+        return
     with get_session() as session:
-        video = session.exec(select(Video).where(Video.tiktok_url == canonical)).first()
-        if not video:
-            video = Video(tiktok_url=canonical, saved_date=datetime.utcnow())
-            if not is_tt:
-                # A GitHub/article link has nothing to download or transcribe: the
-                # agent fetches the page itself, so skip straight to analysis.
-                video.status = Status.TRANSCRIBED
-                video.caption = canonical
-                video.transcript = ""
-                video.ocr_text = ""
-        video.source = "telegram"
-        if note:
-            video.user_note = note
-        video.updated_at = datetime.utcnow()
-        session.add(video)
-        session.commit()
-        session.refresh(video)
-        return video.id
+        action = session.exec(select(Action).where(Action.telegram_chat_id == chat_id,
+                                                   Action.telegram_message_id == replied)).first()
+        video_id = action.video_id if action else None
+    if not video_id:
+        tg.send(chat_id, "I couldn't match that message to a report.")
+        return
+    status_id = tg.send(chat_id, "🔎 Researching deeper…", reply_to=replied)
+    intake.submit(video_id, TelegramReporter(chat_id, status_id, tg), deep=True)
 
 
 def _status_text() -> str:
@@ -233,83 +276,8 @@ def _status_text() -> str:
         spent = agent_spend_today(session)
     cap = get_agent_settings()["daily_cap_usd"]
     paused = get_action_settings()["agent_paused"]
-    with _in_flight_lock:
-        n = len(_in_flight)
-    return (f"{'⏸️ Paused' if paused else '▶️ Running'} · {n} in progress\n"
+    return (f"{'⏸️ Paused' if paused else '▶️ Running'} · {intake.in_flight()} in progress\n"
             f"Today's research spend: ${spent:.2f} of ${cap:.2f}")
-
-
-# ---------------- the research lane ----------------
-
-def _submit(video_id: int, chat_id: int, message_id: int) -> None:
-    with _in_flight_lock:
-        if video_id in _in_flight:
-            return
-        _in_flight.add(video_id)
-    _lane.submit(_process, video_id, chat_id, message_id)
-
-
-def _process(video_id: int, chat_id: int, message_id: int) -> None:
-    from app import analyze as analyze_mod
-    from app.db import get_session
-    from app.models import Video
-    from app.pipeline import process_shared_video
-
-    tg = TelegramClient(get_telegram_settings()["bot_token"])
-    progress = lambda text: tg.edit(chat_id, message_id, f"⏳ {html.escape(text)}")  # noqa: E731
-    try:
-        with get_session() as session:
-            video = session.get(Video, video_id)
-            try:
-                action = process_shared_video(session, video, progress, chat_id=chat_id, message_id=message_id)
-            except analyze_mod.FatalAnalysisError as e:
-                tg.edit(chat_id, message_id, f"⚠️ {html.escape(str(e))}")
-                return
-            except Exception as e:  # noqa: BLE001
-                log.exception("Shared video %s failed", video_id)
-                tg.edit(chat_id, message_id, f"⚠️ Couldn't process this video.\n{html.escape(str(e))[:300]}")
-                return
-            tg.edit(chat_id, message_id, format_result(action, video))
-    finally:
-        with _in_flight_lock:
-            _in_flight.discard(video_id)
-
-
-def rerun(action_id: int) -> bool:
-    """Re-run research for one action from the dashboard; reports into its original chat message."""
-    from app.db import get_session
-    from app.models import Action
-
-    with get_session() as session:
-        action = session.get(Action, action_id)
-        if not action:
-            return False
-        chat_id = action.telegram_chat_id or get_telegram_settings()["chat_id"]
-        message_id = action.telegram_message_id
-        video_id = action.video_id
-    if chat_id and get_telegram_settings()["bot_token"]:
-        tg = TelegramClient(get_telegram_settings()["bot_token"])
-        try:
-            message_id = tg.send(chat_id, "🔁 Re-running research…")
-        except RuntimeError:
-            message_id = None
-    if chat_id and message_id:
-        _submit(video_id, chat_id, message_id)
-    else:
-        _lane.submit(_process_silently, video_id)
-    return True
-
-
-def _process_silently(video_id: int) -> None:
-    from app.db import get_session
-    from app.models import Video
-    from app.pipeline import process_shared_video
-
-    with get_session() as session:
-        try:
-            process_shared_video(session, session.get(Video, video_id))
-        except Exception:  # noqa: BLE001
-            log.exception("Re-run for video %s failed", video_id)
 
 
 # ---------------- poller ----------------

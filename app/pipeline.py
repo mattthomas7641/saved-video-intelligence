@@ -19,8 +19,10 @@ from app.throttle import looks_like_throttle, throttle
 log = logging.getLogger("pipeline")
 
 
-def collect_video(session: Session, video: Video, should_stop=lambda: False) -> None:
-    """Download, transcribe and read on-screen text. Leaves the video TRANSCRIBED."""
+def collect_video(session: Session, video: Video, should_stop=lambda: False, transcribe: bool = True) -> None:
+    """Download, transcribe and read on-screen text. Leaves the video TRANSCRIBED.
+    With `transcribe=False` (Gemini watches the file itself) it only downloads,
+    and keeps the file for the analysis step, which deletes it afterwards."""
     try:
         throttle.wait(should_stop)
         time.sleep(random.uniform(0.2, 0.9))  # stay polite when several workers run at once
@@ -37,6 +39,13 @@ def collect_video(session: Session, video: Video, should_stop=lambda: False) -> 
         video.upload_date = result.upload_date
         video.duration_seconds = result.duration_seconds
 
+        if not transcribe and video.local_video_path and Path(video.local_video_path).exists():
+            video.transcript = video.transcript or ""
+            video.ocr_text = video.ocr_text or ""
+            video.status = Status.TRANSCRIBED
+            video.error_message = None
+            _touch(session, video)
+            return
         if video.local_video_path and Path(video.local_video_path).exists():
             video.status = Status.TRANSCRIBING
             _touch(session, video)
@@ -102,7 +111,9 @@ def apply_analysis(session: Session, video: Video, analysis: analyze_mod.Analysi
         has_promo_code=video.has_promo_code, has_dated_offer=video.has_dated_offer)
     video.input_tokens = analysis.input_tokens
     video.output_tokens = analysis.output_tokens
-    video.cost_usd = analyze_mod.cost_usd(analysis.input_tokens, analysis.output_tokens, batch=batch)
+    own_cost = getattr(analysis, "cost_usd", None)  # set by analyzers with their own pricing (Gemini, Grok)
+    video.cost_usd = own_cost if own_cost is not None else analyze_mod.cost_usd(
+        analysis.input_tokens, analysis.output_tokens, batch=batch)
     video.batch_id = None
     video.status = Status.DONE
     video.error_message = None
@@ -110,12 +121,13 @@ def apply_analysis(session: Session, video: Video, analysis: analyze_mod.Analysi
     return video.cost_usd
 
 
-def analyze_video(session: Session, video: Video) -> float:
-    """Live Claude analysis of a TRANSCRIBED video. Returns the cost in dollars."""
+def analyze_video(session: Session, video: Video, analyzer=None) -> float:
+    """Live analysis of a TRANSCRIBED video - Claude by default, or `analyzer`
+    (e.g. Gemini for shared videos). Returns the cost in dollars."""
     video.status = Status.ANALYZING
     _touch(session, video)
     try:
-        cost = apply_analysis(session, video, analyze_mod.analyze_video(video))
+        cost = apply_analysis(session, video, (analyzer or analyze_mod.analyze_video)(video))
     except analyze_mod.FatalAnalysisError:
         video.status = Status.TRANSCRIBED  # nothing is wrong with the video; keep it for later
         _touch(session, video)
@@ -166,24 +178,52 @@ def _action_for(session: Session, video: Video) -> Action:
 
 
 def process_shared_video(session: Session, video: Video, on_progress=lambda text: None,
-                         chat_id: int | None = None, message_id: int | None = None) -> Action:
-    """Collect -> analyze -> research for one shared video. Returns its Action, whose
-    status/result/error_message say how it went. Raises FatalAnalysisError for
-    problems only you can fix (no key, no credit)."""
+                         chat_id: int | None = None, message_id: int | None = None, deep: bool = False) -> Action:
+    """Download -> watch/analyze -> prefetch -> research for one shared item.
+    Returns its Action, whose status/result/error_message say how it went. Raises
+    FatalAnalysisError for problems only you can fix (no key, no credit).
+    `deep` forces web research on (the "Research deeper" button)."""
     from app import agent as agent_mod
+    from app import prefetch as prefetch_mod
+    from app import projects as projects_mod
     from app.config import get_action_settings, get_agent_settings
 
-    if video.status in (Status.PENDING, Status.ERROR, Status.DOWNLOADING, Status.TRANSCRIBING, Status.DOWNLOADED):
-        on_progress("Downloading and transcribing…")
-        collect_video(session, video)
-        if video.status != Status.TRANSCRIBED:
-            raise RuntimeError(video.error_message or "Couldn't download this video.")
+    provider = get_agent_settings()["provider"]
+    analyzer = None
+    if provider == "gemini":
+        from app import gemini_client
+        analyzer = gemini_client.analyze_video  # watches the video file itself: no Whisper/OCR
+    elif provider == "xai":
+        from app import xai_client
+        analyzer = xai_client.analyze_video  # shared videos never need Anthropic credit
 
+    if video.status in (Status.PENDING, Status.ERROR, Status.DOWNLOADING, Status.TRANSCRIBING, Status.DOWNLOADED):
+        on_progress("Downloading…" if provider == "gemini" else "Downloading and transcribing…")
+        collect_video(session, video, transcribe=provider != "gemini")
+        if provider == "gemini" and video.status == Status.TRANSCRIBED and not gemini_client.can_watch(video):
+            on_progress("Too long to send whole; transcribing…")  # rare: over the inline size limit
+            video.status = Status.DOWNLOADED
+            collect_video(session, video)
+        if video.status != Status.TRANSCRIBED:
+            if not (video.tiktok_url or "").startswith("http"):
+                raise RuntimeError(video.error_message or "Couldn't download this video.")
+            # Blocked or private (common on Instagram): judge it from the link instead of failing.
+            log.warning("Download failed for shared video %s (%s); using the link", video.id, video.error_message)
+            on_progress("Couldn't download it; working from the link…")
+            video.status = Status.TRANSCRIBED
+            video.caption = video.caption or video.tiktok_url
+            video.transcript = video.transcript or ""
+            video.ocr_text = video.ocr_text or ""
+            video.error_message = None
+            _touch(session, video)
+
+    analysis_cost = 0.0
     has_action = session.exec(select(Action.id).where(Action.video_id == video.id)).first() is not None
     if video.status in (Status.TRANSCRIBED, Status.ANALYZING, Status.SUBMITTED) or (
             video.status == Status.DONE and not has_action):
-        on_progress("Reading the video…")
-        analyze_video(session, video)
+        on_progress("Watching the video…" if provider == "gemini" and video.local_video_path else "Reading it…")
+        analysis_cost = analyze_video(session, video, analyzer)
+        _drop_video_file(session, video)
         if video.status != Status.DONE:
             raise RuntimeError(video.error_message or "Analysis failed.")
 
@@ -197,13 +237,24 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         return action
 
-    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)
+    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session) - analysis_cost
     action.status = ActionStatus.IN_PROGRESS
     action.error_message = None
     _touch_action(session, action)
-    on_progress(f"Researching ({action.action_type.value})…")
+    action_type = action.action_type.value
+    plan_cost = 0.0
     try:
-        findings = agent_mod.run(video, action.action_type.value, action.brief, budget, on_progress=on_progress)
+        on_progress("Looking up links and repos…")
+        found = prefetch_mod.gather(video)
+        # Only tech content is judged against your projects; food, products, fitness etc. get a general review.
+        tech = agent_mod.is_tech(action_type, video.category)
+        cards = projects_mod.cards(session) if tech else []
+        web, x_search = research_plan(provider, action_type, deep)
+        context = agent_mod.Context(projects=agent_mod.projects_context(cards, [c.name for c in cards]) if tech else "",
+                                    prefetch=prefetch_mod.as_context(found))
+        on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
+        findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
+                                 web=web, x_search=x_search, context=context, provider=provider, tech=tech)
     except agent_mod.CapReached as e:
         action.status = ActionStatus.NEEDS_INPUT
         action.error_message = f"{e} Raise the daily cap in Settings, then re-run it from the Agent page."
@@ -215,13 +266,17 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         raise
     except Exception as e:  # noqa: BLE001 - report it on the card and in Telegram, don't kill the lane
-        log.exception("Research failed for video %s", video.id)
         action.status = ActionStatus.FAILED
-        action.error_message = f"Research failed: {e}"[:500]
+        if type(e).__name__ == "Throttled":  # gemini_client.Throttled, after its retries
+            action.error_message = ("Gemini is rate limiting this key. Turning on billing at aistudio.google.com "
+                                    "raises the limits; then tap Retry.")
+        else:
+            log.exception("Research failed for video %s", video.id)
+            action.error_message = f"Research failed: {e}"[:500]
     else:
         action.status = ActionStatus.DRAFTED
         action.verdict = findings.verdict
-        action.cost_usd = findings.cost_usd
+        action.cost_usd = round(findings.cost_usd + plan_cost + analysis_cost, 4)
         action.result = findings.to_json()
     _touch_action(session, action)
     return action
@@ -232,3 +287,24 @@ def _touch_action(session: Session, action: Action) -> None:
     session.add(action)
     session.commit()
     session.refresh(action)
+
+
+_WEB_TYPES = {"place", "research", "job"}
+
+
+def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[bool, bool]:
+    """(web search allowed, X search allowed). Gemini's grounded search is free up to
+    5,000 requests a month, so it's always on there and the model decides when to use
+    it; on paid-per-search providers it's on only for types that need current facts."""
+    if provider == "gemini":
+        return True, False
+    web = deep or action_type in _WEB_TYPES
+    return web, provider == "xai" and action_type == "research" and deep
+
+
+def _drop_video_file(session: Session, video: Video) -> None:
+    """Gemini keeps the file until it has watched it; tidy up afterwards like collect does."""
+    if DELETE_VIDEO_AFTER_PROCESS and video.local_video_path:
+        Path(video.local_video_path).unlink(missing_ok=True)
+        video.local_video_path = None
+        _touch(session, video)

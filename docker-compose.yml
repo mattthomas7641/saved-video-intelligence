@@ -8,6 +8,15 @@ services:
       - "127.0.0.1:8787:8787"
     env_file:
       - .env
+    environment:
+      # Your projects, mounted read-only at the same path as on the host so
+      # symlinked project folders resolve. The research agent reads them through
+      # a secret-safe reader (app/projects.py); it never writes to them.
+      PROJECTS_DIR: ${HOME}/Projects
     volumes:
       - ./data:/app/data
+      - type: bind
+        source: ${HOME}/Projects
+        target: ${HOME}/Projects
+        read_only: true
     restart: unless-stopped

@@ -1,4 +1,4 @@
-/* Saved Video Intelligence — Guide Map.
+/* Sidequest — Guide Map.
    Your library as a park/zoo guide map: eight topics, eight flat full-
    strength territories. Color marks WHERE you are — applied at the map
    and as the current territory's accent — never scattered per-row across
@@ -531,3 +531,47 @@ details[open] .r-tldr { -webkit-line-clamp: unset; }
   .rt-row > :nth-child(n+3) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+/* ---------- Settings: Send to Agent, keys, projects ---------- */
+.steps { display: grid; gap: 10px; color: var(--ink-2); }
+.steps ul { margin: 6px 0 0; padding-left: 1.1em; display: grid; gap: 4px; }
+code.copy { user-select: all; word-break: break-all; }
+.key-row { display: grid; gap: 8px; padding: 14px 0; border-top: 1.5px solid var(--line); }
+.key-row:first-of-type { border-top: 0; }
+.inline-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.inline-form .field { flex: 1; min-width: 220px; }
+.proj-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.proj-list > li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1.5px solid var(--line); }
+.proj-list > li:first-child { border-top: 0; }
+.proj-list details { flex: 1; min-width: 0; }
+.proj-list summary { cursor: pointer; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.proj-card { margin-top: 8px; white-space: pre-line; font-size: var(--fs-sm); line-height: 1.5; }
+.settings-summary { cursor: pointer; list-style: none; }
+.settings-summary::-webkit-details-marker { display: none; }
+
+/* ---------- Agent page: project fit ---------- */
+.fit-list { display: grid; gap: 8px; max-width: 72ch; }
+.fit-row { padding: 12px 16px; border: 1.5px solid var(--line); border-radius: 16px; display: grid; gap: 5px; font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.45; }
+.fit-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--ink); }
+.fit-row .faint { color: var(--ink-3); }
+
+/* ---------- Sidequest home: topic-colored quest cards ---------- */
+.quest-tabs { margin-bottom: 12px; }
+.report[data-territory] { border-left: 6px solid var(--accent); }
+.r-topic { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: var(--pill); background: var(--accent-soft); color: var(--accent); font: 700 var(--fs-2xs)/1 var(--sans); letter-spacing: 0.02em; }
+.r-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 24px 18px; }
+.r-actions .btn { padding: 8px 15px; font-size: var(--fs-sm); }
+.drill .chip[data-territory]:not([aria-current="true"]) .ci { color: var(--accent); }
+@media (max-width: 640px) { .r-actions { padding: 0 18px 16px; } }
+@media (max-width: 520px) {
+  .topbar { flex-wrap: wrap; gap: 4px 12px; }
+  .topbar nav { margin-left: -10px; }
+  .topbar nav .btn { padding: 6px 8px; }
+}
+
+.value { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: var(--pill); font: 700 var(--fs-2xs)/1 var(--sans); letter-spacing: 0.02em; white-space: nowrap; }
+.val-strong { background: color-mix(in oklab, var(--t-learn) 15%, var(--bg)); color: var(--t-learn); }
+.val-fun { background: color-mix(in oklab, var(--t-travel) 15%, var(--bg)); color: var(--t-travel); }
+.val-weak { background: color-mix(in oklab, var(--t-money) 15%, var(--bg)); color: var(--t-money); }
+.val-none { background: var(--rail); color: var(--ink-3); }
+.r-key .value { margin-left: 4px; }

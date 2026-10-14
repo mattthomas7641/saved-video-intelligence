@@ -1,3 +1,5 @@
+import logging
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -6,27 +8,36 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app import batch, telegram_bot, worker
+from app import batch, gemini_client, intake, ntfy_intake, projects, telegram_bot, worker, xai_client
 from app.config import (
     BASE_DIR,
     DEFAULT_WORKERS,
+    GROUPS,
     STALE_THRESHOLD_MONTHS,
     get_action_settings,
     get_agent_settings,
     get_agent_token,
     get_api_key,
+    get_gemini_key,
+    get_ntfy_settings,
+    get_project_overrides,
     get_resume_text,
     get_telegram_settings,
     get_trusted_sender,
+    get_xai_key,
     group_of,
+    new_ntfy_setup,
     new_pairing_code,
     regenerate_agent_token,
     save_action_settings,
     save_agent_settings,
     save_api_key,
+    save_gemini_key,
+    save_project_override,
     save_resume_text,
     save_telegram_settings,
     save_trusted_sender,
+    save_xai_key,
 )
 from app.db import get_db, init_db
 from app.ingest import insert_new_videos, parse_export
@@ -46,7 +57,9 @@ from app.schemas import (
 )
 from app.services import dashboard_query
 
-app = FastAPI(title="Saved Video Intelligence")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram/ntfy poll is noise
+app = FastAPI(title="Sidequest")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -102,7 +115,9 @@ def _render_markdown(text: str | None) -> str:
     import markdown
     from markupsafe import Markup
 
-    rendered = markdown.markdown(_html.escape(text or "", quote=False), extensions=["sane_lists"])
+    # Models often start a list right under a paragraph line; Markdown needs a blank line there.
+    text = re.sub(r"(?m)^(?!\s*(?:[-*+]|\d+\.)\s)(.+)\n(\s*(?:[-*+]|\d+\.)\s)", r"\1\n\n\2", text or "")
+    rendered = markdown.markdown(_html.escape(text, quote=False), extensions=["sane_lists"])
     rendered = re.sub(r'href="(?!https?://)[^"]*"', 'href="#"', rendered)
     rendered = rendered.replace("<a href=", '<a target="_blank" rel="noopener" href=')
     return Markup(rendered)
@@ -114,11 +129,15 @@ init_db()
 worker.recover_stuck()
 batch.start_poller()
 telegram_bot.start_poller()
+ntfy_intake.start()
+if not os.environ.get("SVI_DISABLE_TELEGRAM"):  # no background work in tests
+    projects.start_rescans()
 
 
 @app.get("/")
-def root():
-    return RedirectResponse("/dashboard")
+def root(request: Request, session: Session = Depends(get_db), tab: str = "todo", group: str = ""):
+    """Home: the things you sent, sorted into topic groups, each ready to act on."""
+    return quests_page(request, session, tab, group)
 
 
 @app.get("/onboarding")
@@ -440,8 +459,16 @@ AGENT_TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Places",
                      "skill": "Skills", "job": "Jobs", "other": "Other"}
 
 
+QUEST_TABS = [("todo", "To do"), ("done", "Done"), ("skipped", "Not for me")]
+
+
 @app.get("/agent")
-def agent_page(request: Request, session: Session = Depends(get_db), type: str = "", verdict: str = ""):
+def agent_page(request: Request, session: Session = Depends(get_db), tab: str = "todo", group: str = ""):
+    """Old address of the home feed; kept so links in past notifications still work."""
+    return quests_page(request, session, tab, group)
+
+
+def quests_page(request: Request, session: Session, tab: str, group: str):
     import json as _json
 
     from app.pipeline import agent_spend_today
@@ -450,46 +477,81 @@ def agent_page(request: Request, session: Session = Depends(get_db), type: str =
         select(Action, Video).join(Video, Video.id == Action.video_id)
         .where((Video.source == "telegram") | (Action.result.is_not(None) & Action.verdict.is_not(None)))
         .order_by(Action.updated_at.desc())).all()
-    all_items = []
+    items = []
     for a, v in rows:
         try:
             report = _json.loads(a.result) if a.result and a.verdict else None
         except ValueError:
             report = None
-        all_items.append({"action": a, "video": v, "report": report})
-    type_counts = {t: sum(1 for i in all_items if i["action"].action_type.value == t) for t in AGENT_TYPES}
-    items = [i for i in all_items
-             if (not type or i["action"].action_type.value == type)
-             and (not verdict or i["action"].verdict == verdict)]
-    working = [i for i in items if i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)
-               and not i["report"]]
-    stuck = [i for i in items if i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT)]
-    done = [i for i in items if i["report"] and i not in stuck and i["action"].status != ActionStatus.DISMISSED]
+        g = group_of(v.category) if v.category else "Other"
+        items.append({"action": a, "video": v, "report": report, "group": g, "slug": _GROUP_SLUGS.get(g, "other")})
+
+    def bucket(i):
+        st = i["action"].status
+        if st == ActionStatus.DONE:
+            return "done"
+        if st == ActionStatus.DISMISSED:
+            return "skipped"
+        return "todo"
+
+    tab = tab if tab in dict(QUEST_TABS) else "todo"
+    tab_counts = {t: sum(1 for i in items if bucket(i) == t) for t, _ in QUEST_TABS}
+    in_tab = [i for i in items if bucket(i) == tab]
+    group_counts = {}
+    for i in in_tab:
+        group_counts[i["group"]] = group_counts.get(i["group"], 0) + 1
+    groups = [(g, _GROUP_SLUGS.get(g, "other"), group_counts[g]) for g, _ in GROUPS if g in group_counts]
+    shown = [i for i in in_tab if not group or i["slug"] == group]
+    working = [i for i in shown if not i["report"] and i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)]
+    stuck = [i for i in shown if not i["report"] and i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT)]
+    reports = [i for i in shown if i["report"]]
     tg = get_telegram_settings()
     return templates.TemplateResponse(request, "agent.html", {
-        "working": working, "stuck": stuck, "done": done, "total": len(all_items),
-        "type_counts": type_counts, "type_labels": AGENT_TYPE_LABELS, "types": AGENT_TYPES,
-        "type": type, "verdict": verdict,
+        "tabs": QUEST_TABS, "tab": tab, "tab_counts": tab_counts, "groups": groups, "group": group,
+        "working": working, "stuck": stuck, "done": reports, "total": len(items),
         "spent_today": agent_spend_today(session), "agent_settings": get_agent_settings(),
         "paused": get_action_settings()["agent_paused"],
-        "telegram_ready": bool(tg["bot_token"] and tg["chat_id"]),
+        "intake_ready": ntfy_intake.ready() or bool(tg["bot_token"] and tg["chat_id"]),
+        "has_research_key": _has_research_key(),
+        "project_status": {p.name: p.status for p in projects.cards(session)},
     })
 
 
+def _has_research_key() -> bool:
+    provider = get_agent_settings()["provider"]
+    return bool({"gemini": get_gemini_key, "xai": get_xai_key}.get(provider, get_api_key)())
+
+
+def _set_status(session: Session, action_id: int, status: ActionStatus) -> None:
+    action = session.get(Action, action_id)
+    if action:
+        action.status = status
+        session.add(action)
+        session.commit()
+
+
+@app.post("/agent/{action_id}/done")
+def agent_done(action_id: int, session: Session = Depends(get_db), next: str = Form("/")):
+    _set_status(session, action_id, ActionStatus.DONE)
+    return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
+
+
+@app.post("/agent/{action_id}/reopen")
+def agent_reopen(action_id: int, session: Session = Depends(get_db), next: str = Form("/")):
+    _set_status(session, action_id, ActionStatus.DRAFTED)
+    return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
+
+
 @app.post("/agent/{action_id}/rerun")
-def agent_rerun(action_id: int):
-    telegram_bot.rerun(action_id)
-    return RedirectResponse("/agent", status_code=303)
+def agent_rerun(action_id: int, deep: bool = Form(False), next: str = Form("/")):
+    intake.rerun(action_id, deep=deep)
+    return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
 
 
 @app.post("/agent/{action_id}/dismiss")
-def agent_dismiss(action_id: int, session: Session = Depends(get_db)):
-    action = session.get(Action, action_id)
-    if action:
-        action.status = ActionStatus.DISMISSED
-        session.add(action)
-        session.commit()
-    return RedirectResponse("/agent", status_code=303)
+def agent_dismiss(action_id: int, session: Session = Depends(get_db), next: str = Form("/")):
+    _set_status(session, action_id, ActionStatus.DISMISSED)
+    return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
 
 
 @app.post("/settings/telegram")
@@ -512,10 +574,56 @@ def settings_telegram_pair():
 
 
 @app.post("/settings/agent")
-def settings_agent(about_me: str = Form(""), daily_cap_usd: str = Form("")):
+def settings_agent(about_me: str = Form(""), daily_cap_usd: str = Form(""), planned_ideas: str | None = Form(None),
+                   provider: str = Form("")):
     cap = _optional_money(daily_cap_usd)
-    save_agent_settings(about_me=about_me.strip(), daily_cap_usd=cap)
+    save_agent_settings(about_me=about_me.strip(), daily_cap_usd=cap,
+                        planned_ideas=planned_ideas.strip() if planned_ideas is not None else None,
+                        provider=provider if provider in ("gemini", "xai", "anthropic") else None)
     return RedirectResponse("/settings?key=agent_saved#research", status_code=303)
+
+
+@app.post("/settings/xai")
+def settings_xai(key: str = Form("")):
+    key = key.strip()
+    if not key or not xai_client.check_key(key):
+        return RedirectResponse("/settings?key=xai_invalid#research", status_code=303)
+    save_xai_key(key)
+    return RedirectResponse("/settings?key=xai_saved#research", status_code=303)
+
+
+@app.post("/settings/gemini")
+def settings_gemini(key: str = Form("")):
+    key = key.strip()
+    if not key or not gemini_client.check_key(key):
+        return RedirectResponse("/settings?key=gemini_invalid#research", status_code=303)
+    save_gemini_key(key)
+    return RedirectResponse("/settings?key=gemini_saved#research", status_code=303)
+
+
+@app.post("/settings/ntfy")
+def settings_ntfy():
+    new_ntfy_setup()
+    return RedirectResponse("/settings?key=ntfy_new#send", status_code=303)
+
+
+@app.post("/settings/ntfy/test")
+def settings_ntfy_test():
+    ok = ntfy_intake.notify("✅ Send to Sidequest is connected", "Results for videos you share will arrive here.",
+                            tags=["white_check_mark"])
+    return RedirectResponse(f"/settings?key={'ntfy_sent' if ok else 'ntfy_failed'}#send", status_code=303)
+
+
+@app.post("/settings/projects/rescan")
+def settings_projects_rescan(session: Session = Depends(get_db)):
+    projects.refresh(session)
+    return RedirectResponse("/settings?key=projects_rescanned#projects", status_code=303)
+
+
+@app.post("/settings/projects/{name}")
+def settings_project_status(name: str, status: str = Form("")):
+    save_project_override(name, status)
+    return RedirectResponse("/settings#projects", status_code=303)
 
 
 @app.post("/settings/resume")
@@ -583,7 +691,20 @@ def settings_page(request: Request, key: str = ""):
         "resume_text": get_resume_text(),
         "telegram": get_telegram_settings(),
         "agent_settings": get_agent_settings(),
+        "has_xai_key": bool(get_xai_key()),
+        "has_gemini_key": bool(get_gemini_key()),
+        "ntfy": get_ntfy_settings(),
+        "projects": _projects_for_settings(),
+        "project_overrides": get_project_overrides(),
     })
+
+
+def _projects_for_settings() -> list:
+    from app.db import get_session
+    from app.models import Project
+
+    with get_session() as session:
+        return session.exec(select(Project).order_by(Project.name)).all()
 
 
 @app.get("/media/thumb/{video_id}")
