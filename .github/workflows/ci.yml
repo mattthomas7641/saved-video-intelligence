@@ -20,6 +20,8 @@ jobs:
         run: ruff check .
       - name: Tests
         run: pytest
+      - name: Known vulnerabilities (pip-audit)
+        run: pip-audit -r requirements.txt --progress-spinner off
 
   docker-build:
     name: Docker image builds
@@ -27,7 +29,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        # Catches exactly the class of bug that bit `playwright install --with-deps`
-        # earlier in development: the Dockerfile looked fine until it was actually
-        # built. No push - this only needs to prove the image still builds.
-        run: docker build -t saved-video-intelligence:ci .
+        # Proves the Dockerfile still builds (no push). Public registries rate-limit
+        # shared CI runners (Docker Hub and AWS's mirror both returned 429s here), so
+        # a failed pull is retried rather than failing the build outright.
+        run: |
+          for attempt in 1 2 3; do
+            docker build -t sidequest:ci . && exit 0
+            echo "Build attempt $attempt failed; retrying in $((attempt * 30))s"; sleep $((attempt * 30))
+          done
+          exit 1
+      - name: Smoke test
+        # The image must also start: migrations run, the app serves /health.
+        run: |
+          docker run -d --name sidequest -p 8787:8787 sidequest:ci
+          curl --silent --show-error --fail --retry 15 --retry-delay 2 --retry-all-errors http://127.0.0.1:8787/health
+          curl --silent --fail -o /dev/null http://127.0.0.1:8787/
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs sidequest || true
