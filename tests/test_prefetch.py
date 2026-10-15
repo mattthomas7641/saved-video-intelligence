@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from app import prefetch
 
@@ -13,7 +14,8 @@ def test_repo_slugs_and_page_urls():
     assert prefetch.page_urls(text) == ["https://example.com/post"]
 
 
-def test_gather_and_context():
+def test_gather_and_context(monkeypatch):
+    monkeypatch.setattr(prefetch, "is_public_url", lambda url: True)
     video = SimpleNamespace(tiktok_url="https://www.tiktok.com/@a/video/1", caption="github.com/a/b",
                             transcript="read https://blog.example.com/x", ocr_text="", user_note=None)
     http = httpx.Client(transport=httpx.MockTransport(
@@ -26,3 +28,23 @@ def test_gather_and_context():
 
 def test_empty_context_when_nothing_found():
     assert prefetch.as_context({"repos": [], "pages": []}) == ""
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8787/settings", "http://localhost/x", "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/", "http://[::1]/", "file:///etc/passwd", "ftp://example.com/", "http://0.0.0.0/",
+])
+def test_private_and_non_http_urls_are_refused(url):
+    assert prefetch.is_public_url(url) is False
+    http = httpx.Client(transport=httpx.MockTransport(lambda req: pytest.fail("fetched " + str(req.url))))
+    assert prefetch.page_text(url, http).startswith("(not fetched")
+
+
+def test_redirect_to_private_address_is_refused(monkeypatch):
+    monkeypatch.setattr(prefetch, "is_public_url", lambda url: "127.0.0.1" not in url)
+    def handler(req):
+        if req.url.host == "example.org":
+            return httpx.Response(302, headers={"location": "http://127.0.0.1:8787/settings"})
+        pytest.fail("followed redirect to " + str(req.url))
+    out = prefetch.page_text("https://example.org/a", httpx.Client(transport=httpx.MockTransport(handler)))
+    assert out.startswith("(not fetched")

@@ -250,8 +250,9 @@ def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
                 reporter.failed(str(e))
                 return
             except Exception as e:  # noqa: BLE001
+                from app.netutil import user_message
                 log.exception("Shared video %s failed", video_id)
-                reporter.failed(f"Couldn't process this video. {e}"[:300])
+                reporter.failed(user_message(e, "processing this"))
                 return
             reporter.finished(action, video)
     finally:

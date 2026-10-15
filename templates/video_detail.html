@@ -3,7 +3,8 @@
 {% block title %}{{ (video.summary or video.caption or "Video")|headline if video else "Not found" }} · Sidequest{% endblock %}
 {% block bodyattrs %}{% if video and video.category %}data-territory="{{ video.category|cat_slug }}"{% endif %}{% endblock %}
 {% block content %}
-<a class="back" href="/dashboard">{{ icon("back") }} Back to library</a>
+{% set shared = video and video.source == "telegram" %}
+<a class="back" href="{{ '/' if shared else '/dashboard' }}">{{ icon("back") }} {{ "Back to sidequests" if shared else "Back to library" }}</a>
 {% if not video %}
   <div class="empty"><h2>That video isn't in your library</h2><p>It may have been removed when the database was reset.</p><a class="btn" href="/dashboard">Go to library</a></div>
 {% else %}
@@ -11,7 +12,12 @@
   <div>
     <div class="poster"><img src="/media/thumb/{{ video.id }}" alt=""></div>
     <div class="stack">
-      <a class="btn btn-primary" href="{{ video.tiktok_url }}" target="_blank" rel="noopener">{{ icon("external") }} Watch on TikTok</a>
+      {% if video.tiktok_url.startswith("http") %}
+      {% set site = "TikTok" if "tiktok" in video.tiktok_url else ("Instagram" if "instagram" in video.tiktok_url else ("YouTube" if "youtu" in video.tiktok_url else "the original")) %}
+      <a class="btn btn-primary" href="{{ video.tiktok_url }}" target="_blank" rel="noopener">{{ icon("external") }} Open on {{ site }}</a>
+      {% elif video.tiktok_url.startswith("image:") %}
+      <a class="btn btn-primary" href="/media/thumb/{{ video.id }}" target="_blank" rel="noopener">{{ icon("external") }} Your screenshot</a>
+      {% endif %}
       <form action="/video/{{ video.id }}/watched" method="post">
         <button class="btn" style="width:100%" type="submit">{{ icon("eye") }} {{ "Mark as not revisited" if video.watched else "Mark as revisited" }}</button>
       </form>

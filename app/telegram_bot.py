@@ -30,6 +30,7 @@ from app.config import (
     save_telegram_settings,
 )
 from app.intake import extract_link, ingest_shared_link, is_tiktok  # noqa: F401 - re-exported for callers
+from app.netutil import redact
 
 log = logging.getLogger(__name__)
 
@@ -56,8 +57,12 @@ class TelegramClient:
         self.http = http or httpx.Client(timeout=POLL_TIMEOUT + 10)
 
     def call(self, method: str, **params):
-        r = self.http.post(f"https://api.telegram.org/bot{self.token}/{method}", json=params)
-        data = r.json()
+        try:
+            r = self.http.post(f"https://api.telegram.org/bot{self.token}/{method}", json=params)
+            data = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            # httpx errors embed the request URL, which contains the bot token: never let it reach a log.
+            raise RuntimeError(f"Telegram {method} failed: {redact(str(e), self.token)}") from None
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method} failed: {data.get('description', r.status_code)}")
         return data["result"]

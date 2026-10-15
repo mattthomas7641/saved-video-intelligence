@@ -55,11 +55,13 @@ from app.schemas import (
     SyncErrorResponse,
     SyncInboxResponse,
 )
+from app.security import GuardMiddleware
 from app.services import dashboard_query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram/ntfy poll is noise
 app = FastAPI(title="Sidequest")
+app.add_middleware(GuardMiddleware)  # no login: refuse other hosts and cross-site writes (app/security.py)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -118,6 +120,10 @@ def _render_markdown(text: str | None) -> str:
     # Models often start a list right under a paragraph line; Markdown needs a blank line there.
     text = re.sub(r"(?m)^(?!\s*(?:[-*+]|\d+\.)\s)(.+)\n(\s*(?:[-*+]|\d+\.)\s)", r"\1\n\n\2", text or "")
     rendered = markdown.markdown(_html.escape(text, quote=False), extensions=["sane_lists"])
+    # No images from model output: a Markdown image makes the browser fetch a URL the
+    # model chose, which prompt-injected content could use to smuggle data out.
+    rendered = re.sub(r'<img[^>]*alt="([^"]*)"[^>]*>', r"\1", rendered)
+    rendered = re.sub(r"<img[^>]*>", "", rendered)
     rendered = re.sub(r'href="(?!https?://)[^"]*"', 'href="#"', rendered)
     rendered = rendered.replace("<a href=", '<a target="_blank" rel="noopener" href=')
     return Markup(rendered)
@@ -187,7 +193,7 @@ def video_detail(request: Request, video_id: int, session: Session = Depends(get
 
 @app.post("/video/{video_id}/watched")
 def toggle_watched(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
-    video = session.get(Video, video_id)
+    video = _video_or_404(session, video_id)
     video.watched = not video.watched
     session.add(video)
     session.commit()
@@ -196,7 +202,7 @@ def toggle_watched(video_id: int, session: Session = Depends(get_db), next: str 
 
 @app.post("/video/{video_id}/archive")
 def toggle_archive(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
-    video = session.get(Video, video_id)
+    video = _video_or_404(session, video_id)
     video.archived = not video.archived
     session.add(video)
     session.commit()
@@ -205,12 +211,19 @@ def toggle_archive(video_id: int, session: Session = Depends(get_db), next: str 
 
 @app.post("/video/{video_id}/reprocess")
 def reprocess(video_id: int, session: Session = Depends(get_db)):
-    video = session.get(Video, video_id)
+    video = _video_or_404(session, video_id)
     video.status = Status.PENDING
     video.error_message = None
     session.add(video)
     session.commit()
     return RedirectResponse(f"/video/{video_id}", status_code=303)
+
+
+def _video_or_404(session: Session, video_id: int) -> Video:
+    video = session.get(Video, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="No such video.")
+    return video
 
 
 @app.post("/process/start")
@@ -503,8 +516,13 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         group_counts[i["group"]] = group_counts.get(i["group"], 0) + 1
     groups = [(g, _GROUP_SLUGS.get(g, "other"), group_counts[g]) for g, _ in GROUPS if g in group_counts]
     shown = [i for i in in_tab if not group or i["slug"] == group]
-    working = [i for i in shown if not i["report"] and i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)]
-    stuck = [i for i in shown if not i["report"] and i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT)]
+    # A QUEUED item with a message was parked on purpose (agent paused): it isn't being worked
+    # on, so it goes with the items that need you, not under "Looking into it" (which refreshes).
+    parked = lambda a: a.status == ActionStatus.QUEUED and bool(a.error_message)  # noqa: E731
+    working = [i for i in shown if not i["report"] and not parked(i["action"])
+               and i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)]
+    stuck = [i for i in shown if not i["report"] and (parked(i["action"])
+             or i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT))]
     reports = [i for i in shown if i["report"]]
     tg = get_telegram_settings()
     return templates.TemplateResponse(request, "agent.html", {
