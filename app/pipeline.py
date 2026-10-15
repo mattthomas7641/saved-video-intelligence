@@ -1,4 +1,5 @@
 """Per-video stages. Collect (download, transcribe, OCR) is free; analyze is the paid Claude call."""
+import json
 import logging
 import random
 import time
@@ -9,6 +10,7 @@ from sqlmodel import Session, select
 
 from app import analyze as analyze_mod
 from app import download as download_mod
+from app import memory as memory_mod
 from app import ocr as ocr_mod
 from app import relevance as relevance_mod
 from app import tracing
@@ -296,6 +298,8 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                                     prefetch=prefetch_mod.as_context(found))
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
         with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
+            related = _recall(session, video, action)
+            context.memory = memory_mod.context_block(related)
             findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
                                      web=web, x_search=x_search, context=context, provider=provider, tech=tech)
     except agent_mod.CapReached as e:
@@ -322,12 +326,42 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         if download_failed:
             findings.report_markdown = ("> Couldn't download this video (the site blocked it), so this was judged "
                                         "from the link and caption only.\n\n" + findings.report_markdown)
+        findings.related = [{"action_id": r["action_id"], "headline": r["headline"], "date": r["date"]}
+                            for r in related]
         action.status = ActionStatus.DRAFTED
         action.verdict = findings.verdict
         _ = analysis_cost  # recorded in the ledger by its run
         action.result = findings.to_json()
     _touch_action(session, action)
+    if action.status == ActionStatus.DRAFTED:
+        _remember(session, action, video)
     return action
+
+
+def _recall(session: Session, video: Video, action: Action) -> list[dict]:
+    """Related past reports for this item, or [] - memory must never fail an item."""
+    from app import memory as memory_mod
+
+    if not memory_mod.enabled():
+        return []
+    try:
+        query = "\n".join(x for x in [action.brief, video.summary, getattr(video, "user_note", None)] if x)
+        return memory_mod.recall(session, query, exclude_action_id=action.id)
+    except Exception:  # noqa: BLE001
+        log.exception("Memory recall failed for video %s; researching without it", video.id)
+        return []
+
+
+def _remember(session: Session, action: Action, video: Video) -> None:
+    from app import memory as memory_mod
+
+    if not memory_mod.enabled():
+        return
+    try:
+        with tracing.run("memory", action_id=action.id, video_id=video.id, provider="gemini"):
+            memory_mod.remember(session, action, video, json.loads(action.result or "{}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Couldn't add action %s to memory", action.id)
 
 
 def _touch_action(session: Session, action: Action) -> None:

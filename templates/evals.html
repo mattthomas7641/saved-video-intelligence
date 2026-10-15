@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Evals · Sidequest{% endblock %}
+{% block content %}
+{% if status.running %}<meta http-equiv="refresh" content="10">{% endif %}
+<header class="page-head">
+  <h1>Evals</h1>
+  <p class="sub">Real things you sent, with the answers we expect. Run them after changing a prompt or model to see whether the agent got better or worse. Cases live only on this computer.</p>
+</header>
+
+{% if msg %}<div class="notice">{{ icon("check") }}<span>{{ msg }}</span></div>{% endif %}
+
+<section class="plain-card" style="max-width:none">
+  <h2>Run</h2>
+  <p>{{ cases|length }} cases · {{ reviewed }} reviewed. A run costs about $0.03–0.05 per case (≈ ${{ "%.2f"|format(cases|length * 0.045) }} for all), counted in the spending ledger but not against your daily cap.</p>
+  {% if status.running %}
+  <p class="num" style="margin-top:10px">Running: {{ status.done }} of {{ status.total or "…" }} cases · ${{ "%.3f"|format(status.spent) }} so far. This page refreshes itself.</p>
+  {% else %}
+  {% if status.error %}<p style="color:var(--flag)">Last run failed: {{ status.error }}</p>{% endif %}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
+    <form action="/evals/snapshot" method="post"><button class="btn" type="submit">{{ icon("refresh") }} Add new shares as cases</button></form>
+    {% if cases %}
+    <form action="/evals/run" method="post" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"
+          onsubmit="return confirm('Run the evals? This spends real money, up to the limit you set.')">
+      <label>Spend up to $<input class="field num" type="number" name="max_usd" min="0.1" step="0.5" value="{{ '%.2f'|format([2.0, cases|length * 0.06]|min) }}" style="width:90px"></label>
+      <label style="display:flex;gap:6px;align-items:center"><input class="check" type="checkbox" name="reviewed_only" value="true" {{ "checked" if reviewed }}> reviewed cases only</label>
+      <button class="btn btn-primary" type="submit">{{ icon("play") }} Run evals</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% if history %}
+<section class="plain-card" style="max-width:none">
+  <h2>Results</h2>
+  <table class="eval-table">
+    <thead><tr><th>Run</th><th class="num">Cases</th>
+      {% for m, label in metric_labels %}<th class="num" title="{{ label }}">{{ label }}</th>{% endfor %}
+      <th class="num">$/case</th><th class="num">p50</th><th class="num">p95</th></tr></thead>
+    <tbody>
+    {% for h in history %}
+    <tr><td>{{ h.at[:16]|replace("T", " ") }}{% if h.reviewed_only %} <span class="faint">reviewed</span>{% endif %}</td>
+      <td class="num">{{ h.cases }}</td>
+      {% for m, label in metric_labels %}{% set v = h.accuracy[m] %}<td class="num {{ 'low' if v < 0.7 else '' }}">{{ "%.0f"|format(v * 100) }}%</td>{% endfor %}
+      <td class="num">${{ "%.3f"|format(h.cost_per_case) }}</td><td class="num">{{ h.latency_p50 }}s</td><td class="num">{{ h.latency_p95 }}s</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Each column is the share of cases that passed: type, tech routing and verdict match what you expect; "verdict ±1" allows a neighbouring verdict; "no CTA" means the report ignored comment-for-link funnels; "valid fits" means every project named exists and has a value rating; "projects" means every project you expect was named; "format" checks length and citation clutter.</p>
+</section>
+{% endif %}
+
+<section class="plain-card" style="max-width:none">
+  <h2>Cases</h2>
+  {% if not cases %}
+  <p>No cases yet. <strong>Add new shares as cases</strong> turns each researched share into one, with the agent's current answer as the starting label for you to correct.</p>
+  {% endif %}
+  <ul class="case-list">
+    {% for c in cases %}{% set res = latest.get(c.id) %}
+    <li>
+      <details>
+        <summary>
+          {% if c.reviewed %}<span class="verdict v-yes">{{ icon("check") }} reviewed</span>{% else %}<span class="tag-info">to review</span>{% endif %}
+          <strong>{{ (c.reference_headline or c.inputs.caption or c.id)|nocite }}</strong>
+          {% if res %}
+            {% set fails = res.scores.items()|rejectattr(1)|map(attribute=0)|list %}
+            {% if res.error %}<span class="tag-err">error</span>{% elif fails %}<span class="tag-warn">missed: {{ fails|join(", ") }}</span>{% else %}<span class="verdict v-yes">all passed</span>{% endif %}
+          {% endif %}
+        </summary>
+        <form action="/evals/case/{{ c.id }}" method="post" class="case-form">
+          <label>Type <select class="field" name="action_type">{% for t in types %}<option {{ "selected" if c.expected.action_type == t }}>{{ t }}</option>{% endfor %}</select></label>
+          <label>Tech? <select class="field" name="is_tech"><option value="true" {{ "selected" if c.expected.is_tech }}>yes</option><option value="false" {{ "selected" if not c.expected.is_tech }}>no</option></select></label>
+          <label>Verdict <select class="field" name="verdict">{% for v, l in [("worth_it", "Do it"), ("maybe", "Optional"), ("skip", "Nothing to do")] %}<option value="{{ v }}" {{ "selected" if c.expected.verdict == v }}>{{ l }}</option>{% endfor %}</select></label>
+          <label style="flex:1;min-width:220px">Projects it should fit <input class="field" name="projects" value="{{ c.expected.projects|join(', ') }}" placeholder="comma-separated, or empty"></label>
+          <label style="flex-basis:100%">Notes <input class="field" name="notes" value="{{ c.notes }}" placeholder="why this answer is right"></label>
+          <button class="btn btn-primary" type="submit">Save as reviewed</button>
+        </form>
+        {% if res %}
+        <p class="hint">Last run: {{ res.action_type or "—" }} · {{ "tech" if res.is_tech else "everyday" }} · {{ res.verdict or "—" }} · ${{ "%.3f"|format(res.cost_usd) }} · {{ res.seconds }}s{% if res.error %} · <span style="color:var(--flag)">{{ res.error }}</span>{% endif %}{% if res.report %} · “{{ res.report.headline|nocite }}”{% endif %}</p>
+        {% endif %}
+        <p class="hint">Input: {{ (c.inputs.user_note ~ " " if c.inputs.user_note else "") }}{{ (c.inputs.caption or "")[:160] }} {{ (c.inputs.transcript or "")[:240] }}…</p>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

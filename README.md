@@ -64,6 +64,26 @@ Share → Telegram bot (optional)           ─┴─> intake ─> research lane
 
 Grok and Claude can be switched in for research in Settings.
 
+### Traces, memory and evals
+
+- **Every paid call is traced.** Each attempt (watching, research, project
+  cards) is one row in a run ledger: its model calls, tool calls and searches in
+  order, with timings, tokens and cost. Each report links to its trace
+  (`/runs/<id>`), and the daily cap sums the ledger, so failed attempts and
+  retries count too.
+- **Memory across shares.** Each finished report is embedded once
+  (`gemini-embedding-2`, well under $0.001 an item). Before researching something
+  new, the three most similar past reports are handed to the agent as "things you
+  sent before", so it builds on them instead of repeating itself, and the report
+  links them. **Settings → Memory** backfills older reports.
+- **An eval set from your own history.** **Evals** turns items you've already
+  sent into test cases (the expected type, tech/everyday split, verdict and
+  projects), which you can correct. A run re-researches each case with the
+  current prompts and models and scores type, verdict, project matches, ignored
+  calls to action and report format, so a prompt or model change shows up as a
+  number. Runs are manual, capped (about $0.03–0.05 a case) and kept off the
+  daily cap; cases live only on your machine.
+
 ## Setup
 
 Requirements: Docker Desktop, an iPhone for the Shortcut (or Telegram), and a
@@ -142,6 +162,9 @@ app/
   projects.py        Your projects: scan, cards, secret-safe file reader
   prefetch.py        Free GitHub/page lookups (public addresses only)
   analyze.py         The first-pass analysis schema (topic, summary, type)
+  tracing.py         Run traces and the cost ledger behind the daily cap
+  memory.py          Embeddings + recall of related past reports
+  evals.py           Eval cases, scoring and runs (`python -m app.evals`)
   download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)
   services/dashboard_query.py          The archive's filters and stats
 alembic/             Schema migrations

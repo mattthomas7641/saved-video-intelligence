@@ -198,7 +198,9 @@ They have already watched or read what they sent you. Never tell them whether to
 
 Ignore calls to action completely: "comment X and I'll DM you the link", "link in bio", "follow for part 2", giveaways, newsletters, courses, templates for sale, DM funnels. Don't evaluate them, don't advise for or against them, and don't mention them. If the post names a tool, repo or resource behind such a gate, find it yourself by name instead. Judge only the actual content.
 
-Work from what they sent (transcript, caption, on-screen text, the image itself, or the page), then verify against live sources with your tools. Posts exaggerate, go stale, hide ads and get facts wrong; say so when they do. Be specific to this person (see "About the user"): generic advice is worth little to them."""
+Work from what they sent (transcript, caption, on-screen text, the image itself, or the page), then verify against live sources with your tools. Posts exaggerate, go stale, hide ads and get facts wrong; say so when they do. Be specific to this person (see "About the user"): generic advice is worth little to them.
+
+If "Things you sent before" are listed, build on them: don't repeat advice already given there, say when this adds to, confirms or supersedes one of them, and point out a pattern when there is one (e.g. the third video on the same tool)."""
 
 _TECH_PLAYBOOKS = """This is tech content. Playbooks by type:
 - repo: Find every repo or tool named (search for any not given as owner/name). Call github_repo on each. Judge each on maintenance (last push, archived), traction, license, and above all fit with the user's projects. Rank best fit first, and for the good ones say concretely how they'd use it. Fill `repos`.
@@ -281,6 +283,7 @@ class Findings:
     project_fit: list = field(default_factory=list)
     new_project_idea: str | None = None
     new_project: dict | None = None
+    related: list = field(default_factory=list)  # past reports recalled from memory (pipeline fills this)
     cost_usd: float = 0.0
 
     def to_json(self) -> str:
@@ -288,15 +291,17 @@ class Findings:
             "headline": self.headline, "telegram_text": self.telegram_text,
             "report_markdown": self.report_markdown, "ideas": self.ideas, "links": self.links,
             "place": self.place, "repos": self.repos, "project_fit": self.project_fit,
-            "new_project_idea": self.new_project_idea, "new_project": self.new_project,
+            "new_project_idea": self.new_project_idea, "new_project": self.new_project, "related": self.related,
         })
 
 
 @dataclass
 class Context:
-    """Extra material for the first message: your projects and the free prefetch."""
+    """Extra material for the first message: your projects, the free prefetch, and
+    related things you sent before (app/memory.py)."""
     projects: str = ""
     prefetch: str = ""
+    memory: str = ""
 
 
 def projects_context(cards: list, relevant: list[str]) -> str:
@@ -352,6 +357,8 @@ On-screen text (OCR, noisy): {video.ocr_text or "(none)"}"""]
         parts.append(context.prefetch)
     if context.projects:
         parts.append(context.projects)
+    if context.memory:
+        parts.append(context.memory)
     return "\n\n".join(parts)
 
 
@@ -529,6 +536,10 @@ def load_report(text: str | None) -> dict | None:
                             "verdict": "maybe"}, 0.0)
     except AgentError:
         return None
+    f.related = [{"action_id": int(r["action_id"]), "headline": _text(r.get("headline"))[:200],
+                  "date": _text(r.get("date"))[:20]}
+                 for r in raw.get("related") or []
+                 if isinstance(r, dict) and str(r.get("action_id", "")).isdigit()][:5]
     return json.loads(f.to_json())
 
 

@@ -131,14 +131,22 @@ def local_midnight_utc(tz_name: str | None = None) -> datetime:
     return midnight.astimezone(UTC).replace(tzinfo=None)
 
 
-def spend_since(session: Session, since: datetime) -> float:
+# Deliberate spend that shouldn't eat the daily cap for things you send (still in the ledger).
+UNCAPPED_KINDS = ("eval",)
+
+
+def spend_since(session: Session, since: datetime, capped_only: bool = False) -> float:
     from app.models import Run
 
-    return float(session.exec(select(func.coalesce(func.sum(Run.cost_usd), 0.0)).where(Run.started_at >= since)).one())
+    q = select(func.coalesce(func.sum(Run.cost_usd), 0.0)).where(Run.started_at >= since)
+    if capped_only:
+        q = q.where(Run.kind.not_in(UNCAPPED_KINDS))
+    return float(session.exec(q).one())
 
 
 def spend_today(session: Session) -> float:
-    return spend_since(session, local_midnight_utc())
+    """What counts against the daily cap today (everything except eval runs)."""
+    return spend_since(session, local_midnight_utc(), capped_only=True)
 
 
 def action_cost(session: Session, action_id: int, video_id: int | None = None) -> float:

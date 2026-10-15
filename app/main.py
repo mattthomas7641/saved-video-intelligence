@@ -357,6 +357,51 @@ def runs_page(request: Request, action_id: int, session: Session = Depends(get_d
     })
 
 
+EVAL_METRIC_LABELS = [("ok", "ran"), ("type", "type"), ("tech", "tech"), ("verdict", "verdict"),
+                      ("verdict_within_one", "verdict ±1"), ("ignores_cta", "no CTA"), ("fits_valid", "valid fits"),
+                      ("projects_found", "projects"), ("format_ok", "format")]
+
+
+@app.get("/evals")
+def evals_page(request: Request, msg: str = ""):
+    from app import evals
+
+    cases = evals.load_cases()
+    return templates.TemplateResponse(request, "evals.html", {
+        "cases": cases, "reviewed": sum(1 for c in cases if c.get("reviewed")), "status": evals.status(),
+        "history": evals.runs(10), "latest": {r["id"]: r for r in evals.latest_results()},
+        "metric_labels": EVAL_METRIC_LABELS, "types": list(TYPE_LABELS), "msg": msg,
+    })
+
+
+@app.post("/evals/snapshot")
+def evals_snapshot(session: Session = Depends(get_db)):
+    from app import evals
+
+    added = evals.snapshot(session)
+    return RedirectResponse(f"/evals?msg=Added+{added}+cases.", status_code=303)
+
+
+@app.post("/evals/case/{case_id}")
+def evals_case(case_id: str, action_type: str = Form(""), is_tech: str = Form(""), verdict: str = Form(""),
+               projects: str = Form(""), notes: str = Form("")):
+    from app import evals
+
+    evals.update_case(case_id, action_type=action_type if action_type in TYPE_LABELS else None,
+                      is_tech=is_tech == "true", verdict=verdict if verdict in ("worth_it", "maybe", "skip") else None,
+                      projects=[p.strip() for p in projects.split(",") if p.strip()], notes=notes.strip())
+    return RedirectResponse(f"/evals#{case_id}", status_code=303)
+
+
+@app.post("/evals/run")
+def evals_run(max_usd: str = Form("2"), reviewed_only: bool = Form(False)):
+    from app import evals
+
+    cap = min(_optional_money(max_usd) or 2.0, 10.0)  # a hard ceiling per run, whatever is typed
+    started = evals.start_background(cap, reviewed_only)
+    return RedirectResponse("/evals" if started else "/evals?msg=A+run+is+already+going.", status_code=303)
+
+
 @app.get("/api/quests/status")
 def quests_status(session: Session = Depends(get_db)):
     """What the home page polls while something is in progress: a change in `stamp`
@@ -466,6 +511,17 @@ def settings_project_status(name: str, status: str = Form("")):
     return RedirectResponse("/settings#projects", status_code=303)
 
 
+@app.post("/settings/memory")
+def settings_memory(session: Session = Depends(get_db)):
+    """Embed past reports that aren't in memory yet (a fraction of a cent for dozens)."""
+    from app import memory
+
+    if not memory.enabled():
+        return RedirectResponse("/settings?key=memory_nokey#research", status_code=303)
+    added = memory.backfill(session)
+    return RedirectResponse(f"/settings?key=memory_{added}#research", status_code=303)
+
+
 @app.post("/settings/pause")
 def settings_pause(paused: bool = Form(False)):
     save_action_settings(agent_paused=paused)
@@ -507,8 +563,22 @@ def settings_page(request: Request, key: str = ""):
         "ntfy": get_ntfy_settings(),
         "projects": _projects_for_settings(),
         "spend_days": _spend_days(),
+        "memory_stats": _memory_stats(),
         "project_overrides": get_project_overrides(),
     })
+
+
+def _memory_stats() -> dict:
+    from sqlalchemy import func
+
+    from app.db import get_session
+    from app.models import Memory
+
+    with get_session() as session:
+        remembered = session.exec(select(func.count()).select_from(Memory)).one()
+        reports = session.exec(select(func.count()).select_from(Action).where(Action.result.is_not(None))
+                               .where(Action.verdict.is_not(None))).one()
+    return {"remembered": remembered, "reports": reports}
 
 
 def _spend_days() -> list:

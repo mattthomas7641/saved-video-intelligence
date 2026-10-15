@@ -8,7 +8,7 @@ from alembic import context
 # Importing app.models registers Video/Action on SQLModel.metadata below -
 # needed for autogenerate to see them, even though the names aren't used directly.
 from app.config import DB_PATH
-from app.models import Action, Project, Run, Video  # noqa: F401
+from app.models import Action, Memory, Project, Run, Video  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
