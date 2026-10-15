@@ -14,6 +14,7 @@ from app.config import (
     DEFAULT_WORKERS,
     GROUPS,
     STALE_THRESHOLD_MONTHS,
+    SecretsUnreadable,
     get_action_settings,
     get_agent_settings,
     get_agent_token,
@@ -64,6 +65,14 @@ app = FastAPI(title="Sidequest")
 app.add_middleware(GuardMiddleware)  # no login: refuse other hosts and cross-site writes (app/security.py)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.exception_handler(SecretsUnreadable)
+def _secrets_unreadable(request: Request, exc: SecretsUnreadable):
+    """Every Settings save goes through data/secrets.json; if it's corrupt, say so plainly
+    (and what to do) rather than a bare 500."""
+    logging.getLogger(__name__).error("%s", exc)
+    return JSONResponse(status_code=500, content={"detail": f"Settings couldn't be saved: {exc} Nothing was changed."})
 
 
 def _split_summary(text: str | None) -> tuple[str, str]:
@@ -132,8 +141,11 @@ def _render_markdown(text: str | None) -> str:
 templates.env.filters["markdown"] = _render_markdown
 
 init_db()
-worker.recover_stuck()
-intake.recover_interrupted()
+for _recover in (worker.recover_stuck, intake.recover_interrupted):
+    try:  # tidying after a restart must not stop the app from starting (the home page still shows the items)
+        _recover()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Startup recovery %s failed", _recover.__name__)
 batch.start_poller()
 telegram_bot.start_poller()
 ntfy_intake.start()
@@ -483,8 +495,7 @@ def agent_page(request: Request, session: Session = Depends(get_db), tab: str = 
 
 
 def quests_page(request: Request, session: Session, tab: str, group: str):
-    import json as _json
-
+    from app.agent import load_report
     from app.pipeline import agent_spend_today
 
     rows = session.exec(
@@ -493,12 +504,14 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         .order_by(Action.updated_at.desc())).all()
     items = []
     for a, v in rows:
-        try:
-            report = _json.loads(a.result) if a.result and a.verdict else None
-        except ValueError:
-            report = None
+        # load_report coerces or rejects whatever is stored, so one bad result can't 500 the page.
+        report = load_report(a.result) if a.result and a.verdict else None
+        why = a.error_message
+        if report is None and a.status in (ActionStatus.DRAFTED, ActionStatus.DONE):
+            why = "The saved report can't be read. Tap Retry to research it again."
         g = group_of(v.category) if v.category else "Other"
-        items.append({"action": a, "video": v, "report": report, "group": g, "slug": _GROUP_SLUGS.get(g, "other")})
+        items.append({"action": a, "video": v, "report": report, "why": why, "group": g,
+                      "slug": _GROUP_SLUGS.get(g, "other")})
 
     def bucket(i):
         st = i["action"].status
@@ -521,13 +534,15 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
     parked = lambda a: a.status == ActionStatus.QUEUED and bool(a.error_message)  # noqa: E731
     working = [i for i in shown if not i["report"] and not parked(i["action"])
                and i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)]
+    # A finished item whose stored report is unreadable is stuck too: it gets the Retry button.
     stuck = [i for i in shown if not i["report"] and (parked(i["action"])
-             or i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT))]
+             or i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT, ActionStatus.DRAFTED))]
     reports = [i for i in shown if i["report"]]
     tg = get_telegram_settings()
     return templates.TemplateResponse(request, "agent.html", {
         "tabs": QUEST_TABS, "tab": tab, "tab_counts": tab_counts, "groups": groups, "group": group,
         "working": working, "stuck": stuck, "done": reports, "total": len(items),
+        "type_labels": telegram_bot.TYPE_LABELS,
         "spent_today": agent_spend_today(session), "agent_settings": get_agent_settings(),
         "paused": get_action_settings()["agent_paused"],
         "intake_ready": ntfy_intake.ready() or bool(tg["bot_token"] and tg["chat_id"]),

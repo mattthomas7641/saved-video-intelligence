@@ -20,6 +20,10 @@ from app.throttle import looks_like_throttle, throttle
 log = logging.getLogger("pipeline")
 
 
+class PipelineError(RuntimeError):
+    """A step failed in a way already put into plain words for the owner's card."""
+
+
 def collect_video(session: Session, video: Video, should_stop=lambda: False, transcribe: bool = True) -> None:
     """Download, transcribe and read on-screen text. Leaves the video TRANSCRIBED.
     With `transcribe=False` (Gemini watches the file itself) it only downloads,
@@ -77,7 +81,18 @@ def collect_video(session: Session, video: Video, should_stop=lambda: False, tra
             log.exception("Collect failed for video %s", video.id)
             video.status = Status.ERROR
             video.error_message = message[:500]
+        download_mod.discard_files(video.id)  # half-downloaded .part files, or a file we can't use
+        video.local_video_path = None
         _touch(session, video)
+
+
+def _action_type(value) -> ActionType:
+    """The model's action_type as our enum; anything off the list is OTHER, not a crash."""
+    try:
+        return ActionType(value)
+    except ValueError:
+        log.warning("Unknown action_type %r from analysis; using other", value)
+        return ActionType.OTHER
 
 
 def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.AnalysisResult) -> None:
@@ -88,13 +103,13 @@ def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.A
     if existing:
         if existing.brief is None and existing.action_type == ActionType.OTHER:
             # The placeholder intake creates so a shared item shows up at once: fill it in now.
-            existing.action_type = ActionType(analysis.action_type)
-            existing.brief = analysis.action_brief
+            existing.action_type = _action_type(analysis.action_type)
+            existing.brief = analysis.action_brief or ""
             session.add(existing)
         return
     session.add(Action(
         video_id=video.id,
-        action_type=ActionType(analysis.action_type),
+        action_type=_action_type(analysis.action_type),
         status=ActionStatus.QUEUED,
         brief=analysis.action_brief,
     ))
@@ -174,9 +189,15 @@ def agent_spend_today(session: Session) -> float:
 def _action_for(session: Session, video: Video) -> Action:
     action = session.exec(select(Action).where(Action.video_id == video.id)).first()
     if action:
+        if action.brief is None and action.action_type == ActionType.OTHER:
+            # Analysis ran but didn't flag it actionable: brief the agent from the summary, so
+            # a Retry doesn't pay for the analysis again.
+            action.brief = video.summary or ""
+            session.add(action)
         return action
     # Analysis is told shared videos are always actionable, but don't depend on it.
-    action = Action(video_id=video.id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED, brief=video.summary)
+    action = Action(video_id=video.id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED,
+                    brief=video.summary or "")
     session.add(action)
     session.commit()
     session.refresh(action)
@@ -212,7 +233,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
             transcribe_existing(session, video)
         if video.status != Status.TRANSCRIBED:
             if not (video.tiktok_url or "").startswith("http"):
-                raise RuntimeError(video.error_message or "Couldn't download this video.")
+                raise PipelineError("Couldn't get this ready to analyze. Tap Retry.")
             # Blocked or private (common on Instagram): judge it from the link instead of failing.
             log.warning("Download failed for shared video %s (%s); using the link", video.id, video.error_message)
             download_failed = True
@@ -230,10 +251,18 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     if video.status in (Status.TRANSCRIBED, Status.ANALYZING, Status.SUBMITTED) or (
             video.status == Status.DONE and needs_analysis):
         on_progress("Watching the video…" if provider == "gemini" and video.local_video_path else "Reading it…")
-        analysis_cost = analyze_video(session, video, analyzer)
-        _drop_video_file(session, video)
+        had_file = bool(video.local_video_path)
+        try:
+            analysis_cost = analyze_video(session, video, analyzer)
+        finally:
+            _drop_video_file(session, video)  # whatever happened, the file isn't kept around
+            if video.status != Status.DONE and had_file:
+                video.status = Status.PENDING  # the file is gone: Retry downloads it again (free)
+                _touch(session, video)
         if video.status != Status.DONE:
-            raise RuntimeError(video.error_message or "Analysis failed.")
+            raise PipelineError("Couldn't analyze this (details are in the app log). Tap Retry.")
+    elif video.status == Status.DONE:
+        _drop_video_file(session, video)  # e.g. a restart right after analysis left the file behind
 
     action = _action_for(session, video)
     action.telegram_chat_id = chat_id or action.telegram_chat_id
@@ -253,7 +282,11 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     plan_cost = 0.0
     try:
         on_progress("Looking up links and repos…")
-        found = prefetch_mod.gather(video)
+        try:
+            found = prefetch_mod.gather(video)
+        except Exception as e:  # noqa: BLE001 - free legwork; the agent can look things up itself
+            log.warning("Prefetch failed for video %s: %s", video.id, e)
+            found = {"repos": [], "pages": []}
         # Only tech content is judged against your projects; food, products, fitness etc. get a general review.
         tech = agent_mod.is_tech(action_type, video.category)
         cards = projects_mod.cards(session) if tech else []
@@ -269,8 +302,10 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     except agent_mod.AgentError as e:  # our own, readable messages
         action.status = ActionStatus.FAILED
         action.error_message = str(e)[:500]
-    except analyze_mod.FatalAnalysisError:
-        action.status = ActionStatus.QUEUED
+    except analyze_mod.FatalAnalysisError as e:
+        # Only you can fix this (no key, no credit): park it where the home page shows why.
+        action.status = ActionStatus.NEEDS_INPUT
+        action.error_message = f"{e} Then tap Retry."[:500]
         _touch_action(session, action)
         raise
     except Exception as e:  # noqa: BLE001 - report it on the card and in Telegram, don't kill the lane
