@@ -575,3 +575,5 @@ code.copy { user-select: all; word-break: break-all; }
 .val-weak { background: color-mix(in oklab, var(--t-money) 15%, var(--bg)); color: var(--t-money); }
 .val-none { background: var(--rail); color: var(--ink-3); }
 .r-key .value { margin-left: 4px; }
+
+[hidden] { display: none !important; }  /* .notice etc. set display, which would override the attribute */

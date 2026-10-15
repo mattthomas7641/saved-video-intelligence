@@ -12,10 +12,10 @@ openai==3.28.0
 google-genai==2.29.0
 httpx==0.28.1
 markdown==3.11.1
+tzdata==2026.5  # zoneinfo data for APP_TIMEZONE in the slim image
 python-dotenv==1.2.4
 pydantic-settings==2.6.1
 alembic==1.13.3
-playwright==1.47.0
 
 # dev/test only - not needed at runtime, kept in the same file for a one-command
 # `pip install -r requirements.txt` setup rather than splitting into requirements-dev.txt
