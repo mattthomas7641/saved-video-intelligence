@@ -142,8 +142,13 @@ def ingest_shared_image(data: bytes, filename: str, note: str = "") -> int:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{digest}{suffix}"
     path.write_bytes(data)
+    try:
+        ocr_text = ocr.extract_image_text(str(path))
+    except Exception as e:  # noqa: BLE001 - OCR is a bonus; the model sees the image itself
+        log.warning("OCR failed for shared image %s: %s", path.name, e)
+        ocr_text = ""
     return _upsert(f"image:{digest}", note, downloadable=False, caption="(shared screenshot or photo)",
-                   ocr_text=ocr.extract_image_text(str(path)), image_path=str(path))
+                   ocr_text=ocr_text, image_path=str(path))
 
 
 def _upsert(key: str, note: str, downloadable: bool, caption: str | None = None, ocr_text: str = "",
@@ -229,47 +234,105 @@ def submit(video_id: int, reporter: Reporter, deep: bool = False) -> bool:
         if video_id in _in_flight:
             return False
         _in_flight.add(video_id)
-    _lane.submit(_process, video_id, reporter, deep)
+    # A future nobody waits on swallows its exception; _process handles its own, but
+    # if one still escapes it must at least reach the log.
+    _lane.submit(_process, video_id, reporter, deep).add_done_callback(_log_escaped)
     return True
 
 
+def _log_escaped(future) -> None:
+    if future.exception() is not None:
+        log.error("Research lane task crashed", exc_info=future.exception())
+
+
+def _report(reporter: Reporter, method: str, *args) -> None:
+    """Call reporter.<method>; a failing Telegram/ntfy send must never take the lane down
+    (the card on the home page already says what happened)."""
+    try:
+        getattr(reporter, method)(*args)
+    except Exception:  # noqa: BLE001
+        log.exception("Reporter %s.%s failed", type(reporter).__name__, method)
+
+
 def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
+    """Run one item through pipeline.process_shared_video and report back. Whatever goes
+    wrong, the item's Action ends FAILED or NEEDS_INPUT with a plain-language reason,
+    so it shows under "Couldn't finish" with a Retry button instead of spinning forever."""
     from app.analyze import FatalAnalysisError
     from app.db import get_session
-    from app.models import Video
-    from app.pipeline import process_shared_video
+    from app.models import ActionStatus, Video
+    from app.netutil import user_message
+    from app.pipeline import PipelineError, process_shared_video
 
     try:
         with get_session() as session:
             video = session.get(Video, video_id)
+            if video is None:
+                text = "The item this belonged to was deleted."
+                mark_failed(video_id, text)
+                _report(reporter, "failed", text)
+                return
             try:
-                action = process_shared_video(session, video, reporter.progress, chat_id=reporter.chat_id,
-                                              message_id=reporter.message_id, deep=deep)
+                action = process_shared_video(session, video, lambda t: _report(reporter, "progress", t),
+                                              chat_id=reporter.chat_id, message_id=reporter.message_id, deep=deep)
             except FatalAnalysisError as e:
                 log.warning("Shared item %s stopped: %s", video_id, e)
-                reporter.failed(str(e))
+                session.rollback()
+                mark_failed(video_id, f"{e} Then tap Retry.", ActionStatus.NEEDS_INPUT)
+                _report(reporter, "failed", str(e))
+                return
+            except PipelineError as e:  # already in plain words
+                log.warning("Shared item %s failed: %s", video_id, e)
+                session.rollback()
+                mark_failed(video_id, str(e))
+                _report(reporter, "failed", str(e))
                 return
             except Exception as e:  # noqa: BLE001
-                from app.netutil import user_message
                 log.exception("Shared video %s failed", video_id)
-                reporter.failed(user_message(e, "processing this"))
+                session.rollback()
+                text = user_message(e, "processing this")
+                mark_failed(video_id, text)
+                _report(reporter, "failed", text)
                 return
-            reporter.finished(action, video)
+            _report(reporter, "finished", action, video)
+    except Exception:  # noqa: BLE001 - e.g. the database unreachable: nothing more to do but log
+        log.exception("Shared video %s could not be processed", video_id)
     finally:
         with _in_flight_lock:
             _in_flight.discard(video_id)
 
 
-def rerun(action_id: int, deep: bool = False) -> bool:
+def mark_failed(video_id: int, text: str, status=None) -> None:
+    """Put the video's Action in a visible, retryable state after a failure, in its own
+    session (the lane's may be mid-transaction). An Action the pipeline already settled
+    (a report, or failed with its own reason) is left as it is."""
+    from app.db import get_session
+    from app.models import Action, ActionStatus
+
+    status = status or ActionStatus.FAILED
+    try:
+        with get_session() as session:
+            action = session.exec(select(Action).where(Action.video_id == video_id)).first()
+            if action and action.status in (ActionStatus.QUEUED, ActionStatus.IN_PROGRESS):
+                action.status, action.error_message = status, text[:500]
+                action.updated_at = datetime.utcnow()
+                session.add(action)
+                session.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("Could not record the failure of video %s", video_id)
+
+
+def rerun(action_id: int, deep: bool = False) -> bool | None:
     """Re-run research for one action (dashboard Retry / Research deeper, or the
-    notification's button), reporting through whichever doorway is set up."""
+    notification's button), reporting through whichever doorway is set up.
+    True when queued, False when it's already running, None when there's no such action."""
     from app.db import get_session
     from app.models import Action
 
     with get_session() as session:
         action = session.get(Action, action_id)
         if not action:
-            return False
+            return None
         video_id, chat_id = action.video_id, action.telegram_chat_id
     return submit(video_id, reporter_for(chat_id, deep), deep=deep)
 

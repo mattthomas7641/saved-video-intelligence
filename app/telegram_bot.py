@@ -11,7 +11,6 @@ moves through collect -> analyze -> research, ending with the verdict and a
 short summary. The full report lives on the dashboard's Agent page.
 """
 import html
-import json
 import logging
 import os
 import re
@@ -116,13 +115,13 @@ def reporter_new_message(chat_id: int, text: str) -> intake.Reporter:
 
 def fit_line(report: dict) -> str:
     """'Fits: llm-inference-gateway (worth it, S) - replaces the hand-rolled batcher'"""
-    fits = [f for f in report.get("project_fit") or [] if f.get("fit") != "skip"]
+    fits = [f for f in report.get("project_fit") or [] if isinstance(f, dict) and f.get("fit") != "skip"]
     if fits:
         f = fits[0]
         effort = f", {f['effort']}" if f.get("effort") else ""
         value = f" · {VALUE_LABELS[f['value']]}" if f.get("value") in VALUE_LABELS else ""
-        return (f"Fits: {f['project']} ({FIT_LABELS.get(f.get('fit'), f.get('fit'))}{effort}{value}): "
-                f"{f.get('architecture_impact', '')}")
+        return (f"Fits: {f.get('project', '?')} ({FIT_LABELS.get(f.get('fit'), f.get('fit'))}{effort}{value}): "
+                f"{f.get('architecture_impact') or ''}")
     new = report.get("new_project") or {}
     if new.get("idea"):
         value = f" ({VALUE_LABELS[new['value']]})" if new.get("value") in VALUE_LABELS else ""
@@ -136,9 +135,11 @@ def fit_line(report: dict) -> str:
 
 def format_result(action, video) -> str:
     """The final, edited-in-place status message."""
+    from app.agent import load_report
+
     title = html.escape(video.author and f"@{video.author}" or "Shared link")
-    if action.status.value == "drafted" and action.result:
-        r = json.loads(action.result)
+    r = load_report(action.result) if action.status.value == "drafted" else None
+    if r:
         lines = [f"<b>{html.escape(r.get('headline', ''))}</b>",
                  f"{VERDICT_LABELS.get(action.verdict, '')} · {TYPE_LABELS.get(action.action_type.value, '')}",
                  "", html.escape(r.get("telegram_text", ""))]
@@ -171,8 +172,8 @@ def _links_line(action, video) -> str:
 
 # ---------------- update handling ----------------
 
-def _submit(video_id: int, chat_id: int, message_id: int, deep: bool = False) -> None:
-    intake.submit(video_id, TelegramReporter(chat_id, message_id), deep=deep)
+def _submit(video_id: int, chat_id: int, message_id: int, deep: bool = False) -> bool:
+    return intake.submit(video_id, TelegramReporter(chat_id, message_id), deep=deep)
 
 
 def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
@@ -235,7 +236,8 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
         tg.send(chat_id, "Send me a link, a screenshot or a few words: anything you want looked into.")
         return
     status_id = tg.send(chat_id, "📥 Got it. Queued…", reply_to=msg.get("message_id"))
-    submit(video_id, chat_id, status_id)
+    if submit(video_id, chat_id, status_id) is False:  # shared again while the first run is still going
+        tg.edit(chat_id, status_id, "⏳ Already on it: you sent this a moment ago. The result will land in that message.")
 
 
 def _ingest_photo(sizes: list, tg: TelegramClient, caption: str) -> int | None:
@@ -270,7 +272,8 @@ def _deep(msg: dict, chat_id: int, tg: TelegramClient) -> None:
         tg.send(chat_id, "I couldn't match that message to a report.")
         return
     status_id = tg.send(chat_id, "🔎 Researching deeper…", reply_to=replied)
-    intake.submit(video_id, TelegramReporter(chat_id, status_id, tg), deep=True)
+    if not intake.submit(video_id, TelegramReporter(chat_id, status_id, tg), deep=True):
+        tg.edit(chat_id, status_id, "⏳ Already on it: that one is being researched right now.")
 
 
 def _status_text() -> str:
@@ -308,9 +311,20 @@ def _poll_forever() -> None:
                     handle_update(update, tg)
                 except Exception:  # noqa: BLE001 - one bad message must not stop the bot
                     log.exception("Failed to handle Telegram update %s", update.get("update_id"))
-        except (httpx.HTTPError, RuntimeError, ValueError) as e:
+                    _tell_owner(update, tg)
+        except Exception as e:  # noqa: BLE001 - whatever broke the poll (network, odd payload), keep polling
             log.warning("Telegram poll failed (%s); retrying shortly", e)
             time.sleep(10)
+
+
+def _tell_owner(update: dict, tg: TelegramClient) -> None:
+    """After an update from the paired chat couldn't be handled, say so there (best effort)."""
+    try:
+        chat_id = ((update.get("message") or update.get("channel_post") or {}).get("chat") or {}).get("id")
+        if chat_id is not None and chat_id == get_telegram_settings()["chat_id"]:
+            tg.send(chat_id, "⚠️ Something went wrong taking that in (details are in the app log). Try sending it again.")
+    except Exception:  # noqa: BLE001
+        log.warning("Couldn't report the failure back to Telegram")
 
 
 def start_poller() -> None:
