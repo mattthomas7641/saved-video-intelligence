@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_logo.html" import logo %}
 {% from "_icons.html" import icon %}
 {% block title %}{{ crumbs[-1][0] }} · Sidequest{% endblock %}
 
@@ -53,7 +54,7 @@
 
 <div class="shell" {% if group %}data-territory="{{ group|gslug }}"{% endif %}>
   <aside class="rail">
-    <a href="/" class="brand">Sidequest</a>
+    <a href="/" class="brand">{{ logo() }}<span>Sidequest</span></a>
 
     <nav class="quicklinks" aria-label="Sections">
       <a href="/">{{ icon("inbox") }}<span>Quests</span></a>
