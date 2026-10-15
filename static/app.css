@@ -130,8 +130,10 @@ textarea.field { border-radius: 18px; }
 }
 .brand {
   font: 700 var(--fs-md)/1.1 var(--display); letter-spacing: -0.02em;
-  padding: 0 18px 16px; text-decoration: none; display: block; color: var(--ink);
+  padding: 0 18px 16px; text-decoration: none; display: flex; align-items: center; gap: 9px; color: var(--ink);
 }
+.brand .logo { flex: none; transition: transform .25s var(--ease); }
+.brand:hover .logo { transform: rotate(-6deg) scale(1.06); }
 
 .quicklinks { display: flex; padding: 0 12px; gap: 6px; margin-bottom: 10px; }
 .quicklinks a {
