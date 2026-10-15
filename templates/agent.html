@@ -83,7 +83,7 @@
   {% for item in stuck %}{% set a = item.action %}{% set v = item.video %}
   <div class="work-row stuck" id="a{{ a.id }}">
     <span class="ci">{{ icon("alert") }}</span>
-    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ a.error_message }}</span></span>
+    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why or "Something went wrong. Tap Retry." }}</span></span>
     <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
     <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me">{{ icon("archive") }}</button></form>
   </div>

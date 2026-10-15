@@ -459,28 +459,66 @@ def github_repo(repo: str, http: httpx.Client | None = None) -> dict:
             client.close()
 
 
+MAX_REPORT_CHARS = 60_000   # a runaway report is clipped rather than stored whole
+
+
+def _text(value, limit: int | None = None) -> str:
+    """A model-supplied string, or "" for anything that isn't one (None, a list, a number)."""
+    text = value.strip() if isinstance(value, str) else ""
+    return text[:limit] if limit else text
+
+
+def _dicts(value, key: str | None = None, limit: int = 8) -> list[dict]:
+    """The dict items of a model-supplied list; `key` names a field that must be a non-empty string."""
+    items = value if isinstance(value, list) else []
+    return [x for x in items if isinstance(x, dict) and (key is None or _text(x.get(key)))][:limit]
+
+
 def _findings_from(tool_input: dict, cost: float) -> Findings:
+    """Findings from a record_findings call. The schema is only a suggestion to the model:
+    every field is coerced to the shape the dashboard and notifications render, so a
+    stray type (a URL as a number, a place as a string) can't take the home page down."""
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
     verdict = tool_input.get("verdict") if tool_input.get("verdict") in VERDICTS else "maybe"
-    headline = (tool_input.get("headline") or "").strip()
-    report = (tool_input.get("report_markdown") or "").strip()
+    headline = _text(tool_input.get("headline"))
+    report = _text(tool_input.get("report_markdown"), MAX_REPORT_CHARS)
     if not headline or not report:
         raise AgentError("The agent's report was missing a headline or body.")
+    new_project = tool_input.get("new_project") if isinstance(tool_input.get("new_project"), dict) else {}
     return Findings(
         verdict=verdict, headline=headline[:140],
-        telegram_text=(tool_input.get("telegram_text") or headline).strip()[:900],
+        telegram_text=_text(tool_input.get("telegram_text"), 900) or headline[:900],
         report_markdown=report,
-        ideas=[i for i in (tool_input.get("ideas") or []) if isinstance(i, str)][:5],
-        links=[x for x in (tool_input.get("links") or []) if isinstance(x, dict) and x.get("url")][:8],
-        place=tool_input.get("place") or None,
-        repos=[x for x in (tool_input.get("repos") or []) if isinstance(x, dict)][:MAX_REPOS],
-        project_fit=[x for x in (tool_input.get("project_fit") or [])
-                     if isinstance(x, dict) and x.get("project")][:4],
-        new_project_idea=((tool_input.get("new_project") or {}).get("idea")
-                          or tool_input.get("new_project_idea") or "").strip() or None,
-        new_project=tool_input.get("new_project") if isinstance(tool_input.get("new_project"), dict)
-        and (tool_input.get("new_project") or {}).get("idea") else None,
+        ideas=[i.strip() for i in tool_input.get("ideas") if isinstance(i, str) and i.strip()][:5]
+        if isinstance(tool_input.get("ideas"), list) else [],
+        links=[{"title": _text(x.get("title")) or _text(x.get("url")), "url": _text(x.get("url"))}
+               for x in _dicts(tool_input.get("links"), "url")],
+        place=tool_input.get("place") if isinstance(tool_input.get("place"), dict) and tool_input["place"] else None,
+        repos=[{**x, "name": _text(x.get("name")) or _text(x.get("url")) or "?",
+                "url": _text(x.get("url")) or None} for x in _dicts(tool_input.get("repos"), None, MAX_REPOS)],
+        project_fit=_dicts(tool_input.get("project_fit"), "project", 4),
+        new_project_idea=_text(new_project.get("idea")) or _text(tool_input.get("new_project_idea")) or None,
+        new_project=new_project if _text(new_project.get("idea")) else None,
         cost_usd=round(cost, 4),
     )
+
+
+def load_report(text: str | None) -> dict | None:
+    """A stored Action.result as the dict the home page, Telegram and ntfy render, or None
+    when it's missing, corrupted, or not a report (so callers show the item as stuck instead
+    of raising). Same coercions as _findings_from, for results saved before them."""
+    try:
+        raw = json.loads(text) if text else None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw, dict) or not _text(raw.get("headline")):
+        return None
+    try:
+        f = _findings_from({**raw, "report_markdown": _text(raw.get("report_markdown")) or "(no report body)",
+                            "verdict": "maybe"}, 0.0)
+    except AgentError:
+        return None
+    return json.loads(f.to_json())
 
 
 def run(video, action_type: str, brief: str | None, budget_usd: float, on_progress=lambda text: None,
