@@ -5,7 +5,7 @@ Send it anything you come across. It does the follow-up and tells you if it's wo
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
 
 Send it anything you come across — a TikTok, an Instagram Reel, a YouTube Short,
-a link or a screenshot — and a research agent (about $0.01–0.03 an item) does the
+a link or a screenshot — and a research agent (about $0.03–0.06 an item) does the
 follow-up within minutes and puts a clear next step on your **To do** list, so
 you actually act on it instead of it sitting in your saves.
 
@@ -21,318 +21,131 @@ you actually act on it instead of it sitting in your saves.
   notification and stays on the To do list with its next step (try, build, buy,
   go or skip) until you mark it done or "not for me". See
   **Send to Sidequest → research agent**, below.
-- **Bonus: your whole Saved list.** The same pipeline can transcribe, OCR,
-  categorize and summarize a 7,000-video TikTok Saved list, score what's worth
-  rewatching, and flag promo codes or dated offers that may be stale.
+- **The archive.** The ~450 older TikTok saves analyzed before Sidequest stay
+  browsable under **Archive** (topics, "worth rewatching", promo codes that may
+  have expired).
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline/data-model diagrams
-and the reasoning behind the bigger design decisions (separate `Action`
-table, the Batch API, Telegram long-polling, the in-app research loop, scoped
-bearer auth).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline and data-model diagrams
+and the reasoning behind the bigger design decisions.
 
-Runs entirely on your own machine (or your own server). Videos come in from
-the Send to Sidequest Shortcut (or a Telegram bot), from your own official TikTok data export (ToS-compliant,
-but manual — see **How it works**), or from an optional inbox sync on a
-second, dedicated TikTok account (see **Daily agent**, below — off by
-default, and your real account's session is never automated).
-
-**This is a self-hosted, single-user app, by design.** There's no central
-service you sign up for — you (or anyone else who wants this) run your own
-private copy, against your own TikTok export, with your own Anthropic API
-key. That keeps it cheap (a few dollars in API usage for a few hundred
-videos), keeps your data yours, and avoids the much bigger legal/ToS exposure
-a centralized service that downloads *other people's* TikTok content on their
-behalf would carry. If you want to host it somewhere other than your own
-Mac, see **Deploy your own copy** below.
+**Self-hosted and single-user by design**: your own copy, your own API key, your
+data on your own machine. No central service downloads anyone else's content.
 
 ## How it works
 
-1. **Import** — you request your TikTok data export and upload the JSON file.
-2. **Download** — `yt-dlp` fetches each saved video + its caption/thumbnail.
-3. **Transcribe** — local Whisper (`faster-whisper`) transcribes the audio. Free, runs on-device.
-4. **OCR** — a few frames are sampled and OCR'd to catch on-screen text (promo codes, overlays) speech misses.
-5. **Analyze** — Claude reads the transcript/caption/OCR text and returns a category, summary, tags, a 1-5 "worth rewatching" score, and flags for promo codes / dated offers / "link in bio".
-6. **Relevance check** — anything with a promo code or dated offer, saved more than a few months ago, gets flagged "⚠️ verify before use". This is a heuristic, not a live check — it won't confirm the code still works, just warns you to check.
-
-## One-time setup
-
-### 1. Install system dependencies (Homebrew)
-
-If you don't have Homebrew installed, install it first:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh && bash /tmp/brew-install.sh
+```
+Share → Send to Sidequest (iOS Shortcut)  ─┐
+Share → Telegram bot (optional)           ─┴─> intake ─> research lane (2 at a time)
+   download (yt-dlp) ─> Gemini watches it (audio + frames) ─> free prefetch (GitHub, linked pages)
+   ─> tech or everyday? ─> research loop (Google Search/Maps + your project files, tech only)
+   ─> report on the home page + a phone notification
 ```
 
-This will ask for your Mac password and print a couple of `export PATH=...`
-lines at the end — run those (or open a new terminal) before continuing.
+1. **Send anything** from a share sheet: TikTok, Instagram Reels, YouTube, X,
+   Safari, Photos or a screenshot. Video links are downloaded; if a site blocks
+   the download, the report says so and judges the link instead. Screenshots are
+   OCR'd and shown to the model; links and text are read as they are. Calls to
+   action ("comment X and I'll DM you", link in bio, courses) are ignored.
+2. **Gemini watches it** (`gemini-3.8-flash`): one call takes in audio and frames,
+   so it reads code, menus and prices on screen, and saves a transcript and the
+   on-screen text. Measured: about $0.009–0.015 per video.
+3. **The research loop** combines Google Search and Maps (free up to 5,000
+   grounded requests a month on paid Gemini 3 models) with the app's own tools:
+   live GitHub lookups, reading your project files (tech content only) and filing
+   the report. It works from the saved text, so the video is paid for once.
+   Measured: about $0.025–0.05 per item. A daily cap (default $3) stops it.
+4. **Tech content** is judged against your projects: where it would plug in, what
+   it changes in the architecture, effort, and whether it's worth doing for fun,
+   personal use + resume, or only a weak resume line. **Everyday content** (food,
+   products, fitness, money, travel) gets a practical review instead: real prices,
+   red flags, alternatives, and the next step. It never touches your projects.
+5. **Act on it.** The home page sorts results by topic into **To do**, **Nothing
+   to do** (looked into, nothing to act on), **Done** and **Not for me**.
 
-Then install `ffmpeg` (video frame extraction, audio handling) and
-`tesseract` (OCR):
+Grok and Claude can be switched in for research in Settings.
 
-```bash
-brew install ffmpeg tesseract
-```
+## Setup
 
-### 2. Python environment
-
-From this project folder:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. Add your Anthropic API key
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and paste your key from https://console.anthropic.com/ into
-`ANTHROPIC_API_KEY=`. Don't share this file or commit it — it's already in
-`.gitignore`.
-
-### 4. Get your TikTok data export
-
-In the TikTok app: **Profile → ☰ → Settings and privacy → Account → Download
-your data**, request the **JSON** format. TikTok emails/notifies you when
-it's ready (can take a few minutes to a few days). Download and unzip it.
-
-## Running it
+Requirements: Docker Desktop, an iPhone for the Shortcut (or Telegram), and a
+[Gemini API key](https://aistudio.google.com/apikey) **with billing on** (video
+input and Google Search aren't on the free tier).
 
 ```bash
-source .venv/bin/activate
-python run.py
+cp .env.example .env        # optional: model and timezone overrides
+docker compose up -d --build
 ```
 
-This opens `http://127.0.0.1:8787` in your browser. First run will walk you
-through uploading your export, then click **Process saved videos** on the
-dashboard to start the pipeline. It processes one video at a time in the
-background — you can keep using the dashboard while it runs, and it resumes
-where it left off if you stop and restart the app.
+Open `http://127.0.0.1:8787/settings`, then:
 
-## Send to Sidequest → research agent
+1. **Research agent:** paste the Gemini key, fill in **About me** (what you're
+   building, where you live: it's what makes "useful for you" mean something),
+   and list ideas you haven't started yet.
+2. **Send to Sidequest:** click **Create my private channel** and follow the steps
+   shown (subscribe in the free ntfy app, build the 2-minute Shortcut).
+3. **Your projects:** found in `~/Projects` (`PROJECTS_DIR`), mounted read-only.
+   Mark each one active, planned or ignored. Project folders that are symlinks to
+   elsewhere need their targets mounted too: list them in a git-ignored
+   `docker-compose.override.yml`.
 
-From anywhere with a share sheet: **Share → Send to Sidequest**. That covers TikTok,
-Instagram, YouTube, X, Safari, Photos, or a fresh screenshot.
-- Video links are downloaded and transcribed. If a download is blocked, the
-  agent judges it from the link instead.
-- Screenshots and photos are OCR'd and shown to the model.
-- Articles, product pages and plain text are read as they are.
+To use it from your phone, put the Mac and phone on one
+[Tailscale](https://tailscale.com) network, run `tailscale serve --bg 8787`, and
+set `PUBLIC_BASE_URL` to the `https://….ts.net` address so notification links open
+the report.
 
-Within a few minutes a research agent has looked into it and sent the answer to
-your phone as a notification. The full report lands on the dashboard's
-**Agent** page.
+## Security model
 
-**Tech content** (code, AI, dev tools, repos) is judged against your own projects.
-**Everyday content** (food, products, fitness, money, travel) gets a different review:
-- whether it's worth it for you
-- real prices and costs
-- red flags such as paid promotions
-- better alternatives
-- the practical next step
+The app has no login: it only listens on `127.0.0.1` and assumes you are the one
+using it. Things that could still reach it are handled explicitly:
 
-It never touches your projects.
+- **Other websites in your browser** (CSRF, DNS rebinding): only our own Host is
+  served, cross-site writes are refused, and a CSP blocks third-party images and
+  framing (`app/security.py`).
+- **Hostile content in what you send**: links found in videos are fetched only if
+  they resolve to public addresses (re-checked on every redirect); reports can't
+  load images (a prompt-injection exfiltration route); project files the agent
+  reads go through a deny-list (no `.env`, `secrets/`, `data/`, keys, binaries,
+  symlink escapes) and have credential-shaped strings scrubbed.
+- **The relay**: ntfy topic names are long and random, every inbound message needs
+  a secret token, and "Research deeper" buttons carry a per-action signature, not
+  the token. Telegram answers one paired chat; pairing codes expire in 10 minutes.
+- **Secrets** live in `data/secrets.json` (0600, atomic writes, never overwritten
+  if unreadable) and never appear in logs or error messages.
+- **Dependencies** are pinned; `pip-audit` reports no known vulnerabilities.
 
-- **Repo/tool videos** ("10 GitHub repos for building an OS"): every repo is
-  checked against the live GitHub API (stars, last push, license, README).
-- **AI / news videos**: traced to the primary source, with X search for
-  breaking news; says what's actually new and what the video overstated.
-- **Food spots / places**: address, hours, which days to go, price, how to book,
-  and whether it's still open.
-- **Skills, projects, jobs**: same as before (jobs are research-only; nothing
-  is ever submitted).
-- **Products, recipes, fitness, money, travel**: real price and cheapest
-  source, whether the claim holds up, risks and red flags, what to do next.
-- **Project fit, for tech content**: for each of your projects (active or
-  planned) it could matter to, whether it's worth adding, where exactly it
-  plugs in, and what it does to that project's architecture: what it replaces,
-  simplifies, or makes faster or cheaper. It opens your project files to back
-  that up, and suggests a new project when something fits none of them.
-
-**How it works (~$0.01–0.03 per item):**
-
-1. **Free first:** the app downloads the video on your machine, and looks up any
-   GitHub repos and links in it.
-2. **Gemini watches it.** The downloaded file goes to Gemini (`gemini-3.8-flash`),
-   which takes in the audio and the frames together, so there's no Whisper/OCR
-   step and it reads what's on screen (code, menus, prices). This one call fills
-   the library's analysis and saves a transcript and the on-screen text.
-3. **Gemini researches it.** A tool loop combines Google Search and Google Maps
-   (free up to 5,000 grounded requests a month on paid Gemini 3 models) with the
-   app's own tools: GitHub lookups, reading your project files (tech only), and
-   filing the report. It works from the saved text, so the video is paid for once.
-
-Bulk analysis of the export backlog stays on Claude's half-price Batch API, and
-research can be switched to Grok or Claude in Settings.
-
-**Setup (about 5 minutes, all in Settings):**
-
-1. **Research agent:** paste a **Gemini API key** from
-   [aistudio.google.com](https://aistudio.google.com/apikey) with billing turned
-   on (video input isn't on the free tier). Fill in **About me**, and list any
-   ideas you haven't started yet.
-2. **Send to Sidequest:** click **Create my private channel**, then follow the steps
-   shown:
-   - subscribe to your results channel in the free ntfy iPhone app
-   - build the 2-step "Send to Sidequest" Shortcut (Get Contents of URL, with the
-     values shown)
-3. **Your projects:** found automatically in `~/Projects` (`PROJECTS_DIR`).
-   Mark each one active, planned or ignored.
-
-**How it's wired:**
-
-- **Delivery:** the Shortcut posts to a private ntfy.sh topic, which this app
-  streams. Like Telegram long-polling, there's no tunnel and nothing on your
-  machine is exposed. Topic names are long and random, and every message must
-  also carry a secret token.
-- **Your projects:** read through a secret-safe reader that refuses `.env`
-  files, `secrets/`, `data/`, databases, keys, binaries, and any path that
-  resolves outside the project. In Docker they're mounted read-only.
-- **Telegram** still works as an optional second doorway (Settings → Telegram).
-
-## Daily agent (optional, not yet scheduled)
-
-Beyond summarizing, the app can detect when a saved video points at something
-to actually *do* — a skill/technique to adopt, a project to build, or a job
-to apply to — and queue it as an `Action`. A separately-scheduled daily
-routine can then pick up that queue and do real work: draft-PR a built
-version of a project idea, or draft a tailored resume/cover letter for a job
-lead. **Submitting a real job application is never automated** — that step
-is always yours, by design, not just by default.
-
-This ships in two parts, deliberately not turned all the way on yet:
-
-- **Built and working now**: action detection (part of the normal analysis
-  step, no extra cost), the Ideas (`/actions`) and Jobs (`/jobs`) pages, and
-  the authenticated `/api/*` routes a future scheduled agent will call.
-- **Built but needs your one-time setup**: `app/scraper.py` reads the inbox
-  of a **second, dedicated TikTok account** — not your real one. If that bot
-  account ever gets rate-limited or flagged, your real profile and Saved
-  list are completely unaffected, since it's never the one being automated.
-  1. Create a new TikTok account for this (it only needs to receive DMs; no
-     public presence needed). Set its message privacy to accept DMs from
-     "Everyone," and note its handle.
-  2. In this app's Settings page, enter **your own real handle** as the
-     trusted sender — the bot account only acts on messages from that
-     handle, everything else is ignored.
-  3. Log the bot account into the scraper once, interactively:
-     ```bash
-     source .venv/bin/activate
-     python -m app.scraper login
-     ```
-     This opens a real, visible browser — log the **bot account** in there
-     yourself (this app never sees or handles the credentials), then close
-     the window. The session saves to `data/tiktok_auth_state.json`
-     (gitignored).
-  4. From your real account, send a saved video to the bot account as a DM.
-     Run `python -m app.scraper` to confirm it finds the video; if it raises
-     `SelectorMismatch`, TikTok's markup didn't match what the script
-     expects — see the DOM/network notes in `app/scraper.py`'s docstring.
-- **Not yet done**: actually registering a daily schedule. That's a
-  deliberate, separate step — only worth doing once you've confirmed the
-  login session survives unattended across a real day's gap, and reviewed
-  one full manual dry run by hand.
-
-Settings has toggles to disable skill/project/job detection individually, a
-pause switch for the whole agent, and where to paste a base resume for job
-tailoring. Two different costs are involved once this runs for real: the
-app's own Anthropic key (for detection, already spend-capped) and whatever
-the daily agent session itself spends doing the actual drafting/building.
-
-## Analyzing thousands of videos
-
-Open **Analyze all** in the top bar. The work is split so the slow part is free:
-
-1. **Collect** (free, on your Mac): download, transcribe and read on-screen text, several videos at once (default 4). Roughly 12 seconds of work per video, so about 6 hours for 7,000 videos at 4 at a time. It backs off automatically if TikTok pushes back.
-2. **Analyze** (uses Claude credit): either the **Batch API** (half price, results usually within an hour or two) or **live**. Set a spending cap; the newest saves are analyzed first, so a capped run covers what you saved most recently.
-
-Measured cost per video with the default Haiku model: about $0.0027 live, $0.0014 via batch. Everything is saved as it goes, so you can stop and resume at any time. To keep a Mac awake for a long run: `caffeinate -dims`.
-
-## Notes on cost/time
-
-- Transcription runs locally — free, but CPU-bound. Expect roughly
-  real-time-ish processing per video with the default `base` Whisper model
-  (a 30s video takes roughly 10-30s to transcribe on a typical Mac).
-- Claude analysis is the only thing that costs money, and it's cheap — a
-  short transcript + caption in, small JSON out, using Haiku by default.
-  A few hundred videos should cost low single-digit dollars.
-- Downloaded video files are deleted after processing by default (keeps
-  disk usage small); set `DELETE_VIDEO_AFTER_PROCESS=false` in `.env` if you
-  want to keep them.
-
-## Deploy your own copy
-
-Prefer not to install Homebrew/Python locally? Use Docker — it bundles
-ffmpeg and tesseract for you.
-
-```bash
-cp .env.example .env   # add your ANTHROPIC_API_KEY
-docker compose up --build
-```
-
-Then open `http://localhost:8787`.
-
-### Host it on a server instead of your Mac
-
-The Docker image runs anywhere Docker does — a spare machine, a VPS, or a
-PaaS like Render or Railway. One-click option for Render:
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mattthomas7641/saved-video-intelligence)
-
-It'll ask for your `ANTHROPIC_API_KEY` during setup. A couple of things to
-know before you do this:
-
-- **This app has no login screen.** Anyone with the URL can use it and see
-  your saved videos. If you deploy it somewhere public, put it behind your
-  host's access control / a basic-auth proxy, or keep it on a private
-  network.
-- **Whisper transcription is CPU-heavy.** Free hosting tiers will be slow or
-  may time out on longer videos — a small paid instance handles it fine.
-- Processing still downloads each video from TikTok server-side, so it
-  should only be used against **your own** export — not repurposed into a
-  shared service that downloads other users' TikTok content, which is a much
-  higher-risk use of `yt-dlp` against TikTok's terms.
+Hosting it publicly would additionally need authentication, secrets from the
+environment, HTTPS and project cards built from GitHub instead of local folders.
 
 ## Testing
 
 ```bash
-source .venv/bin/activate
-pytest                 # runs against an isolated temp DB, never data/db.sqlite3
-ruff check .
+.venv/bin/python -m pytest      # isolated temp DB and secrets, never touches data/
+.venv/bin/ruff check .
+.venv/bin/pip-audit -r requirements.txt
 ```
 
-Each test gets a fresh, freshly-migrated schema (`tests/conftest.py`) and
-isolated `secrets.json`, via the same `SCANNER_DATA_DIR` override the app
-itself uses. The Anthropic API is never called live in tests —
-`app/analyze.py`'s classification is tested against a mocked client
-(`unittest.mock.patch` on `messages.create`, returning a canned `tool_use`
-block), so the suite runs free and offline. CI (`.github/workflows/ci.yml`)
-runs this plus a Docker-build check on every push.
+No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
+faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
+CI runs lint, tests and a Docker build on every push.
 
 ## Project layout
 
 ```
 app/
-  main.py          FastAPI routes (thin HTTP glue; logic lives below)
-  schemas.py       Pydantic request/response models for the /api/* routes
-  db.py            Engine + get_db() dependency; schema managed by Alembic
-  models.py        Video + Action tables (SQLModel)
-  services/
-    dashboard_query.py  Query/filter/stats logic for /dashboard
-  ingest.py        Parses the TikTok export
-  scraper.py       Bot-account inbox reader (daily sync)
-  download.py      yt-dlp wrapper
-  transcribe.py    faster-whisper wrapper
-  ocr.py           ffmpeg frame sampling + tesseract OCR
-  analyze.py       Claude categorization/summarization + action detection
-  relevance.py     Staleness heuristic
-  pipeline.py      Orchestrates one video through all steps
-  worker.py        Background thread that processes the pending queue
-alembic/           Schema migrations (replaces hand-rolled ALTER TABLE)
-templates/         Jinja2 pages (dashboard, video detail, onboarding, settings, actions, jobs)
-tests/             pytest suite + fixtures
-data/              SQLite DB + thumbnails (gitignored)
+  main.py            FastAPI routes: home (sidequests), archive, video page, settings
+  security.py        Host/cross-site guard and security headers
+  intake.py          Shared intake + research lane (both doorways)
+  ntfy_intake.py     "Send to Sidequest" Shortcut doorway (ntfy relay) + notifications
+  telegram_bot.py    Optional Telegram doorway
+  pipeline.py        One shared item: download -> watch -> research -> result
+  gemini_client.py   Gemini: watch + research loop (default provider)
+  xai_client.py      Grok provider;  agent.py: shared prompts, tools, Claude loop
+  projects.py        Your projects: scan, cards, secret-safe file reader
+  prefetch.py        Free GitHub/page lookups (public addresses only)
+  analyze.py         The first-pass analysis schema (topic, summary, type)
+  download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)
+  services/dashboard_query.py          The archive's filters and stats
+alembic/             Schema migrations
+templates/, static/  Jinja2 pages and CSS (no build step)
+tests/               pytest suite
+data/                SQLite DB, thumbnails, secrets (git-ignored)
 ```
