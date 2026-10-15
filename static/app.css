@@ -577,3 +577,15 @@ code.copy { user-select: all; word-break: break-all; }
 .r-key .value { margin-left: 4px; }
 
 [hidden] { display: none !important; }  /* .notice etc. set display, which would override the attribute */
+
+/* ---------- Trace page ---------- */
+.trace + .trace { margin-top: 12px; }
+.trace-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.steps-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--fs-sm); }
+.steps-list li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 6px 0; border-top: 1.5px solid var(--line); }
+.steps-list li:first-child { border-top: 0; }
+.steps-list li .icon { color: var(--ink-3); }
+.steps-list li.bad { color: var(--flag); }
+.spend-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: 8px; }
+.spend-table td { padding: 5px 0; border-top: 1.5px solid var(--line); }
+.spend-table td.num { text-align: right; }

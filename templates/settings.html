@@ -83,6 +83,16 @@
     <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
   </form>
   {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  {% if spend_days %}
+  <details style="margin-top:14px">
+    <summary class="settings-summary"><strong>Spending, last 14 days</strong> <span class="hint" style="margin:0">${{ "%.2f"|format(spend_days|sum(attribute=1)) }} total</span></summary>
+    <table class="spend-table">
+      {% for day, dollars, runs in spend_days %}
+      <tr><td>{{ day }}</td><td class="num">{{ runs }} run{{ "" if runs == 1 else "s" }}</td><td class="num">${{ "%.2f"|format(dollars) }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  {% endif %}
   <form action="/settings/pause" method="post" style="margin-top:14px">
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)">
       <input class="check" type="checkbox" name="paused" value="true" {{ "checked" if action_settings.agent_paused }} onchange="this.form.submit()">

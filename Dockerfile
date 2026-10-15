@@ -1,6 +1,4 @@
-# Docker Hub's official python image, pulled through AWS's public mirror: Docker Hub
-# rate-limits shared CI runners (a 429 on this pull once failed the main-branch build).
-FROM public.ecr.aws/docker/library/python:3.11-slim
+FROM python:3.11-slim
 
 # ffmpeg (video handling) + tesseract (OCR for screenshots) so nothing needs
 # installing by hand.

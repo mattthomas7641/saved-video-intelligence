@@ -5,12 +5,12 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app import agent, gemini_client, pipeline, prefetch
+from app import agent, gemini_client, pipeline, prefetch, tracing
 from app import telegram_bot as tb
 from app.analyze import AnalysisResult
 from app.config import save_action_settings, save_agent_settings
 from app.main import app
-from app.models import Action, ActionStatus, ActionType, Status, Video
+from app.models import Action, ActionStatus, ActionType, Run, Status, Video
 
 ANALYSIS = {"category": "Recipe / Cooking", "summary": "A cheesesteak spot in South Philly.", "tags": [],
             "worth_rewatching_score": 4, "worth_rewatching_reason": "x", "has_promo_code": False,
@@ -45,6 +45,7 @@ def no_network_prefetch(monkeypatch):
 def stub_analysis(monkeypatch):
     """Gemini is the default analyzer for shared items; Claude must never be called."""
     def grok(video):
+        tracing.model_call("gemini-3.8-flash", 0.003)  # what a real call records in the run ledger
         result = AnalysisResult(**ANALYSIS)
         result.cost_usd = 0.003
         return result
@@ -56,6 +57,7 @@ def test_shared_video_is_analyzed_routed_and_researched(session, transcribed, st
     seen = {}
     def fake_run(video, action_type, brief, budget, on_progress, **kw):
         seen.update(type=action_type, brief=brief, budget=budget, **kw)
+        tracing.model_call("gemini-3.8-flash", 0.21)
         return _findings()
     monkeypatch.setattr(agent, "run", fake_run)
     progress = []
@@ -73,12 +75,12 @@ def test_budget_passed_to_agent_subtracts_todays_spend(session, transcribed, stu
     other = Video(tiktok_url="https://www.tiktok.com/@b/video/1", status=Status.DONE)
     session.add(other)
     session.commit()
-    session.add(Action(video_id=other.id, action_type=ActionType.REPO, cost_usd=0.5))
+    session.add(Run(video_id=other.id, kind="research", cost_usd=0.5))  # spent earlier today
     session.commit()
     budgets = []
     monkeypatch.setattr(agent, "run", lambda v, t, b, budget, on_progress, **kw: budgets.append(budget) or _findings())
     pipeline.process_shared_video(session, transcribed)
-    assert budgets == [pytest.approx(1.5 - 0.003)]  # cap - today's spend - this video's analysis
+    assert budgets == [pytest.approx(1.5 - 0.003)]  # cap - today's spend (incl. this video's analysis)
 
 
 def test_cap_reached_leaves_action_needing_input(session, transcribed, stub_analysis, monkeypatch):
