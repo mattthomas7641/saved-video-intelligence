@@ -92,19 +92,30 @@ def safe_read(root: Path, rel_path: str, max_chars: int = 12_000) -> str:
 
 
 def file_tree(root: Path, limit: int = TREE_LIMIT) -> list[str]:
-    """Readable files, two levels deep, skipping anything safe_read would refuse."""
+    """Readable files, two levels deep, skipping anything safe_read would refuse.
+    Walks only those two levels (never descends into .venv, node_modules, data...)."""
     root = root.resolve()
     out: list[str] = []
-    for path in sorted(root.rglob("*")):
-        rel = path.relative_to(root)
-        if len(rel.parts) > 2 or is_denied(rel) or any(p.startswith(".") for p in rel.parts):
-            continue
-        if path.is_symlink() and not path.resolve().is_relative_to(root):
-            continue
-        out.append(f"{rel}/" if path.is_dir() else str(rel))
-        if len(out) >= limit:
-            out.append("…")
-            break
+
+    def visit(folder: Path, depth: int) -> bool:
+        try:
+            entries = sorted(folder.iterdir())
+        except OSError:
+            return True
+        for path in entries:
+            rel = path.relative_to(root)
+            if is_denied(rel) or (path.is_symlink() and not path.resolve().is_relative_to(root)):
+                continue
+            is_dir = path.is_dir()
+            out.append(f"{rel}/" if is_dir else str(rel))
+            if len(out) >= limit:
+                out.append("…")
+                return False
+            if is_dir and depth < 2 and not visit(path, depth + 1):
+                return False
+        return True
+
+    visit(root, 1)
     return out
 
 
@@ -270,9 +281,25 @@ def read_project_file(project: str, path: str) -> dict:
     if project.strip() in get_project_overrides() and get_project_overrides()[project.strip()] == "ignore":
         return {"error": f"{project} is excluded in Settings."}
     try:
-        return {"project": project, "path": path, "content": safe_read(root, path)}
+        content = safe_read(root, path)
     except Denied as e:
         return {"error": str(e)}
+    log.info("Agent read %s/%s", project.strip(), path)
+    return {"project": project, "path": path, "content": scrub_secrets(content)}
+
+
+# Credential shapes that could sit in an innocently-named file (config.yaml, settings.py...).
+_SECRET_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+    r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{30,}|sk-(?:ant-|or-|proj-)?[A-Za-z0-9_\-]{20,}|xai-[A-Za-z0-9]{20,}"
+    r"|gh[pousr]_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|[0-9]{8,10}:AA[A-Za-z0-9_\-]{30,}"
+    r"|(?i:(?:api[_-]?key|secret|token|password)\s*[:=]\s*)[\"']?[A-Za-z0-9_\-/+=.]{16,}")
+
+
+def scrub_secrets(text: str) -> str:
+    """Second line of defence after the deny-list: anything credential-shaped in a file
+    the agent reads is replaced before it can reach the model (or a report)."""
+    return _SECRET_RE.sub("[REDACTED]", text)
 
 
 # ---------------- background rescans ----------------

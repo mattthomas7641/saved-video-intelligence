@@ -156,10 +156,14 @@
   {% if key_status == "tg_saved" %}<p style="margin-top:10px;color:var(--family)">Token saved.</p>{% endif %}
 
   {% if telegram.bot_token and not telegram.chat_id %}
+  {% if telegram.pairing_code %}
   <div class="notice" style="margin:14px 0 0">{{ icon("key") }}<span>
     Open {% if telegram.bot_username %}<a href="https://t.me/{{ telegram.bot_username }}" target="_blank" rel="noopener">@{{ telegram.bot_username }}</a>{% else %}your bot{% endif %}
-    and send <code>/start {{ telegram.pairing_code }}</code>. Only that chat will be able to use it. Refresh this page after.
+    and send <code>/start {{ telegram.pairing_code }}</code> within 10 minutes. Only that chat will be able to use it. Refresh this page after.
   </span></div>
+  {% else %}
+  <form action="/settings/telegram/pair" method="post" style="margin-top:14px"><button class="btn" type="submit">{{ icon("key") }} Get a pairing code</button></form>
+  {% endif %}
   {% endif %}
   {% if telegram.chat_id %}
   <p style="margin-top:14px">From TikTok: <strong>Share → Telegram → {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}your bot{% endif %}</strong>. Anything you type with the link becomes a note the agent reads, like “useful for my OS project?”. In the chat, <code>/status</code>, <code>/pause</code> and <code>/resume</code> also work.</p>

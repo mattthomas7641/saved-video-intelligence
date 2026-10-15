@@ -16,6 +16,8 @@ Two deliberately separate mechanisms, not one:
 import json
 import os
 import secrets
+import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -70,18 +72,51 @@ RESUME_PATH = RESUME_DIR / "base_resume.md"
 RESUME_PROFILE_PATH = RESUME_DIR / "profile.json"
 
 
-def _load_secrets() -> dict:
+class SecretsUnreadable(RuntimeError):
+    """data/secrets.json exists but can't be parsed: refuse to overwrite it."""
+
+
+_secrets_lock = threading.RLock()
+
+
+def _read_secrets() -> dict:
+    """Strict read: {} only when the file doesn't exist yet."""
     try:
-        return json.loads(SECRETS_PATH.read_text())
-    except (OSError, ValueError):
+        text = SECRETS_PATH.read_text()
+    except FileNotFoundError:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise SecretsUnreadable(f"{SECRETS_PATH} is not valid JSON; fix or remove it.") from e
+    if not isinstance(data, dict):
+        raise SecretsUnreadable(f"{SECRETS_PATH} is not a JSON object.")
+    return data
+
+
+def _load_secrets() -> dict:
+    """Lenient read for getters: an unreadable file reads as empty (settings show as
+    unset) but is never overwritten - _save_secret refuses until it's fixed."""
+    try:
+        return _read_secrets()
+    except (SecretsUnreadable, OSError):
         return {}
 
 
 def _save_secret(key: str, value) -> None:
-    data = _load_secrets()
-    data[key] = value
-    SECRETS_PATH.write_text(json.dumps(data))
-    os.chmod(SECRETS_PATH, 0o600)
+    """Locked read-modify-write, written to a 0600 temp file and atomically swapped in,
+    so concurrent saves (the ntfy thread, Settings forms) can't lose each other's
+    changes and a crash mid-write can't leave a truncated file behind."""
+    with _secrets_lock:
+        data = _read_secrets()  # raises rather than silently replacing an unreadable file
+        data[key] = value
+        tmp = SECRETS_PATH.with_name(f".{SECRETS_PATH.name}.{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, SECRETS_PATH)
 
 
 def get_api_key() -> str:
@@ -163,21 +198,25 @@ def get_telegram_settings() -> dict:
         "bot_token": s.get("bot_token", "").strip(),
         "bot_username": s.get("bot_username", ""),
         "chat_id": s.get("chat_id"),
-        "pairing_code": s.get("pairing_code", ""),
+        "pairing_code": s.get("pairing_code", "") if time.time() - s.get("pairing_created", 0) < PAIRING_TTL_S else "",
         "muted": bool(s.get("muted", False)),
     }
 
 
 def save_telegram_settings(**updates) -> dict:
-    current = get_telegram_settings()
-    current.update(updates)
-    _save_secret("TELEGRAM", current)
-    return current
+    with _secrets_lock:
+        current = dict(_load_secrets().get("TELEGRAM", {}))  # raw, so pairing_created survives
+        current.update(updates)
+        _save_secret("TELEGRAM", current)
+    return get_telegram_settings()
+
+
+PAIRING_TTL_S = 600  # a /start code is good for 10 minutes
 
 
 def new_pairing_code() -> str:
-    code = secrets.token_hex(3).upper()
-    save_telegram_settings(pairing_code=code, chat_id=None)
+    code = secrets.token_hex(4).upper()
+    save_telegram_settings(pairing_code=code, pairing_created=time.time(), chat_id=None)
     return code
 
 

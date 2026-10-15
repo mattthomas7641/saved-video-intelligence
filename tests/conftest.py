@@ -14,7 +14,8 @@ import tempfile
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="scanner_test_")
 os.environ["SCANNER_DATA_DIR"] = _TEST_DATA_DIR
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-placeholder")
-os.environ["SVI_DISABLE_TELEGRAM"] = "1"  # no background Bot API polling during tests
+os.environ["SVI_DISABLE_TELEGRAM"] = "1"
+os.environ["ALLOWED_HOSTS"] = "testserver"  # FastAPI's TestClient sends Host: testserver  # no background Bot API polling during tests
 
 import pytest
 from sqlmodel import SQLModel

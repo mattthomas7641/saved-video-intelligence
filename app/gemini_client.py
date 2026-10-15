@@ -96,14 +96,9 @@ def _status(e: Exception) -> int | None:
 
 
 def _is_network_error(e: Exception) -> bool:
-    import ssl
+    from app.netutil import is_network_error
 
-    chain, seen = e, 0
-    while chain is not None and seen < 5:
-        if isinstance(chain, httpx.TransportError | ssl.SSLError | ConnectionError | TimeoutError):
-            return True
-        chain, seen = chain.__cause__ or chain.__context__, seen + 1
-    return False
+    return is_network_error(e)
 
 
 def _create(client, retries: int = 2, **params):

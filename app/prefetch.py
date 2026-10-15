@@ -44,13 +44,57 @@ def page_urls(text: str) -> list[str]:
     return out[:MAX_PAGES]
 
 
-def page_text(url: str, http: httpx.Client) -> str:
+MAX_PAGE_BYTES = 1_000_000
+MAX_REDIRECTS = 3
+
+
+def is_public_url(url: str) -> bool:
+    """True only for http(s) URLs whose host resolves exclusively to public addresses.
+    Links come from videos, OCR and web pages, so without this a post saying
+    "http://127.0.0.1:8787/settings" would make the app read its own settings page
+    (or a cloud metadata endpoint) into the model's prompt."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
     try:
-        r = http.get(url, follow_redirects=True)
-        r.raise_for_status()
+        infos = socket.getaddrinfo(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+    except (socket.gaierror, UnicodeError, ValueError):
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return bool(infos)
+
+
+def page_text(url: str, http: httpx.Client) -> str:
+    """Fetch a page's visible text, re-checking every redirect hop and capping the size."""
+    try:
+        for _ in range(MAX_REDIRECTS + 1):
+            if not is_public_url(url):
+                return "(not fetched: not a public web address)"
+            with http.stream("GET", url, follow_redirects=False) as r:
+                if r.is_redirect and r.headers.get("location"):
+                    url = str(r.url.join(r.headers["location"]))
+                    continue
+                r.raise_for_status()
+                chunks, size = [], 0
+                for chunk in r.iter_bytes():
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size >= MAX_PAGE_BYTES:
+                        break
+                text = b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
+            break
+        else:
+            return "(not fetched: too many redirects)"
     except httpx.HTTPError as e:
-        return f"(couldn't fetch: {e})"
-    body = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", r.text)
+        return f"(couldn't fetch: {type(e).__name__})"
+    body = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", text)
     body = html.unescape(re.sub(r"(?s)<[^>]+>", " ", body))
     body = re.sub(r"\s+", " ", body).strip()
     return body[:PAGE_CHARS]

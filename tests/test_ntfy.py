@@ -52,7 +52,12 @@ def test_deep_action_reruns(channel, monkeypatch):
     s, _ = channel
     calls = []
     monkeypatch.setattr(intake, "rerun", lambda action_id, deep=False: calls.append((action_id, deep)) or True)
-    assert ntfy_intake.handle_message(_msg(token=s["token"], deep=12)) == "deep" and calls == [(12, True)]
+    signed = _msg(deep=12, sig=ntfy_intake.deep_signature(12))
+    assert ntfy_intake.handle_message(signed) == "deep" and calls == [(12, True)]
+    # the raw token no longer works for deep actions, and a signature is bound to its action
+    assert ntfy_intake.handle_message(_msg(token=s["token"], deep=12)) == "ignored"
+    assert ntfy_intake.handle_message(_msg(deep=13, sig=ntfy_intake.deep_signature(12))) == "ignored"
+    assert calls == [(12, True)]
 
 
 def test_result_notification_fits_and_links(channel, session):
@@ -70,7 +75,8 @@ def test_result_notification_fits_and_links(channel, session):
     assert "Fits: gateway (worth it, S): drops a dependency" in n["message"]
     assert n["click"] == v.tiktok_url  # PUBLIC_BASE_URL is localhost in tests
     deep = json.loads(n["actions"][0]["body"])
-    assert deep == {"v": 1, "token": s["token"], "deep": 5}
+    assert deep == {"v": 1, "deep": 5, "sig": ntfy_intake.deep_signature(5)}
+    assert s["token"] not in n["actions"][0]["body"]  # the inbox token never rides in a notification
     assert len(ntfy_intake._clip(n["message"]).encode()) <= ntfy_intake.MAX_BYTES + 3
 
 

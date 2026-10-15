@@ -69,6 +69,10 @@ def _clip(text: str) -> str:
     return text if len(data) <= MAX_BYTES else data[:MAX_BYTES].decode(errors="ignore") + "…"
 
 
+def deep_signature(action_id: int) -> str:
+    return hmac.new(get_ntfy_settings()["token"].encode(), f"deep:{int(action_id)}".encode(), "sha256").hexdigest()
+
+
 def result_notification(action, video) -> dict:
     """Title/message/click/actions for a finished (or stuck) report."""
     from app.telegram_bot import TYPE_LABELS, VERDICT_LABELS, fit_line, report_link
@@ -85,8 +89,10 @@ def result_notification(action, video) -> dict:
             lines += [""] + [f"- {i}" for i in r["ideas"][:3]]
         if not report_link(action):
             lines += ["", "_Full report on the dashboard's Agent page._"]
+        # Signed for this one action, so a notification (or a screenshot of one) can't be
+        # used to submit arbitrary shares the way the raw inbox token could.
         deep = {"action": "http", "label": "Research deeper", "url": f"{s['server']}/{s['inbox_topic']}",
-                "method": "POST", "body": json.dumps({"v": 1, "token": s["token"], "deep": action.id}),
+                "method": "POST", "body": json.dumps({"v": 1, "deep": action.id, "sig": deep_signature(action.id)}),
                 "clear": True}
         title = (f"{VERDICT_LABELS.get(action.verdict, '')} · {TYPE_LABELS.get(action.action_type.value, '')}: "
                  f"{r.get('headline', '')}")
@@ -121,10 +127,16 @@ def handle_message(raw: str, submit=None, attachment: dict | None = None, http: 
         return "ignored"
     if not isinstance(body, dict) or not s["token"]:
         return "ignored"
+    if body.get("deep") is not None:  # the notification's "Research deeper" button
+        try:
+            action_id = int(body["deep"])
+        except (TypeError, ValueError):
+            return "ignored"
+        if not hmac.compare_digest(str(body.get("sig", "")), deep_signature(action_id)):
+            return "ignored"
+        return "deep" if intake.rerun(action_id, deep=True) else "busy"
     if not hmac.compare_digest(str(body.get("token", "")), s["token"]):
         return "ignored"
-    if body.get("deep"):
-        return "deep" if intake.rerun(int(body["deep"]), deep=True) else "busy"
     if attachment:
         data = _download_attachment(attachment, s["server"], http)
         if data is None:
@@ -184,12 +196,12 @@ def _stream_forever() -> None:
                     event = json.loads(line)
                     if event.get("event") != "message":
                         continue  # open / keepalive
-                    save_ntfy_settings(since=event["id"])
                     try:
                         log.info("Send to Sidequest: %s", handle_message(event.get("message", ""),
                                                                      attachment=event.get("attachment")))
                     except Exception:  # noqa: BLE001 - one bad message must not stop the doorway
                         log.exception("Failed to handle ntfy message %s", event.get("id"))
+                    save_ntfy_settings(since=event["id"])  # after handling: a crash replays it
                     if get_ntfy_settings()["inbox_topic"] != s["inbox_topic"]:
                         break  # topics regenerated in Settings: reconnect
         except (httpx.HTTPError, ValueError) as e:
