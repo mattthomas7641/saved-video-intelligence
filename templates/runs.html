@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Trace · Sidequest{% endblock %}
+{% block content %}
+<a class="back" href="/#a{{ action.id }}">{{ icon("back") }} Back to sidequests</a>
+<header class="page-head">
+  <h1>What the agent did</h1>
+  <p class="sub">{{ headline }}</p>
+  <p class="sub num">{{ runs|length }} run{{ "" if runs|length == 1 else "s" }} · ${{ "%.4f"|format(total) }} total</p>
+</header>
+
+{% for r in runs %}
+<section class="plain-card trace" style="max-width:none">
+  <div class="trace-head">
+    <strong>{{ {"analysis": "Watching / first read", "research": "Research", "project_card": "Project card"}.get(r.kind, r.kind) }}</strong>
+    <span class="tag-info">{{ r.provider or "—" }}{% if r.model %} · {{ r.model }}{% endif %}</span>
+    {% if r.status == "ok" %}<span class="verdict v-yes">{{ icon("check") }} ok</span>{% else %}<span class="tag-err">{{ icon("alert") }} failed</span>{% endif %}
+    <span class="faint num">{{ r.started_at|short_date }} · {{ "%.1f"|format((r.duration_ms or 0) / 1000) }}s · ${{ "%.4f"|format(r.cost_usd) }}
+      · {{ "{:,}".format(r.input_tokens) }} in / {{ "{:,}".format(r.output_tokens) }} out{% if r.searches %} · {{ r.searches }} search{{ "" if r.searches == 1 else "es" }}{% endif %}</span>
+  </div>
+  {% if r.error %}<p class="error hint" style="color:var(--flag)">{{ r.error }}</p>{% endif %}
+  {% if r.parsed_steps %}
+  <ol class="steps-list">
+    {% for s in r.parsed_steps %}
+    <li class="{{ 'bad' if s.t == 'tool' and not s.ok }}">
+      <span class="faint num">+{{ "%.1f"|format((s.at_ms or 0) / 1000) }}s</span>
+      {% if s.t == "model" %}
+        <span>{{ icon("sparkles") }} model call</span>
+        <span class="faint num">{{ "{:,}".format(s["in"] or 0) }} in / {{ "{:,}".format(s.out or 0) }} out{% if s.searches %} · {{ s.searches }} search{{ "" if s.searches == 1 else "es" }}{% endif %} · ${{ "%.4f"|format(s.cost or 0) }}{% if s.ms %} · {{ "%.1f"|format(s.ms / 1000) }}s{% endif %}</span>
+      {% else %}
+        <span>{{ icon("wrench") }} {{ s.name }}</span>
+        <span class="faint">{{ s.args }}</span>
+        {% if not s.ok %}<span style="color:var(--flag)">{{ s.note }}</span>{% endif %}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="hint">No step detail (recorded before tracing existed).</p>
+  {% endif %}
+</section>
+{% else %}
+<div class="empty"><h2>No runs yet</h2><p>Nothing has been spent on this item.</p></div>
+{% endfor %}
+{% endblock %}

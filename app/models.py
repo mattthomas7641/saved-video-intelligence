@@ -129,3 +129,23 @@ class Project(SQLModel, table=True):
     cost_usd: float | None = None
     scanned_at: datetime = Field(default_factory=datetime.utcnow)
     card_updated_at: datetime | None = None
+
+
+class Run(SQLModel, table=True):
+    """One paid attempt - watching a video, a research loop, a project card - with its
+    steps. Both the cost ledger (daily cap, per-item cost) and the trace page read it."""
+    id: int | None = Field(default=None, primary_key=True)
+    action_id: int | None = Field(default=None, index=True)
+    video_id: int | None = Field(default=None, index=True)
+    kind: str                          # analysis | research | project_card
+    provider: str | None = None
+    model: str | None = None
+    status: str = "ok"                 # ok | failed
+    error: str | None = None
+    started_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    duration_ms: int | None = None
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    searches: int = 0
+    steps: str | None = None           # JSON list of model/tool steps, in order

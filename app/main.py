@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import os
 import re
@@ -326,6 +327,36 @@ def _set_status(session: Session, action_id: int, status: ActionStatus) -> None:
         session.commit()
 
 
+@app.get("/runs/{action_id}")
+def runs_page(request: Request, action_id: int, session: Session = Depends(get_db)):
+    """The trace: every paid attempt on one item, step by step."""
+    from sqlalchemy import and_, or_
+
+    from app.models import Run
+
+    action = session.get(Action, action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail="No such item.")
+    runs = session.exec(select(Run).where(or_(Run.action_id == action_id,
+                                              and_(Run.action_id.is_(None), Run.video_id == action.video_id)))
+                        .order_by(Run.started_at.desc())).all()
+    def steps_of(r):
+        try:
+            return json.loads(r.steps or "[]")
+        except ValueError:
+            return []
+    rows = [{**r.model_dump(), "parsed_steps": steps_of(r)} for r in runs]
+    try:
+        headline = json.loads(action.result or "{}").get("headline") or ""
+    except ValueError:
+        headline = ""
+    video = session.get(Video, action.video_id)
+    return templates.TemplateResponse(request, "runs.html", {
+        "action": action, "runs": rows, "total": sum(r.cost_usd for r in runs),
+        "headline": _strip_citations(headline) or (video.summary if video else "") or "",
+    })
+
+
 @app.get("/api/quests/status")
 def quests_status(session: Session = Depends(get_db)):
     """What the home page polls while something is in progress: a change in `stamp`
@@ -475,8 +506,17 @@ def settings_page(request: Request, key: str = ""):
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),
         "projects": _projects_for_settings(),
+        "spend_days": _spend_days(),
         "project_overrides": get_project_overrides(),
     })
+
+
+def _spend_days() -> list:
+    from app import tracing
+    from app.db import get_session
+
+    with get_session() as session:
+        return tracing.spend_by_day(session)
 
 
 def _projects_for_settings() -> list:
