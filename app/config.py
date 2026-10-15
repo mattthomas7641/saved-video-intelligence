@@ -7,7 +7,7 @@ Two deliberately separate mechanisms, not one:
   startup; a typo or bad value fails fast instead of silently misbehaving.
 - `data/secrets.json` (see get_api_key/save_api_key and friends below) is
   *runtime-mutable, user-editable-via-Settings-UI* state - the Anthropic key,
-  the agent bearer token, action-type toggles, your trusted TikTok handle.
+  provider keys, Telegram/ntfy channels, the research agent's settings.
   These change while the app is running, from the app's own Settings page,
   which `Settings` (env-var-sourced, read once at process start) can't
   represent. Collapsing the two into one mechanism would be the wrong call,
@@ -61,15 +61,11 @@ VIDEOS_DIR = DATA_DIR / "videos"
 THUMBS_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "db.sqlite3"
 
-RESUME_DIR = DATA_DIR / "resume"
-JOBS_DIR = DATA_DIR / "jobs"
 
-for d in (DATA_DIR, VIDEOS_DIR, THUMBS_DIR, RESUME_DIR, JOBS_DIR):
+for d in (DATA_DIR, VIDEOS_DIR, THUMBS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 SECRETS_PATH = DATA_DIR / "secrets.json"
-RESUME_PATH = RESUME_DIR / "base_resume.md"
-RESUME_PROFILE_PATH = RESUME_DIR / "profile.json"
 
 
 class SecretsUnreadable(RuntimeError):
@@ -131,23 +127,6 @@ def save_api_key(key: str) -> None:
     _save_secret("ANTHROPIC_API_KEY", key.strip())
 
 
-def get_agent_token() -> str:
-    """Bearer token the daily agent uses to call the machine-to-machine /api/* routes.
-    Generated once on first use and persisted; never required for your own browser use
-    of the dashboard, which hits unauthenticated routes exactly as before."""
-    token = _load_secrets().get("AGENT_TOKEN", "").strip()
-    if not token:
-        token = secrets.token_urlsafe(32)
-        _save_secret("AGENT_TOKEN", token)
-    return token
-
-
-def regenerate_agent_token() -> str:
-    token = secrets.token_urlsafe(32)
-    _save_secret("AGENT_TOKEN", token)
-    return token
-
-
 def get_action_settings() -> dict:
     """Per-action-type on/off toggles + the global daily-agent pause switch."""
     s = _load_secrets().get("ACTION_SETTINGS", {})
@@ -159,33 +138,11 @@ def get_action_settings() -> dict:
     }
 
 
-def get_trusted_sender() -> str:
-    """Your real TikTok handle - the inbox reader only acts on messages from
-    this account; everything else (including random DMs to the bot account)
-    is ignored. Stored without a leading '@'."""
-    return _load_secrets().get("TRUSTED_SENDER", "").strip().lstrip("@")
-
-
-def save_trusted_sender(handle: str) -> None:
-    _save_secret("TRUSTED_SENDER", handle.strip().lstrip("@"))
-
-
 def save_action_settings(**updates) -> dict:
     current = get_action_settings()
     current.update({k: v for k, v in updates.items() if v is not None})
     _save_secret("ACTION_SETTINGS", current)
     return current
-
-
-def get_resume_text() -> str:
-    try:
-        return RESUME_PATH.read_text()
-    except OSError:
-        return ""
-
-
-def save_resume_text(text: str) -> None:
-    RESUME_PATH.write_text(text)
 
 
 # ---- Telegram intake + research agent (app/telegram_bot.py, app/agent.py) ----

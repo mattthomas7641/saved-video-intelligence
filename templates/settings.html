@@ -4,22 +4,6 @@
 {% block content %}
 <header class="page-head"><h1>Settings</h1></header>
 
-<section class="plain-card">
-  <h2>Anthropic API key</h2>
-  <p style="margin-bottom:12px">
-    {% if has_api_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>
-    {% else %}<span class="tag-warn">{{ icon("alert") }} Not set</span>{% endif %}
-  </p>
-  <form action="/settings/key" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <input type="hidden" name="next" value="/settings">
-    <input class="field" style="flex:1;min-width:240px" type="password" name="key" placeholder="{{ 'Paste a new key to replace it' if has_api_key else 'Paste your key (starts with sk-ant-)' }}" autocomplete="off" aria-label="Anthropic API key" required>
-    <button class="btn btn-primary" type="submit">Save key</button>
-  </form>
-  {% if key_status == "saved" %}<p style="margin-top:10px;color:var(--family)">Saved.</p>{% endif %}
-  {% if key_status == "invalid" %}<p style="margin-top:10px;color:var(--flag)">That key was rejected. Check that you copied all of it.</p>{% endif %}
-  <p style="margin-top:12px">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. It’s stored only on this computer, in the <code>data</code> folder.</p>
-</section>
-
 <section class="plain-card" id="send">
   <h2>Send to Sidequest</h2>
   <p style="margin-bottom:12px">
@@ -99,6 +83,11 @@
     <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
   </form>
   {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  <form action="/settings/pause" method="post" style="margin-top:14px">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)">
+      <input class="check" type="checkbox" name="paused" value="true" {{ "checked" if action_settings.agent_paused }} onchange="this.form.submit()">
+      Pause research (things you send are still saved and analyzed)</label>
+  </form>
 </section>
 
 <section class="plain-card" id="projects">
@@ -174,63 +163,22 @@
   </details>
 </section>
 
-<section class="plain-card">
-  <h2>Daily agent</h2>
-  <p style="margin-bottom:10px">Controls for the (not-yet-scheduled) daily pipeline that detects and acts on skill/project/job videos.</p>
-  <form action="/settings/actions" method="post" style="display:grid;gap:10px;margin-bottom:14px">
-    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="skill_enabled" value="true" {{ "checked" if action_settings.skill_enabled }}> Detect skill/technique videos</label>
-    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="project_enabled" value="true" {{ "checked" if action_settings.project_enabled }}> Detect "build this" project videos</label>
-    <label style="display:flex;gap:8px;align-items:center"><input class="check" type="checkbox" name="job_enabled" value="true" {{ "checked" if action_settings.job_enabled }}> Detect job-posting videos</label>
-    <label style="display:flex;gap:8px;align-items:center;color:var(--flag)"><input class="check" type="checkbox" name="agent_paused" value="true" {{ "checked" if action_settings.agent_paused }}> Pause the daily agent entirely</label>
-    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+<section class="plain-card" id="claude">
+  <details {% if key_status in ("saved", "invalid") %}open{% endif %}>
+  <summary class="settings-summary"><h2 style="display:inline">Claude API key</h2> <span class="hint" style="margin:0">optional: only if you switch research to Claude</span></summary>
+  <p style="margin-bottom:12px">
+    {% if has_api_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>
+    {% else %}<span class="tag-warn">{{ icon("alert") }} Not set</span>{% endif %}
+  </p>
+  <form action="/settings/key" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input type="hidden" name="next" value="/settings">
+    <input class="field" style="flex:1;min-width:240px" type="password" name="key" placeholder="{{ 'Paste a new key to replace it' if has_api_key else 'Paste your key (starts with sk-ant-)' }}" autocomplete="off" aria-label="Anthropic API key" required>
+    <button class="btn btn-primary" type="submit">Save key</button>
   </form>
-  {% if key_status == "actions_saved" %}<p style="color:var(--family);margin-bottom:10px">Saved.</p>{% endif %}
-
-  <p style="margin-bottom:8px">Your real TikTok handle — the inbox reader on the dedicated bot account only acts on videos shared by this account. Messages from anyone else (including random DMs to the bot account) are ignored.</p>
-  <form action="/settings/trusted-sender" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
-    <input class="field" style="flex:1;min-width:200px" type="text" name="handle" value="{{ trusted_sender }}" placeholder="yourhandle (no @)">
-    <button class="btn btn-primary" type="submit">Save</button>
-  </form>
-  {% if key_status == "sender_saved" %}<p style="color:var(--family);margin-bottom:10px">Saved.</p>{% endif %}
-  {% if not trusted_sender %}<div class="notice warn" style="margin-bottom:14px">{{ icon("alert") }}<span>Not set yet — the inbox sync will refuse to run until this is configured.</span></div>{% endif %}
-
-  <p style="margin-bottom:8px">Agent access token — the daily agent sends this to prove it's allowed to call the sync/action endpoints. Your own use of this dashboard never needs it.</p>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <code style="word-break:break-all">{{ agent_token }}</code>
-    <form action="/settings/regenerate-token" method="post" onsubmit="return confirm('This invalidates the current token. Any already-configured agent will need the new one.')">
-      <button class="btn" type="submit">{{ icon("refresh") }} Regenerate</button>
-    </form>
-  </div>
-  {% if key_status == "token_rotated" %}<p style="color:var(--family);margin-top:8px">New token generated.</p>{% endif %}
+  {% if key_status == "saved" %}<p style="margin-top:10px;color:var(--family)">Saved.</p>{% endif %}
+  {% if key_status == "invalid" %}<p style="margin-top:10px;color:var(--flag)">That key was rejected. Check that you copied all of it.</p>{% endif %}
+  <p style="margin-top:12px">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. It’s stored only on this computer, in the <code>data</code> folder.</p>
+  </details>
 </section>
 
-<section class="plain-card">
-  <h2>Job application materials</h2>
-  <p style="margin-bottom:10px">A base resume the agent tailors from when drafting a job application. Plain text or Markdown — stored only on this computer, never committed to the public repo.</p>
-  <form action="/settings/resume" method="post" enctype="multipart/form-data" style="display:grid;gap:10px">
-    <textarea class="field" name="text" rows="6" placeholder="Paste your resume as text, or upload a file below">{{ resume_text }}</textarea>
-    <div style="display:flex;gap:10px;align-items:center">
-      <input class="field" type="file" name="file" accept=".txt,.md">
-      <button class="btn btn-primary" type="submit">Save resume</button>
-    </div>
-  </form>
-  {% if key_status == "resume_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
-</section>
-
-<section class="plain-card">
-  <h2>Expiry warnings</h2>
-  <p>Videos with a promo code or deadline that you saved more than <strong class="num">{{ stale_threshold_months }} months</strong> ago are marked “May be expired”. Change <code>STALE_THRESHOLD_MONTHS</code> in <code>.env</code> to adjust.</p>
-</section>
-
-<section class="plain-card">
-  <h2>Other options</h2>
-  <ul style="padding-left:1.1em;display:grid;gap:6px;margin:0;color:var(--ink-2)">
-    <li><code>ANALYSIS_MODEL</code>: the Claude model used to summarize</li>
-    <li><code>AGENT_MODEL</code>: the Claude model that researches shared videos</li>
-    <li><code>PUBLIC_BASE_URL</code>: where “Full report” links in Telegram point</li>
-    <li><code>GITHUB_TOKEN</code>: optional, raises the GitHub lookup limit for repo videos</li>
-    <li><code>WHISPER_MODEL</code>: speech-to-text size (tiny, base, small, medium)</li>
-    <li><code>DELETE_VIDEO_AFTER_PROCESS</code>: free disk space after each video</li>
-  </ul>
-</section>
 {% endblock %}

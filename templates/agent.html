@@ -21,7 +21,6 @@
 {% elif v == "skip" %}<span class="verdict v-skip">Skip</span>{% endif %}
 {%- endmacro %}
 {% block content %}
-{% if working %}<meta http-equiv="refresh" content="15">{% endif %}
 {% set here = "/?tab=" ~ tab ~ ("&group=" ~ group if group else "") %}
 
 <header class="page-head agent-head">
@@ -48,6 +47,7 @@
 <div class="notice">{{ icon("bulb") }}<span>Tell the agent about yourself in <a href="/settings#research">Settings</a>, so “useful for you” means your projects and your city.</span></div>
 {% endif %}
 
+<div class="notice" id="updates" hidden>{{ icon("refresh") }}<span>A sidequest just finished. <a href="{{ here }}">Refresh</a> to see it.</span></div>
 <nav class="tabs quest-tabs" aria-label="Status">
   {% for key, label in tabs %}
   <a href="/?tab={{ key }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label }} <span class="n">{{ tab_counts[key] }}</span></a>
@@ -85,7 +85,7 @@
     <span class="ci">{{ icon("alert") }}</span>
     <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why or "Something went wrong. Tap Retry." }}</span></span>
     <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
-    <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me">{{ icon("archive") }}</button></form>
+    <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me" aria-label="Not for me">{{ icon("archive") }}</button></form>
   </div>
   {% endfor %}
 </section>
@@ -104,8 +104,8 @@
           {{ next_step_tag(a.verdict) }}
           <span class="faint">{{ a.updated_at|short_date }}</span>
         </div>
-        <h3>{{ r.headline }}</h3>
-        <p class="r-tldr">{{ r.telegram_text }}</p>
+        <h3>{{ r.headline|nocite }}</h3>
+        <p class="r-tldr">{{ r.telegram_text|nocite }}</p>
         {% if r.place %}<p class="r-key">{{ icon("home") }} {{ r.place.name }}{% if r.place.neighborhood or r.place.city %} · {{ r.place.neighborhood or "" }}{{ ", " if r.place.neighborhood and r.place.city }}{{ r.place.city or "" }}{% endif %}{% if r.place.best_times %} · {{ r.place.best_times }}{% endif %}</p>
         {% elif r.repos %}<p class="r-key">{{ icon("code") }} {{ r.repos|selectattr("fit", "equalto", "worth_it")|list|length }} of {{ r.repos|length }} repos worth a look</p>
         {% elif r.project_fit and r.project_fit[0].fit != "skip" %}<p class="r-key">{{ icon("wrench") }} Fits {{ r.project_fit[0].project }}: {{ r.project_fit[0].where }} {{ value_tag(r.project_fit[0].value) }}</p>
@@ -191,13 +191,13 @@
           <a href="/video/{{ v.id }}">Details</a>
           {% if a.cost_usd %}<span class="faint num">${{ "%.2f"|format(a.cost_usd) }}</span>{% endif %}
           <span class="spacer"></span>
-          <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="deep" value="true"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">{{ icon("search") }} Research deeper</button></form>
+          <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="deep" value="true"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Runs a fuller web search: about $0.03–0.06" onclick="return confirm('Research this again with a fuller web search? About $0.03–0.06.')">{{ icon("search") }} Research deeper</button></form>
           <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">{{ icon("refresh") }} Re-run</button></form>
         </footer>
       </div>
     </details>
     <div class="r-actions">
-      {% if tab == "todo" %}
+      {% if tab in ("todo", "fyi") %}
       <form action="/agent/{{ a.id }}/done" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-primary" type="submit">{{ icon("check") }} Done</button></form>
       <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">Not for me</button></form>
       {% else %}
@@ -219,16 +219,35 @@
 {% elif not working and not stuck and not done %}
 <div class="empty">
   {% if tab == "todo" %}<h2>All caught up</h2><p>Nothing waiting on you. Send something new from any app.</p>
+  {% elif tab == "fyi" %}<h2>Nothing here</h2><p>Things the agent looked into and found nothing to act on land here, out of your To do list.</p>
   {% elif tab == "done" %}<h2>Nothing done yet</h2><p>Mark a sidequest Done when you've acted on it.</p>
   {% else %}<h2>Nothing set aside</h2><p>“Not for me” items land here.</p>{% endif %}
 </div>
 {% endif %}
 
 <script>
-  // Opening /agent#a12 (the "Full report" link in Telegram) expands that report.
+  // Opening /#a12 (the "Full report" link in a notification) expands that report.
   (function () {
     var el = location.hash && document.querySelector(location.hash + " details");
     if (el) { el.open = true; el.scrollIntoView({ block: "start" }); }
   })();
+  {% if working %}
+  // Something is still being looked into: check quietly, and reload only when it changes,
+  // and never while you have a report open (a reload would close it).
+  (function () {
+    var stamp = null, notice = document.getElementById("updates");
+    function check() {
+      fetch("/api/quests/status").then(function (r) { return r.json(); }).then(function (s) {
+        if (stamp === null) { stamp = s.stamp; }
+        else if (s.stamp !== stamp) {
+          if (document.querySelector(".report details[open]")) { notice.hidden = false; return; }
+          location.reload(); return;
+        }
+        if (s.working) setTimeout(check, 8000);
+      }).catch(function () { setTimeout(check, 20000); });
+    }
+    setTimeout(check, 8000);
+  })();
+  {% endif %}
 </script>
 {% endblock %}

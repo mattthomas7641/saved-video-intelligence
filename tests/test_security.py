@@ -26,15 +26,15 @@ def test_unknown_host_is_refused(client):  # DNS rebinding arrives with the atta
     {"sec-fetch-site": "cross-site"},
 ])
 def test_cross_site_posts_are_refused(client, headers):
-    r = client.post("/settings/regenerate-token", headers=headers, follow_redirects=False)
+    r = client.post("/settings/pause", headers=headers, follow_redirects=False)
     assert r.status_code == 403
 
 
 def test_same_origin_and_non_browser_posts_work(client):
-    ok = client.post("/settings/regenerate-token", headers={"origin": "http://testserver", "sec-fetch-site": "same-origin"},
+    ok = client.post("/settings/pause", headers={"origin": "http://testserver", "sec-fetch-site": "same-origin"},
                      follow_redirects=False)
     assert ok.status_code == 303
-    assert client.post("/settings/regenerate-token", follow_redirects=False).status_code == 303  # curl-style
+    assert client.post("/settings/pause", follow_redirects=False).status_code == 303  # curl-style
 
 
 def test_security_headers(client):
@@ -58,7 +58,7 @@ def test_corrupt_secrets_file_is_never_overwritten():
     config.SECRETS_PATH.write_text('{"ANTHROPIC_API_KEY": "sk-ant-keepme", ')  # truncated write
     assert config.get_api_key() in ("", "sk-ant-test-placeholder")  # reads as unset, doesn't crash
     with pytest.raises(config.SecretsUnreadable):
-        config.get_agent_token()  # used to silently rewrite the file with only AGENT_TOKEN
+        config.save_gemini_key("AIza-new")  # used to silently rewrite the file, losing every other key
     assert config.SECRETS_PATH.read_text().startswith('{"ANTHROPIC_API_KEY": "sk-ant-keepme"')
 
 

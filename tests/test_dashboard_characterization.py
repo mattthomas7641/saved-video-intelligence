@@ -37,10 +37,10 @@ def _seed(**overrides) -> Video:
     return v
 
 
-def test_empty_library_shows_onboarding_not_overview():
+def test_empty_archive_shows_empty_state_not_overview():
     resp = client.get("/dashboard")
     assert resp.status_code == 200
-    assert "Nothing analyzed yet" in resp.text or "Let" in resp.text  # setup/empty state, not a populated overview
+    assert "The archive is empty" in resp.text  # read-only archive: no import/setup flow any more
 
 
 def test_basic_load_with_videos_returns_200():

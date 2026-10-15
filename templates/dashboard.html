@@ -51,25 +51,12 @@
 </div>
 {% endmacro %}
 
-{% macro estimate_form(id, running) %}
-<form action="/process/start" method="post" class="batch" data-estimate>
-  <div class="row">
-    <input class="field num" type="number" name="limit" min="1" value="10" aria-label="How many videos to analyze">
-    <button class="btn btn-primary" type="submit" {% if running %}disabled{% endif %}>{{ icon("play") }} {% if running %}Analyzing…{% else %}Analyze next{% endif %}</button>
-  </div>
-  <div class="estimate" data-out></div>
-  <label class="retry"><input class="check" type="checkbox" name="retry_errors" value="true"> Retry failed videos first</label>
-</form>
-{% endmacro %}
-
 <div class="shell" {% if group %}data-territory="{{ group|gslug }}"{% endif %}>
   <aside class="rail">
     <a href="/" class="brand">Sidequest</a>
 
     <nav class="quicklinks" aria-label="Sections">
       <a href="/">{{ icon("inbox") }}<span>Quests</span></a>
-      <a href="/actions">{{ icon("sparkles") }}<span>Ideas{% if action_queue_count %} <span class="badge num">{{ action_queue_count }}</span>{% endif %}</span></a>
-      <a href="/jobs">{{ icon("briefcase") }}<span>Jobs</span></a>
     </nav>
 
     {% if stats.processed %}
@@ -95,76 +82,7 @@
   </aside>
 
   <main class="main">
-    {% if imported is not none %}
-    <div class="notice">{{ icon("check") }}<span>Imported {{ "{:,}".format(imported) }} saved videos.</span></div>
-    {% endif %}
-    {% if request.query_params.get("key") == "saved" %}<div class="notice">{{ icon("check") }}<span>API key saved.</span></div>{% endif %}
 
-    {% if show_setup %}
-    <section class="setup" aria-labelledby="setup-h">
-      <h2 id="setup-h">Let’s get your saves sorted</h2>
-      <p>Three quick steps. Sidequest reads each video you saved, files it under a topic, and tells you which ones are worth another look.</p>
-      <ol class="steps">
-        <li class="step {{ 'done' if setup.key else 'current' }}">
-          <span class="mark">{% if setup.key %}{{ icon("check") }}{% else %}{{ icon("key") }}{% endif %}</span>
-          <div>
-            <h3>Connect Claude</h3>
-            {% if setup.key %}
-              <p>Connected. You can change the key any time in <a href="/settings">Settings</a>.</p>
-            {% else %}
-              <p>Claude does the reading and sorting. You need an Anthropic API key and a few dollars of credit: about 30 cents per 100 videos.</p>
-              <form class="do" action="/settings/key" method="post">
-                <input type="hidden" name="next" value="/dashboard">
-                <input class="field wide" type="password" name="key" placeholder="Paste your key (starts with sk-ant-)" autocomplete="off" aria-label="Anthropic API key" required>
-                <button class="btn btn-primary" type="submit">Save key</button>
-                <a class="btn" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">{{ icon("external") }} Get a key</a>
-              </form>
-              {% if request.query_params.get("key") == "invalid" %}<p class="help" style="color:var(--flag)">That key was rejected. Check that you copied all of it.</p>{% endif %}
-              <p class="help">Your key is stored only on this computer.</p>
-            {% endif %}
-          </div>
-        </li>
-
-        <li class="step {{ 'done' if setup.imported else ('current' if setup.key else '') }}">
-          <span class="mark">{% if setup.imported %}{{ icon("check") }}{% else %}{{ icon("upload") }}{% endif %}</span>
-          <div>
-            <h3>Import your saved videos</h3>
-            {% if setup.imported %}
-              <p><span class="num">{{ "{:,}".format(stats.total) }}</span> saved videos found.</p>
-            {% else %}
-              <p>TikTok can’t share your Saved list directly, so you request your own data file from them. It arrives in minutes to a few days.</p>
-              <details open>
-                <summary>How to get the file</summary>
-                <ol>
-                  <li>In TikTok: Profile → menu → Settings and privacy → Account → Download your data.</li>
-                  <li>Choose <strong>JSON</strong>, then Request data.</li>
-                  <li>When it’s ready, download and unzip it. You want <code>user_data_tiktok.json</code>.</li>
-                </ol>
-              </details>
-              <form class="do" action="/onboarding/upload" method="post" enctype="multipart/form-data">
-                <input class="field" type="file" name="file" accept=".json,.txt" required>
-                <button class="btn btn-primary" type="submit">{{ icon("upload") }} Import</button>
-              </form>
-            {% endif %}
-          </div>
-        </li>
-
-        <li class="step {{ 'done' if setup.analyzed else ('current' if setup.key and setup.imported else 'locked') }}">
-          <span class="mark">{% if setup.analyzed %}{{ icon("check") }}{% else %}{{ icon("sparkles") }}{% endif %}</span>
-          <div>
-            <h3>Analyze a first batch</h3>
-            <p>Start small to see how it works. Ten videos takes a few minutes, and this page fills in as each one finishes.</p>
-            {% if setup.key and setup.imported %}
-              <div class="do">{{ estimate_form("setup", progress.running) }}</div>
-              {% if progress.running %}<p class="help">Working on it. The first results appear here in about a minute.</p>{% endif %}
-            {% else %}
-              <p class="help">Finish the steps above first.</p>
-            {% endif %}
-          </div>
-        </li>
-      </ol>
-    </section>
-    {% endif %}
 
     {% if stats.processed %}
     <div class="bar">
@@ -195,7 +113,6 @@
         ("processed", "Everything", "library", stats.processed - stats.archived, false),
         ("worth_rewatching", "Worth rewatching", "star", stats.worth, false),
         ("flagged", "May be expired", "alert", stats.flagged, true),
-        ("unwatched", "Not revisited", "eye", stats.unwatched, false),
         ("archived", "Archived", "archive", stats.archived, false)] %}
       <a href="{{ href(tab=key, show='') }}" class="{{ 'alert' if alert and n }}" {% if tab == key %}aria-current="page"{% endif %}>{{ icon(ico) }}<span>{{ label|safe }}</span> <span class="n num">{{ "{:,}".format(n) }}</span></a>
       {% endfor %}
@@ -252,8 +169,6 @@
           <h2>Nothing looks expired</h2><p>Videos with a promo code or deadline that you saved a while ago will show up here.</p>
         {% elif tab == "archived" %}
           <h2>Nothing archived</h2><p>Archive a video from its row to tuck it away without deleting it.</p>
-        {% elif tab == "queue" %}
-          <h2>Nothing waiting</h2><p>Every video has been analyzed.</p>
         {% else %}
           <h2>Nothing here yet</h2><p>No videos match this view.</p>
         {% endif %}
@@ -268,29 +183,11 @@
       </nav>
       {% endif %}
     {% endif %}
+    {% else %}
+    <div class="empty"><span class="big">{{ icon("library") }}</span><h2>The archive is empty</h2>
+      <p>Things you send to Sidequest live on the <a href="/">home page</a>.</p></div>
     {% endif %}
   </main>
 </div>
 
-<script>
-  // Live cost and time estimate for the "Analyze next" forms (Haiku ≈ $0.0032 per video, ≈ 20 s each)
-  document.querySelectorAll("form[data-estimate]").forEach(f => {
-    const input = f.querySelector("input[name=limit]"), out = f.querySelector("[data-out]");
-    const update = () => {
-      const n = Math.max(1, parseInt(input.value) || 0);
-      const cost = n * 0.0026, mins = Math.max(1, Math.round(n * 12 / 4 / 60));
-      out.textContent = `About ${cost < 0.1 ? "$" + cost.toFixed(2) : "$" + cost.toFixed(cost < 10 ? 2 : 0)} and ${mins < 90 ? mins + " min" : (mins / 60).toFixed(1) + " hr"}`;
-    };
-    input.addEventListener("input", update); update();
-  });
-  {% if progress.running %}
-  (function poll() {
-    fetch("/api/progress").then(r => r.json()).then(p => {
-      if (!p.running) { location.reload(); return; }
-      setTimeout(poll, 4000);
-    });
-    setTimeout(() => location.reload(), {{ 10000 if show_setup else 45000 }});
-  })();
-  {% endif %}
-</script>
 {% endblock %}

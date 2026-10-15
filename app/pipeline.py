@@ -163,10 +163,6 @@ def analyze_video(session: Session, video: Video, analyzer=None) -> float:
     return cost
 
 
-def process_video(session: Session, video: Video) -> float:
-    collect_video(session, video)
-    return analyze_video(session, video) if video.status == Status.TRANSCRIBED else 0.0
-
 
 def _touch(session: Session, video: Video) -> None:
     video.updated_at = datetime.utcnow()

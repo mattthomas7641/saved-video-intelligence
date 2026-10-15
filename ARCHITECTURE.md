@@ -1,212 +1,131 @@
 # Architecture
 
-A self-hosted pipeline that turns a TikTok Saved-videos export into a searchable,
-categorized library — and, for videos that point at something concrete to do,
-a queue of actions (build it, draft a job application) a separate scheduled
-agent can act on. This document covers how it fits together and why it's built
-this way, not how to run it — see [README.md](README.md) for that.
+Sidequest takes anything you share from your phone (a TikTok, an Instagram Reel,
+a screenshot, a link), has an agent research it within minutes, judges tech
+content against your own projects, and puts a next step on a to-do list. This
+document covers how it fits together and why; see [README.md](README.md) to run it.
 
 ## Pipeline
 
-Every video goes through the same two-phase pipeline regardless of how it
-entered the system (a one-time export upload, or the ongoing inbox sync):
-**collect** is free and runs entirely on-device; **analyze** is the one paid
-step, and the only one that calls out to Claude.
-
 ```mermaid
 flowchart LR
-    subgraph Ingest
-        A1[Export upload] --> V[(Video row<br/>status=PENDING)]
-        A2[Inbox sync] --> V
-        A3[Send to Sidequest / Telegram] --> V
+    subgraph Intake["Intake (app/intake.py)"]
+        S[Send to Sidequest<br/>iOS Shortcut → ntfy.sh] --> I
+        T[Telegram bot<br/>optional] --> I
+        I[ingest: link / text / image<br/>+ placeholder Action] --> L[research lane<br/>2 at a time]
     end
 
-    V --> C1[Download<br/>yt-dlp]
-    C1 --> C2[Transcribe<br/>faster-whisper, local]
-    C2 --> C3[OCR on-screen text<br/>tesseract]
-    C3 --> T[(status=TRANSCRIBED)]
-
-    T --> AN[Analyze<br/>Claude: category, summary,<br/>score, is_actionable]
-    AN --> D[(status=DONE)]
-    AN -. is_actionable .-> AQ[(Action row<br/>status=QUEUED)]
-
-    AQ --> AG[Daily agent<br/>separate scheduled session]
-    AG -->|skill / project| PR[Draft PR in<br/>tiktok-ideas repo]
-    AG -->|job| JD[Drafted resume +<br/>cover letter, local files]
-    AQ -. shared on purpose .-> RA[Gemini: watch, then research<br/>app/gemini_client.py]
-    PJ[(Your project cards<br/>app/projects.py)] --> RA
-    RA --> RP[(Action.result<br/>report + verdict)]
-    RP --> TG[Phone notification +<br/>Agent page]
+    L --> D[download<br/>yt-dlp]
+    D --> W[Gemini watches it<br/>audio + frames:<br/>topic, summary, type,<br/>transcript, on-screen text]
+    W --> P[free prefetch<br/>GitHub API, linked pages<br/>public addresses only]
+    P --> K{tech?}
+    K -->|yes| R1[research loop<br/>Google Search/Maps +<br/>github_repo + read_project_file]
+    K -->|no| R2[research loop<br/>Google Search/Maps,<br/>no project access]
+    PC[(project cards<br/>app/projects.py)] --> R1
+    R1 --> F[(Action.result:<br/>verdict, report,<br/>project fit + value)]
+    R2 --> F
+    F --> H[home page<br/>To do / Nothing to do / Done]
+    F --> N[phone notification<br/>ntfy or Telegram]
 ```
 
-**Collect** (`app/pipeline.py:collect_video`) and **analyze**
-(`app/pipeline.py:analyze_video`) are deliberately separate stages with
-separate `Status` values, not one monolithic step — see
-[Why two phases, not one](#why-two-phases-not-one-pipeline-step) below.
+The archive (`/dashboard`) is the older, read-only library: ~450 TikTok saves
+analyzed with Claude Haiku before Sidequest existed.
 
 ## Data model
 
 ```mermaid
 erDiagram
-    VIDEO ||--o{ ACTION : "may produce"
+    VIDEO ||--o| ACTION : "researched as"
     VIDEO {
         int id PK
-        string tiktok_url UK
+        string tiktok_url UK "a URL, or text:/image: key for shares without one"
+        string source "telegram = sent on purpose (either doorway)"
         string status
         string category
         string summary
-        int worth_rewatching_score
-        bool needs_verification
-        float cost_usd
+        string transcript
+        string ocr_text
     }
     ACTION {
         int id PK
         int video_id FK
-        string action_type "skill | project | job"
-        string status "queued..done..dismissed"
-        string brief
-        string result
+        string action_type "repo | research | place | project | skill | job | other"
+        string status "queued | in_progress | drafted | needs_input | done | dismissed | failed"
+        string verdict "worth_it | maybe | skip"
+        string result "JSON report"
+        float cost_usd
     }
-```
-
-`Action` is a separate table from `Video`, not more columns bolted onto it —
-see [key decisions](#key-decisions) below.
-
-## Request flow (dashboard)
-
-Interactive use (you, in a browser) and the daily agent's use (unattended,
-over HTTP) are two different trust boundaries hitting the same app:
-
-```mermaid
-flowchart TB
-    Browser["Your browser<br/>(dashboard, settings, actions/jobs pages)"] -->|no auth| App[FastAPI app]
-    Agent["Daily agent<br/>(scheduled session)"] -->|Bearer token| App
-    App --> DB[(SQLite)]
-    App -->|collect/analyze jobs| Worker[worker.py<br/>thread pool, spend cap]
-    Worker --> Claude[Anthropic API]
+    PROJECT {
+        int id PK
+        string name UK
+        string status "active | planned"
+        string content_hash
+        string card
+    }
 ```
 
 ## Key decisions
 
-Each of these was a real choice with a real trade-off, not a default reached
-for without thinking. Noted here mainly so they're easy to re-explain later,
-not just to justify them once.
+#### Gemini watches the video; search is effectively free
+Research on Claude cost $0.10–0.50 per item, mostly from looping and paid web
+searches. Gemini takes the downloaded file itself and processes audio and frames
+together, so it reads code, menus and prices on screen with no Whisper/OCR step
+(measured $0.009–0.015 per video). Grounded Google Search is free up to 5,000
+requests a month on paid Gemini 3 models, and Google Maps grounding covers
+places. The video is watched once: that call saves a transcript and on-screen
+text, and the research loop (Interactions API, chained server-side by
+`previous_interaction_id`) works from that text. Grok and Claude remain
+switchable providers behind the same prompts and tools (`app/agent.py`).
+
+#### Only tech content touches your projects
+Every project in `~/Projects` gets a short card (purpose, stack, architecture,
+pain points, next steps), rebuilt only when its files change. Tech items get the
+cards plus a `read_project_file` tool to back up claims about where something
+plugs in, and each suggestion is rated for value (fun, personal use + resume,
+weak resume, not worth it). Everyday items (food, products, fitness) get a
+different prompt and no project tools at all: less to leak, less to pay for.
+
+#### A Shortcut + ntfy as the doorway, long-polled
+The share sheet is where the habit already lives, and an iOS Shortcut sits in
+it. ntfy.sh relays the share and the app *pulls* from it (as it long-polls
+Telegram), so a laptop install needs no public URL, tunnel or open port. The
+trade-off is that ntfy topics are secret only by obscurity: topic names are long
+and random, every inbound message also carries a token, and the "Research
+deeper" button in a notification carries a per-action HMAC, not the token.
+
+#### No login, so the browser is the threat model
+The app listens on `127.0.0.1` only, but any website you visit can still point
+your browser at it. `app/security.py` refuses requests whose Host isn't ours
+(DNS rebinding) and cross-site writes (CSRF), and the CSP blocks third-party
+images, because a Markdown image in a report is a prompt-injection
+exfiltration channel. Links pulled out of shared content are fetched only if
+they resolve to public addresses, re-checked on every redirect (SSRF).
+
+#### Fail visibly, never spend silently
+Every share gets an Action card the moment it arrives, so nothing is invisible
+while it's being processed. A restart marks interrupted work "Tap Retry" rather
+than re-running it, because re-running would spend without being asked. Model
+calls retry only briefly; a refused search quota falls back to researching
+without search, and errors shown to you are plain-language (details go to the log).
+
+#### SQLite in rollback-journal mode, not WAL
+The research lane, background rescans and the web app share one SQLite file.
+WAL would allow more concurrency, but its shared-memory index doesn't work across
+Docker Desktop's file sharing: opening the database from the host while the
+container ran deleted the live WAL file and silently lost writes. Instead each
+writer commits promptly (project rescans never hold a write while waiting on a
+model call) and connections wait out short locks.
 
 #### Separate `Action` table, not columns on `Video`
-`Video` is the already-shipped, stable core table; the action-detection
-workflow is new and still likely to change shape. Keeping it in its own
-table means schema churn there never touches the table holding the actual
-scan history, and gives a natural audit trail (failed/retried attempts are
-new rows, not overwritten fields).
-
-#### Batch API for bulk analysis, live calls for small batches
-Analyzing thousands of videos one at a time, live, is both slow and the full
-price. The [Anthropic Message Batches API](https://docs.anthropic.com) runs
-at half price with results typically within hours — worth the latency for a
-one-time catch-up of a large backlog, not worth it for "analyze the 10 I just
-imported," where you're waiting on the page. `app/worker.py` and
-`app/batch.py` expose both; the UI picks a sensible default per context.
-
-#### Bearer-token auth scoped only to the new machine-to-machine routes
-The dashboard has no login — it's a single-user, localhost-only app, and
-that's a deliberate, documented scope limit (see README). But the routes a
-daily *unattended* process calls (`/api/sync/inbox`, `/api/actions/*`) are a
-different trust boundary: nothing should be able to trigger them by just
-knowing the app is running on the network. Rather than add auth everywhere
-(which would break the existing browser-form-driven dashboard), the token
-requirement is scoped to exactly the new routes that need it.
-
-#### A dedicated bot TikTok account for the inbox sync, not automating the primary account
-The first design automated the user's own logged-in TikTok session directly
-to read their Saved page. Real testing showed TikTok's bot detection
-escalating in response to that automated traffic — and if it had gone
-further, the account put at risk would have been the user's real one. The
-current design has a disposable, dedicated account receive videos shared to
-it; if that account gets limited or banned, nothing about the user's actual
-TikTok presence is affected. Decoupling blast radius from the thing you
-actually care about is the general shape of the decision, not just a TikTok
-particular.
-
-#### The daily agent is a scheduled session of this harness, not bespoke agent code
-Writing code, opening PRs, and drafting tailored documents is exactly what
-an agentic coding session already does well. Building a second, bespoke
-Anthropic-tool-use loop to replicate that — or shelling out to a separate
-headless CLI invocation — would be more code for a worse version of a
-capability that already exists. The app's job is narrower: be a reliable,
-testable data layer (ingest, collect, analyze, queue) that something with
-real tool access can drive.
-
-#### Telegram as the share target, long-polled rather than webhooked
-TikTok's own share sheet lists Telegram, so sharing a video is as short as
-sharing to any other app, and the same chat carries the result back. Long
-polling (`getUpdates`) instead of a webhook means a laptop install needs no
-public URL or tunnel, and a cloud install needs no extra config. The bot pairs
-to exactly one chat with a one-time code from Settings and ignores every other
-chat. This replaces the DM-scraping inbox sync as the main intake: that path
-depended on a browser session TikTok kept revoking.
-
-#### The research agent is in-app API calls, not a scheduled session
-Unlike the daily agent below, research has to come back within minutes of a
-share, and it needs no repo or filesystem access, only the web. So it's a
-small manual tool loop in `app/agent.py`: server-side web search/fetch, one
-client tool (`github_repo`, live facts rather than the video's claims), and a
-`record_findings` tool that ends the run with a structured report. Only videos
-you share are researched (never the export backlog), and a daily dollar cap is
-checked between requests.
-
-#### Gemini watches the video; searches are effectively free
-Research on Claude cost $0.10–0.50 per item, mostly from looping and paid web
-searches. A Grok + Jev design (Jev, a cheap decision model, gating which items
-got paid searches) brought that to ~$0.01–0.05, but still transcribed with
-Whisper and read four OCR'd frames. Gemini replaced both steps: it takes the
-downloaded video file and processes audio and frames together, so it reads code,
-menus and prices on screen. Grounded Google Search is free up to 5,000 requests
-a month on paid Gemini 3 models, which made the gate pointless, and Google Maps
-grounding covers places. The video is watched once; the analysis call saves a
-transcript and on-screen text, and the research loop works from that text.
-Grok and Claude remain switchable providers behind the same prompts and tools.
-
-#### Judging videos against your own projects, without leaking secrets
-Every project in `~/Projects` gets a short card (purpose, stack, architecture,
-pain points, next steps). Grok writes it once, and it's rebuilt only when the
-project's files change. The agent reads the relevant cards and can open files to back
-up claims about where something plugs in. Everything goes through one reader
-that refuses secret-looking paths, data folders, binaries and anything that
-resolves outside the project, and Docker mounts the folders read-only.
-
-#### A Shortcut + ntfy as the doorway, Telegram optional
-The share sheet is the most convenient place to start from, and an iOS
-Shortcut sits right in it. ntfy.sh relays the link the same way Telegram did:
-the app pulls from it, so nothing needs a tunnel or a public URL. The trade-off
-is that ntfy topics are secret only by obscurity, so topic names are long and
-random and every inbound message must also carry a separate token.
-
-#### Never fully automate a job application submission
-This isn't a configurable setting — it's a hard boundary regardless of how
-autonomous the rest of the pipeline is. The agent can draft a tailored
-resume and cover letter; submitting it is always a manual action the person
-takes themselves. Two independent things enforce this: the daily agent's
-own instructions never give it tool access to a live job site in that
-branch of work, and (separately, unconditionally) no Claude session —
-scheduled or interactive — will autonomously submit a form or enter personal
-data into a third-party site on someone's behalf.
-
-#### Why two phases, not one pipeline step
-`collect` (download, transcribe, OCR) is free and CPU-bound; `analyze` is
-the one step that costs real money per video. Splitting them means a large
-backlog can be collected overnight for free, then analyzed later under an
-explicit spending cap — rather than every retry of a failed run re-paying
-for the parts that already worked. `app/worker.py`'s job modes (`collect`,
-`analyze`, `full`) exist specifically to let either run independently.
+`Video` is the stable library table; the research workflow changes shape often.
+Keeping it separate means that churn never touches the library's history.
 
 ## Testing
 
-`tests/` covers the pure logic (export parsing, category normalization, the
-staleness heuristic), the Claude-calling code with a **mocked Anthropic
-client** (no API key or spend needed to test request-building and response
-parsing), the idempotent `Action`-queue creation, and the new `/api/*` routes
-via FastAPI's `TestClient`. CI (`.github/workflows/ci.yml`) runs `ruff check`
-and the full suite on every push, plus a separate job that builds the Docker
-image — which would have caught a real bug hit during development (a
-`playwright install --with-deps` step that failed on arm64 Debian) before it
-ever reached a working machine.
+No test calls a real service: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
+faked with `httpx.MockTransport` or small fake SDK clients, so the suite runs
+free and offline. Beyond the logic, it covers the security boundaries (foreign
+Host, cross-site posts, private-address fetches, image stripping, secret
+scrubbing, a corrupt secrets file) and the failure paths (rate limits, dropped
+connections, blocked downloads, restarts). CI runs `ruff`, the suite and a Docker
+build on every push.
