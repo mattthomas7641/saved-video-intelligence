@@ -28,7 +28,7 @@
     <h1>Your sidequests</h1>
     <p class="sub">Everything you've sent, looked into and sorted. From any app: Share → Send to Sidequest.</p>
   </div>
-  <div class="spend" title="Research spend today (resets at midnight UTC)">
+  <div class="spend" title="Research spend today, from the run ledger (resets at local midnight)">
     <div class="line"><span>Today</span><span class="num">${{ "%.2f"|format(spent_today) }} <span class="of">of ${{ "%.2f"|format(agent_settings.daily_cap_usd) }}</span></span></div>
     <div class="meter"><span style="width:{{ [100, (spent_today / agent_settings.daily_cap_usd * 100) if agent_settings.daily_cap_usd else 100]|min }}%"></span></div>
   </div>
@@ -84,6 +84,7 @@
   <div class="work-row stuck" id="a{{ a.id }}">
     <span class="ci">{{ icon("alert") }}</span>
     <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why or "Something went wrong. Tap Retry." }}</span></span>
+    <a class="btn btn-quiet" href="/runs/{{ a.id }}" title="What happened">Trace</a>
     <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
     <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me" aria-label="Not for me">{{ icon("archive") }}</button></form>
   </div>
@@ -189,6 +190,7 @@
           {% if v.tiktok_url.startswith("http") %}<a href="{{ v.tiktok_url }}" target="_blank" rel="noopener">Original {{ icon("external") }}</a>
           {% elif v.tiktok_url.startswith("image:") %}<a href="/media/thumb/{{ v.id }}" target="_blank" rel="noopener">Your screenshot {{ icon("external") }}</a>{% endif %}
           <a href="/video/{{ v.id }}">Details</a>
+          <a href="/runs/{{ a.id }}">Trace</a>
           {% if a.cost_usd %}<span class="faint num">${{ "%.2f"|format(a.cost_usd) }}</span>{% endif %}
           <span class="spacer"></span>
           <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="deep" value="true"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Runs a fuller web search: about $0.03–0.06" onclick="return confirm('Research this again with a fuller web search? About $0.03–0.06.')">{{ icon("search") }} Research deeper</button></form>

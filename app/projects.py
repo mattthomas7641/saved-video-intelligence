@@ -23,6 +23,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
+from app import tracing
 from app.config import BASE_DIR, PROJECTS_DIR, get_agent_settings, get_gemini_key, get_project_overrides, get_xai_key
 from app.models import Project
 
@@ -188,6 +189,10 @@ def planned_ideas_text(projects_dir: Path = None) -> str:
                                    f"## PLAN.md\n{plan}" if plan else ""] if x)
 
 
+def _over_cap(session: Session) -> bool:
+    return tracing.spend_today(session) >= get_agent_settings()["daily_cap_usd"]
+
+
 def _card_maker():
     """Whichever cheap model has a key: Gemini first, then Grok; None means README cards."""
     if get_gemini_key():
@@ -211,6 +216,9 @@ def refresh(session: Session, make_card=None, projects_dir: Path = None) -> dict
     returns (card_text, cost_usd); without one (no xAI key) cards fall back to the README."""
     if make_card is None:
         make_card = _card_maker()
+    if make_card is not None and _over_cap(session):
+        log.info("Daily spending cap reached: project cards use the free README summary until tomorrow")
+        make_card = None
     seen, rebuilt, cost = set(), 0, 0.0
     for name, root in project_roots(projects_dir).items():
         scanned = scan(root)
@@ -242,7 +250,8 @@ def _upsert(session: Session, name: str, path: str, status: str, text: str, make
     card, card_cost, source = None, 0.0, "readme"
     if needs_card and make_card is not None:
         try:
-            card, card_cost = make_card(name, text)
+            with tracing.run("project_card"):  # counts toward the daily cap like any other spend
+                card, card_cost = make_card(name, text)
             source = "model"
         except Exception as e:  # noqa: BLE001 - a card failure must not block the rest
             log.warning("Card for %s failed: %s", name, e)

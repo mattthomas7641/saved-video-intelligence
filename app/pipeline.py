@@ -11,6 +11,7 @@ from app import analyze as analyze_mod
 from app import download as download_mod
 from app import ocr as ocr_mod
 from app import relevance as relevance_mod
+from app import tracing
 from app import transcribe as transcribe_mod
 from app.config import DELETE_VIDEO_AFTER_PROCESS
 from app.models import Action, ActionStatus, ActionType, Status, Video
@@ -177,9 +178,9 @@ def _touch(session: Session, video: Video) -> None:
 # job running in worker.py. Bulk/export videos never reach the research agent.
 
 def agent_spend_today(session: Session) -> float:
-    start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    rows = session.exec(select(Action.cost_usd).where(Action.updated_at >= start)).all()
-    return sum(r or 0.0 for r in rows)
+    """Everything spent since local midnight, from the run ledger: research, watching,
+    failed attempts and project cards alike."""
+    return tracing.spend_today(session)
 
 
 def _action_for(session: Session, video: Video) -> Action:
@@ -249,7 +250,11 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         on_progress("Watching the video…" if provider == "gemini" and video.local_video_path else "Reading it…")
         had_file = bool(video.local_video_path)
         try:
-            analysis_cost = analyze_video(session, video, analyzer)
+            with tracing.run("analysis", action_id=action_row.id if action_row else None, video_id=video.id,
+                             provider=provider) as run:
+                analysis_cost = analyze_video(session, video, analyzer)
+                if video.status != Status.DONE:
+                    run.fail(video.error_message or "Analysis failed.")
         finally:
             _drop_video_file(session, video)  # whatever happened, the file isn't kept around
             if video.status != Status.DONE and had_file:
@@ -270,7 +275,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         return action
 
-    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session) - analysis_cost
+    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)  # analysis is already in the ledger
     action.status = ActionStatus.IN_PROGRESS
     action.error_message = None
     _touch_action(session, action)
@@ -290,8 +295,9 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         context = agent_mod.Context(projects=agent_mod.projects_context(cards, [c.name for c in cards]) if tech else "",
                                     prefetch=prefetch_mod.as_context(found))
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
-        findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
-                                 web=web, x_search=x_search, context=context, provider=provider, tech=tech)
+        with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
+            findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
+                                     web=web, x_search=x_search, context=context, provider=provider, tech=tech)
     except agent_mod.CapReached as e:
         action.status = ActionStatus.NEEDS_INPUT
         action.error_message = f"{e} Raise the daily cap in Settings, then re-run it from the Agent page."
@@ -318,13 +324,15 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                                         "from the link and caption only.\n\n" + findings.report_markdown)
         action.status = ActionStatus.DRAFTED
         action.verdict = findings.verdict
-        action.cost_usd = round(findings.cost_usd + plan_cost + analysis_cost, 4)
+        _ = analysis_cost  # recorded in the ledger by its run
         action.result = findings.to_json()
     _touch_action(session, action)
     return action
 
 
 def _touch_action(session: Session, action: Action) -> None:
+    if action.id is not None:
+        action.cost_usd = round(tracing.action_cost(session, action.id, action.video_id), 4) or None  # every attempt
     action.updated_at = datetime.utcnow()
     session.add(action)
     session.commit()

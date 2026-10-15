@@ -28,7 +28,7 @@ from pathlib import Path
 
 import httpx
 
-from app import agent
+from app import agent, tracing
 from app.analyze import _TOOL_SCHEMA as ANALYSIS_TOOL
 from app.analyze import AnalysisResult, FatalAnalysisError, build_params
 from app.config import AGENT_MODEL_GEMINI, ANALYSIS_MODEL_GEMINI, get_gemini_key
@@ -106,7 +106,10 @@ def _create(client, retries: int = 2, **params):
     Throttled; a rejected key becomes FatalAnalysisError (only you can fix it)."""
     for attempt in range(retries + 1):
         try:
-            return client.interactions.create(**params)
+            started = time.monotonic()
+            interaction = client.interactions.create(**params)
+            _trace(interaction, params.get("model", ""), started)
+            return interaction
         except Exception as e:  # the SDK raises several error families; classify by HTTP status
             status, text = _status(e), str(e).lower()
             if status in (401, 403) and ("key" in text or "permission" in text or "unauthor" in text):
@@ -122,6 +125,14 @@ def _create(client, retries: int = 2, **params):
                 raise Throttled(str(e)[:300]) from e
             log.warning("Gemini rate limited (attempt %s); retrying", attempt + 1)
             time.sleep(BACKOFF_S * (attempt + 1))
+
+
+def _trace(interaction, model: str, started: float) -> None:
+    u = getattr(interaction, "usage", None)
+    tracing.model_call(model, interaction_cost(interaction, model),
+                       (getattr(u, "total_input_tokens", 0) or 0) if u else 0,
+                       ((getattr(u, "total_output_tokens", 0) or 0) + (getattr(u, "total_thought_tokens", 0) or 0)) if u else 0,
+                       searches=_searches(interaction), ms=int((time.monotonic() - started) * 1000))
 
 
 def interaction_cost(interaction, model: str) -> float:

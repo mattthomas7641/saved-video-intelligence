@@ -14,12 +14,13 @@ Claude path in app/agent.py.
 """
 import json
 import logging
+import time
 
 import httpx
 import openai
 from openai import OpenAI
 
-from app import agent
+from app import agent, tracing
 from app.analyze import _TOOL_SCHEMA as ANALYSIS_TOOL
 from app.analyze import AnalysisResult, FatalAnalysisError, build_params
 from app.config import AGENT_MODEL_XAI, ANALYSIS_MODEL_XAI, get_xai_key
@@ -66,7 +67,14 @@ def _fn(tool: dict) -> dict:
 
 def _create(client: OpenAI, **params):
     try:
-        return client.responses.create(**params)
+        started = time.monotonic()
+        resp = client.responses.create(**params)
+        model = params.get("model", "")
+        types = [getattr(o, "type", "") for o in resp.output or []]
+        tracing.model_call(model, response_cost(resp, model), getattr(resp.usage, "input_tokens", 0) or 0,
+                           getattr(resp.usage, "output_tokens", 0) or 0,
+                           searches=sum(1 for t in types if "search" in t), ms=int((time.monotonic() - started) * 1000))
+        return resp
     except openai.AuthenticationError as e:
         raise FatalAnalysisError("xAI rejected the API key. Check it in Settings.") from e
     except (openai.PermissionDeniedError, openai.RateLimitError, openai.BadRequestError) as e:

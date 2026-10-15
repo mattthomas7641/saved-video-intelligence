@@ -19,6 +19,7 @@ pause a turn, the spend cap has to be checked between requests, and
 """
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -26,6 +27,7 @@ import anthropic
 import httpx
 from anthropic import Anthropic
 
+from app import tracing
 from app.analyze import FatalAnalysisError
 from app.config import AGENT_MODEL, GITHUB_TOKEN, get_agent_settings, get_api_key
 from app.projects import read_project_file
@@ -354,7 +356,16 @@ On-screen text (OCR, noisy): {video.ocr_text or "(none)"}"""]
 
 
 def run_client_tool(name: str, args: dict, state: dict, on_progress=lambda text: None, tech: bool = True) -> dict:
-    """Execute one of our tools for either provider. `state` counts lookups per run."""
+    """Execute one of our tools for either provider, recording it in the run trace."""
+    started = time.monotonic()
+    out = _run_tool(name, args, state, on_progress, tech)
+    tracing.tool_call(name, args, ok="error" not in out, ms=int((time.monotonic() - started) * 1000),
+                      note=str(out.get("error", ""))[:120])
+    return out
+
+
+def _run_tool(name: str, args: dict, state: dict, on_progress, tech: bool) -> dict:
+    """`state` counts lookups per run."""
     if name == "github_repo":
         state["lookups"] = state.get("lookups", 0) + 1
         repo = str(args.get("repo", ""))
@@ -558,7 +569,13 @@ def _run_anthropic(video, action_type, brief, budget_usd, on_progress, client, w
         if cost >= budget_usd:
             raise CapReached(f"Stopped at ${cost:.2f}: today's research budget is used up.")
         try:
+            started = time.monotonic()
             response = client.beta.messages.create(**params, messages=messages)
+            u = response.usage
+            tracing.model_call(model, request_cost(u, model), getattr(u, "input_tokens", 0) or 0,
+                               getattr(u, "output_tokens", 0) or 0,
+                               searches=getattr(getattr(u, "server_tool_use", None), "web_search_requests", 0) or 0,
+                               ms=int((time.monotonic() - started) * 1000))
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
             raise FatalAnalysisError("Anthropic rejected the API key. Check it in Settings.") from e
         except anthropic.BadRequestError as e:
