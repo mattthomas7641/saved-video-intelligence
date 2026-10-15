@@ -55,6 +55,22 @@ erDiagram
         string result "JSON report"
         float cost_usd
     }
+    ACTION ||--o{ RUN : "paid attempts"
+    ACTION ||--o| MEMORY : "remembered as"
+    RUN {
+        int id PK
+        int action_id FK
+        string kind "analysis | research | card | memory | eval"
+        string status "ok | failed"
+        float cost_usd
+        string steps "JSON: model and tool calls, in order"
+    }
+    MEMORY {
+        int id PK
+        int action_id FK
+        string text
+        string vector "768-d, normalised"
+    }
     PROJECT {
         int id PK
         string name UK
@@ -115,6 +131,26 @@ Docker Desktop's file sharing: opening the database from the host while the
 container ran deleted the live WAL file and silently lost writes. Instead each
 writer commits promptly (project rescans never hold a write while waiting on a
 model call) and connections wait out short locks.
+
+#### The ledger is the trace
+Spend isn't a counter on each item: every paid attempt writes one `Run` row with
+its steps, and the daily cap, per-item cost and the trace page all read from it.
+A failed attempt or a re-run can't be forgotten or overwritten, and "why did this
+cost $0.08?" is answered by opening the trace. Recording uses a context variable,
+so provider clients report calls without threading a tracker through every function.
+
+#### Memory is brute-force cosine in SQLite
+Recall compares the new item against every stored vector in Python. At a few
+hundred reports that's under a millisecond, so a vector database (or sqlite-vec)
+would add a dependency and an operational piece for no gain. Memory is
+best-effort: if embedding fails, research carries on without it.
+
+#### Evals come from real use and stay local
+The cases are things actually sent, with the answers the agent gave (corrected by
+hand where it was wrong), so they test the traffic that matters rather than
+invented examples. They hold personal content, so they live in `data/evals/`
+(git-ignored), not in the repo. Runs are manual, capped per run, and recorded as
+`eval` runs that count in the ledger but not against the daily cap.
 
 #### Separate `Action` table, not columns on `Video`
 `Video` is the stable library table; the research workflow changes shape often.

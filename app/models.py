@@ -149,3 +149,14 @@ class Run(SQLModel, table=True):
     output_tokens: int = 0
     searches: int = 0
     steps: str | None = None           # JSON list of model/tool steps, in order
+
+
+class Memory(SQLModel, table=True):
+    """One finished report, embedded, so later research can recall related past shares."""
+    id: int | None = Field(default=None, primary_key=True)
+    action_id: int = Field(index=True, unique=True)
+    video_id: int | None = None
+    text: str                          # what was embedded: type, headline, summary, next step, fits
+    vector: str                        # JSON list of floats, unit length
+    model: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
