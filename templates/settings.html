@@ -83,6 +83,15 @@
     <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
   </form>
   {% if key_status == "agent_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  <div class="key-row" style="margin-top:14px">
+    <div><strong>Memory</strong> <span class="hint" style="margin:0">{{ memory_stats.remembered }} of {{ memory_stats.reports }} reports remembered</span>
+      <p class="hint" style="margin-top:4px">New reports are remembered automatically, so later research can build on related things you sent before.</p></div>
+    {% if memory_stats.remembered < memory_stats.reports %}
+    <form action="/settings/memory" method="post"><button class="btn" type="submit">Remember past reports (under $0.01)</button></form>
+    {% endif %}
+    {% if key_status == "memory_nokey" %}<p style="color:var(--flag)">Add a Gemini key first.</p>
+    {% elif key_status.startswith("memory_") %}<p style="color:var(--family)">Added {{ key_status[7:] }} reports to memory.</p>{% endif %}
+  </div>
   {% if spend_days %}
   <details style="margin-top:14px">
     <summary class="settings-summary"><strong>Spending, last 14 days</strong> <span class="hint" style="margin:0">${{ "%.2f"|format(spend_days|sum(attribute=1)) }} total</span></summary>

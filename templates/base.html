@@ -1,4 +1,5 @@
 {% from "_icons.html" import icon %}
+{% from "_logo.html" import logo %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -8,15 +9,21 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#EEEEEA">
+  <meta name="apple-mobile-web-app-title" content="Sidequest">
   <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}">
 </head>
 <body {% block bodyattrs %}{% endblock %}>
 {% block body %}
   <header class="topbar">
-    <a href="/" class="brand">Sidequest</a>
+    <a href="/" class="brand">{{ logo() }}<span>Sidequest</span></a>
     <nav>
       <a class="btn btn-quiet" href="/">{{ icon("inbox") }} Quests</a>
       <a class="btn btn-quiet" href="/dashboard">{{ icon("library") }} Archive</a>
+      <a class="btn btn-quiet" href="/evals">{{ icon("check") }} Evals</a>
       <a class="btn btn-quiet" href="/settings">{{ icon("settings") }} Settings</a>
     </nav>
   </header>
