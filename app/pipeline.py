@@ -14,6 +14,7 @@ from app import relevance as relevance_mod
 from app import transcribe as transcribe_mod
 from app.config import DELETE_VIDEO_AFTER_PROCESS
 from app.models import Action, ActionStatus, ActionType, Status, Video
+from app.netutil import user_message
 from app.throttle import looks_like_throttle, throttle
 
 log = logging.getLogger("pipeline")
@@ -208,8 +209,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         collect_video(session, video, transcribe=provider != "gemini")
         if provider == "gemini" and video.status == Status.TRANSCRIBED and not gemini_client.can_watch(video):
             on_progress("Too long to send whole; transcribing…")  # rare: over the inline size limit
-            video.status = Status.DOWNLOADED
-            collect_video(session, video)
+            transcribe_existing(session, video)
         if video.status != Status.TRANSCRIBED:
             if not (video.tiktok_url or "").startswith("http"):
                 raise RuntimeError(video.error_message or "Couldn't download this video.")
@@ -266,7 +266,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     except agent_mod.CapReached as e:
         action.status = ActionStatus.NEEDS_INPUT
         action.error_message = f"{e} Raise the daily cap in Settings, then re-run it from the Agent page."
-    except (agent_mod.AgentError, RuntimeError) as e:
+    except agent_mod.AgentError as e:  # our own, readable messages
         action.status = ActionStatus.FAILED
         action.error_message = str(e)[:500]
     except analyze_mod.FatalAnalysisError:
@@ -280,7 +280,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                                     "raises the limits; then tap Retry.")
         else:
             log.exception("Research failed for video %s", video.id)
-            action.error_message = f"Research failed: {e}"[:500]
+            action.error_message = user_message(e)
     else:
         if download_failed:
             findings.report_markdown = ("> Couldn't download this video (the site blocked it), so this was judged "
@@ -311,6 +311,20 @@ def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[
         return True, False
     web = deep or action_type in _WEB_TYPES
     return web, provider == "xai" and action_type == "research" and deep
+
+
+def transcribe_existing(session: Session, video: Video) -> None:
+    """Whisper + OCR on the file already downloaded (no second download)."""
+    path = video.local_video_path
+    if path and Path(path).exists():
+        video.transcript = transcribe_mod.transcribe(path)
+        try:
+            video.ocr_text = ocr_mod.extract_on_screen_text(path, video.duration_seconds)
+        except Exception as e:  # noqa: BLE001 - OCR is best effort
+            log.warning("OCR failed for video %s: %s", video.id, e)
+    _drop_video_file(session, video)
+    video.status = Status.TRANSCRIBED
+    _touch(session, video)
 
 
 def _drop_video_file(session: Session, video: Video) -> None:
