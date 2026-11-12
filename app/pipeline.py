@@ -1,4 +1,5 @@
 """Per-video stages. Collect (download, transcribe, OCR) is free; analyze is the paid Claude call."""
+import json
 import logging
 import random
 import time
@@ -9,14 +10,21 @@ from sqlmodel import Session, select
 
 from app import analyze as analyze_mod
 from app import download as download_mod
+from app import memory as memory_mod
 from app import ocr as ocr_mod
 from app import relevance as relevance_mod
+from app import tracing
 from app import transcribe as transcribe_mod
 from app.config import DELETE_VIDEO_AFTER_PROCESS
 from app.models import Action, ActionStatus, ActionType, Status, Video
+from app.netutil import user_message
 from app.throttle import looks_like_throttle, throttle
 
 log = logging.getLogger("pipeline")
+
+
+class PipelineError(RuntimeError):
+    """A step failed in a way already put into plain words for the owner's card."""
 
 
 def collect_video(session: Session, video: Video, should_stop=lambda: False, transcribe: bool = True) -> None:
@@ -76,7 +84,18 @@ def collect_video(session: Session, video: Video, should_stop=lambda: False, tra
             log.exception("Collect failed for video %s", video.id)
             video.status = Status.ERROR
             video.error_message = message[:500]
+        download_mod.discard_files(video.id)  # half-downloaded .part files, or a file we can't use
+        video.local_video_path = None
         _touch(session, video)
+
+
+def _action_type(value) -> ActionType:
+    """The model's action_type as our enum; anything off the list is OTHER, not a crash."""
+    try:
+        return ActionType(value)
+    except ValueError:
+        log.warning("Unknown action_type %r from analysis; using other", value)
+        return ActionType.OTHER
 
 
 def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.AnalysisResult) -> None:
@@ -87,13 +106,13 @@ def _queue_action_if_new(session: Session, video: Video, analysis: analyze_mod.A
     if existing:
         if existing.brief is None and existing.action_type == ActionType.OTHER:
             # The placeholder intake creates so a shared item shows up at once: fill it in now.
-            existing.action_type = ActionType(analysis.action_type)
-            existing.brief = analysis.action_brief
+            existing.action_type = _action_type(analysis.action_type)
+            existing.brief = analysis.action_brief or ""
             session.add(existing)
         return
     session.add(Action(
         video_id=video.id,
-        action_type=ActionType(analysis.action_type),
+        action_type=_action_type(analysis.action_type),
         status=ActionStatus.QUEUED,
         brief=analysis.action_brief,
     ))
@@ -147,10 +166,6 @@ def analyze_video(session: Session, video: Video, analyzer=None) -> float:
     return cost
 
 
-def process_video(session: Session, video: Video) -> float:
-    collect_video(session, video)
-    return analyze_video(session, video) if video.status == Status.TRANSCRIBED else 0.0
-
 
 def _touch(session: Session, video: Video) -> None:
     video.updated_at = datetime.utcnow()
@@ -165,17 +180,23 @@ def _touch(session: Session, video: Video) -> None:
 # job running in worker.py. Bulk/export videos never reach the research agent.
 
 def agent_spend_today(session: Session) -> float:
-    start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    rows = session.exec(select(Action.cost_usd).where(Action.updated_at >= start)).all()
-    return sum(r or 0.0 for r in rows)
+    """Everything spent since local midnight, from the run ledger: research, watching,
+    failed attempts and project cards alike."""
+    return tracing.spend_today(session)
 
 
 def _action_for(session: Session, video: Video) -> Action:
     action = session.exec(select(Action).where(Action.video_id == video.id)).first()
     if action:
+        if action.brief is None and action.action_type == ActionType.OTHER:
+            # Analysis ran but didn't flag it actionable: brief the agent from the summary, so
+            # a Retry doesn't pay for the analysis again.
+            action.brief = video.summary or ""
+            session.add(action)
         return action
     # Analysis is told shared videos are always actionable, but don't depend on it.
-    action = Action(video_id=video.id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED, brief=video.summary)
+    action = Action(video_id=video.id, action_type=ActionType.OTHER, status=ActionStatus.QUEUED,
+                    brief=video.summary or "")
     session.add(action)
     session.commit()
     session.refresh(action)
@@ -208,11 +229,10 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         collect_video(session, video, transcribe=provider != "gemini")
         if provider == "gemini" and video.status == Status.TRANSCRIBED and not gemini_client.can_watch(video):
             on_progress("Too long to send whole; transcribing…")  # rare: over the inline size limit
-            video.status = Status.DOWNLOADED
-            collect_video(session, video)
+            transcribe_existing(session, video)
         if video.status != Status.TRANSCRIBED:
             if not (video.tiktok_url or "").startswith("http"):
-                raise RuntimeError(video.error_message or "Couldn't download this video.")
+                raise PipelineError("Couldn't get this ready to analyze. Tap Retry.")
             # Blocked or private (common on Instagram): judge it from the link instead of failing.
             log.warning("Download failed for shared video %s (%s); using the link", video.id, video.error_message)
             download_failed = True
@@ -230,10 +250,22 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     if video.status in (Status.TRANSCRIBED, Status.ANALYZING, Status.SUBMITTED) or (
             video.status == Status.DONE and needs_analysis):
         on_progress("Watching the video…" if provider == "gemini" and video.local_video_path else "Reading it…")
-        analysis_cost = analyze_video(session, video, analyzer)
-        _drop_video_file(session, video)
+        had_file = bool(video.local_video_path)
+        try:
+            with tracing.run("analysis", action_id=action_row.id if action_row else None, video_id=video.id,
+                             provider=provider) as run:
+                analysis_cost = analyze_video(session, video, analyzer)
+                if video.status != Status.DONE:
+                    run.fail(video.error_message or "Analysis failed.")
+        finally:
+            _drop_video_file(session, video)  # whatever happened, the file isn't kept around
+            if video.status != Status.DONE and had_file:
+                video.status = Status.PENDING  # the file is gone: Retry downloads it again (free)
+                _touch(session, video)
         if video.status != Status.DONE:
-            raise RuntimeError(video.error_message or "Analysis failed.")
+            raise PipelineError("Couldn't analyze this (details are in the app log). Tap Retry.")
+    elif video.status == Status.DONE:
+        _drop_video_file(session, video)  # e.g. a restart right after analysis left the file behind
 
     action = _action_for(session, video)
     action.telegram_chat_id = chat_id or action.telegram_chat_id
@@ -245,7 +277,7 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         return action
 
-    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session) - analysis_cost
+    budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)  # analysis is already in the ledger
     action.status = ActionStatus.IN_PROGRESS
     action.error_message = None
     _touch_action(session, action)
@@ -253,7 +285,11 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     plan_cost = 0.0
     try:
         on_progress("Looking up links and repos…")
-        found = prefetch_mod.gather(video)
+        try:
+            found = prefetch_mod.gather(video)
+        except Exception as e:  # noqa: BLE001 - free legwork; the agent can look things up itself
+            log.warning("Prefetch failed for video %s: %s", video.id, e)
+            found = {"repos": [], "pages": []}
         # Only tech content is judged against your projects; food, products, fitness etc. get a general review.
         tech = agent_mod.is_tech(action_type, video.category)
         cards = projects_mod.cards(session) if tech else []
@@ -261,16 +297,21 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         context = agent_mod.Context(projects=agent_mod.projects_context(cards, [c.name for c in cards]) if tech else "",
                                     prefetch=prefetch_mod.as_context(found))
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
-        findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
-                                 web=web, x_search=x_search, context=context, provider=provider, tech=tech)
+        with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
+            related = _recall(session, video, action)
+            context.memory = memory_mod.context_block(related)
+            findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
+                                     web=web, x_search=x_search, context=context, provider=provider, tech=tech)
     except agent_mod.CapReached as e:
         action.status = ActionStatus.NEEDS_INPUT
         action.error_message = f"{e} Raise the daily cap in Settings, then re-run it from the Agent page."
-    except (agent_mod.AgentError, RuntimeError) as e:
+    except agent_mod.AgentError as e:  # our own, readable messages
         action.status = ActionStatus.FAILED
         action.error_message = str(e)[:500]
-    except analyze_mod.FatalAnalysisError:
-        action.status = ActionStatus.QUEUED
+    except analyze_mod.FatalAnalysisError as e:
+        # Only you can fix this (no key, no credit): park it where the home page shows why.
+        action.status = ActionStatus.NEEDS_INPUT
+        action.error_message = f"{e} Then tap Retry."[:500]
         _touch_action(session, action)
         raise
     except Exception as e:  # noqa: BLE001 - report it on the card and in Telegram, don't kill the lane
@@ -280,20 +321,52 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                                     "raises the limits; then tap Retry.")
         else:
             log.exception("Research failed for video %s", video.id)
-            action.error_message = f"Research failed: {e}"[:500]
+            action.error_message = user_message(e)
     else:
         if download_failed:
             findings.report_markdown = ("> Couldn't download this video (the site blocked it), so this was judged "
                                         "from the link and caption only.\n\n" + findings.report_markdown)
+        findings.related = [{"action_id": r["action_id"], "headline": r["headline"], "date": r["date"]}
+                            for r in related]
         action.status = ActionStatus.DRAFTED
         action.verdict = findings.verdict
-        action.cost_usd = round(findings.cost_usd + plan_cost + analysis_cost, 4)
+        _ = analysis_cost  # recorded in the ledger by its run
         action.result = findings.to_json()
     _touch_action(session, action)
+    if action.status == ActionStatus.DRAFTED:
+        _remember(session, action, video)
     return action
 
 
+def _recall(session: Session, video: Video, action: Action) -> list[dict]:
+    """Related past reports for this item, or [] - memory must never fail an item."""
+    from app import memory as memory_mod
+
+    if not memory_mod.enabled():
+        return []
+    try:
+        query = "\n".join(x for x in [action.brief, video.summary, getattr(video, "user_note", None)] if x)
+        return memory_mod.recall(session, query, exclude_action_id=action.id)
+    except Exception:  # noqa: BLE001
+        log.exception("Memory recall failed for video %s; researching without it", video.id)
+        return []
+
+
+def _remember(session: Session, action: Action, video: Video) -> None:
+    from app import memory as memory_mod
+
+    if not memory_mod.enabled():
+        return
+    try:
+        with tracing.run("memory", action_id=action.id, video_id=video.id, provider="gemini"):
+            memory_mod.remember(session, action, video, json.loads(action.result or "{}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Couldn't add action %s to memory", action.id)
+
+
 def _touch_action(session: Session, action: Action) -> None:
+    if action.id is not None:
+        action.cost_usd = round(tracing.action_cost(session, action.id, action.video_id), 4) or None  # every attempt
     action.updated_at = datetime.utcnow()
     session.add(action)
     session.commit()
@@ -311,6 +384,20 @@ def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[
         return True, False
     web = deep or action_type in _WEB_TYPES
     return web, provider == "xai" and action_type == "research" and deep
+
+
+def transcribe_existing(session: Session, video: Video) -> None:
+    """Whisper + OCR on the file already downloaded (no second download)."""
+    path = video.local_video_path
+    if path and Path(path).exists():
+        video.transcript = transcribe_mod.transcribe(path)
+        try:
+            video.ocr_text = ocr_mod.extract_on_screen_text(path, video.duration_seconds)
+        except Exception as e:  # noqa: BLE001 - OCR is best effort
+            log.warning("OCR failed for video %s: %s", video.id, e)
+    _drop_video_file(session, video)
+    video.status = Status.TRANSCRIBED
+    _touch(session, video)
 
 
 def _drop_video_file(session: Session, video: Video) -> None:

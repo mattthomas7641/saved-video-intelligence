@@ -9,18 +9,20 @@ the env var at import time - hence it runs at conftest module level, not
 inside a fixture function.
 """
 import os
+import shutil
 import tempfile
 
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="scanner_test_")
 os.environ["SCANNER_DATA_DIR"] = _TEST_DATA_DIR
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-placeholder")
-os.environ["SVI_DISABLE_TELEGRAM"] = "1"  # no background Bot API polling during tests
+os.environ["SVI_DISABLE_TELEGRAM"] = "1"
+os.environ["ALLOWED_HOSTS"] = "testserver"  # FastAPI's TestClient sends Host: testserver  # no background Bot API polling during tests
 
 import pytest
 from sqlmodel import SQLModel
 
 import app.models  # noqa: F401 - registers Video/Action on SQLModel.metadata
-from app.config import SECRETS_PATH
+from app.config import DATA_DIR, SECRETS_PATH
 from app.db import engine, get_session, init_db
 
 
@@ -43,6 +45,7 @@ def clean_db():
         conn.commit()
     init_db()
     SECRETS_PATH.unlink(missing_ok=True)
+    shutil.rmtree(DATA_DIR / "evals", ignore_errors=True)  # eval cases/runs are files, not tables
     yield
 
 

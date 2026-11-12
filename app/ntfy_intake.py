@@ -69,14 +69,19 @@ def _clip(text: str) -> str:
     return text if len(data) <= MAX_BYTES else data[:MAX_BYTES].decode(errors="ignore") + "…"
 
 
+def deep_signature(action_id: int) -> str:
+    return hmac.new(get_ntfy_settings()["token"].encode(), f"deep:{int(action_id)}".encode(), "sha256").hexdigest()
+
+
 def result_notification(action, video) -> dict:
     """Title/message/click/actions for a finished (or stuck) report."""
+    from app.agent import load_report
     from app.telegram_bot import TYPE_LABELS, VERDICT_LABELS, fit_line, report_link
 
     s = get_ntfy_settings()
     click = report_link(action) or (video.tiktok_url if video.tiktok_url.startswith("http") else None)
-    if action.status.value == "drafted" and action.result:
-        r = json.loads(action.result)
+    r = load_report(action.result) if action.status.value == "drafted" else None
+    if r:
         lines = [r.get("telegram_text", "")]
         fit = fit_line(r)
         if fit:
@@ -85,8 +90,10 @@ def result_notification(action, video) -> dict:
             lines += [""] + [f"- {i}" for i in r["ideas"][:3]]
         if not report_link(action):
             lines += ["", "_Full report on the dashboard's Agent page._"]
+        # Signed for this one action, so a notification (or a screenshot of one) can't be
+        # used to submit arbitrary shares the way the raw inbox token could.
         deep = {"action": "http", "label": "Research deeper", "url": f"{s['server']}/{s['inbox_topic']}",
-                "method": "POST", "body": json.dumps({"v": 1, "token": s["token"], "deep": action.id}),
+                "method": "POST", "body": json.dumps({"v": 1, "deep": action.id, "sig": deep_signature(action.id)}),
                 "clear": True}
         title = (f"{VERDICT_LABELS.get(action.verdict, '')} · {TYPE_LABELS.get(action.action_type.value, '')}: "
                  f"{r.get('headline', '')}")
@@ -121,10 +128,23 @@ def handle_message(raw: str, submit=None, attachment: dict | None = None, http: 
         return "ignored"
     if not isinstance(body, dict) or not s["token"]:
         return "ignored"
+    if body.get("deep") is not None:  # the notification's "Research deeper" button
+        try:
+            action_id = int(body["deep"])
+        except (TypeError, ValueError):
+            return "ignored"
+        if not hmac.compare_digest(str(body.get("sig", "")), deep_signature(action_id)):
+            return "ignored"
+        queued = intake.rerun(action_id, deep=True)
+        if queued is None:
+            notify("⚠️ Couldn't find that report", "It may have been removed. Open the dashboard to check.")
+            return "ignored"
+        if not queued:
+            notify("⏳ Already on it", "That one is being researched right now; the result will follow.")
+            return "busy"
+        return "deep"
     if not hmac.compare_digest(str(body.get("token", "")), s["token"]):
         return "ignored"
-    if body.get("deep"):
-        return "deep" if intake.rerun(int(body["deep"]), deep=True) else "busy"
     if attachment:
         data = _download_attachment(attachment, s["server"], http)
         if data is None:
@@ -142,8 +162,11 @@ def handle_message(raw: str, submit=None, attachment: dict | None = None, http: 
         else:
             notify("⚠️ Nothing to research", "Share a video, link, screenshot or text with Send to Sidequest.")
             return "empty"
+    if submit(video_id) is False:  # shared again while the first run is still going
+        notify("⏳ Already on it", "You sent this one a moment ago; the result will follow.", tags=["hourglass"])
+        return "busy"
     NtfyReporter().received()
-    return "queued" if submit(video_id) is not False else "busy"
+    return "queued"
 
 
 def _download_attachment(att: dict, server: str, http: httpx.Client | None = None) -> bytes | None:
@@ -167,13 +190,25 @@ def _download_attachment(att: dict, server: str, http: httpx.Client | None = Non
             client.close()
 
 
+def _handle_event(event: dict) -> None:
+    """One inbox event. Anything that goes wrong taking it in is logged and, best effort,
+    reported to the phone, so a share never just vanishes."""
+    try:
+        log.info("Send to Sidequest: %s", handle_message(event.get("message", ""), attachment=event.get("attachment")))
+    except Exception:  # noqa: BLE001 - one bad message must not stop the doorway
+        log.exception("Failed to handle ntfy message %s", event.get("id"))
+        notify("⚠️ Couldn't take that in", "Something went wrong saving what you sent (details are in the app log). "
+                                           "Try sharing it again.")
+
+
 def _stream_forever() -> None:
+    since = None  # also kept here: if saving it fails, this process still doesn't replay (and re-pay for) events
     while True:
         s = get_ntfy_settings()
         if not ready():
             time.sleep(5)
             continue
-        since = s["since"] or str(int(time.time()))  # first run: only messages from now on
+        since = since or s["since"] or str(int(time.time()))  # first run: only messages from now on
         url = f"{s['server']}/{s['inbox_topic']}/json"
         try:
             with httpx.stream("GET", url, params={"since": since}, timeout=httpx.Timeout(10, read=90)) as r:
@@ -182,17 +217,18 @@ def _stream_forever() -> None:
                     if not line:
                         continue
                     event = json.loads(line)
-                    if event.get("event") != "message":
+                    if not isinstance(event, dict) or event.get("event") != "message" or not event.get("id"):
                         continue  # open / keepalive
-                    save_ntfy_settings(since=event["id"])
+                    _handle_event(event)
+                    since = str(event["id"])
                     try:
-                        log.info("Send to Sidequest: %s", handle_message(event.get("message", ""),
-                                                                     attachment=event.get("attachment")))
-                    except Exception:  # noqa: BLE001 - one bad message must not stop the doorway
-                        log.exception("Failed to handle ntfy message %s", event.get("id"))
+                        save_ntfy_settings(since=since)  # after handling: a crash replays it
+                    except Exception as e:  # noqa: BLE001 - e.g. data/secrets.json unreadable
+                        log.warning("Couldn't save the ntfy position (%s); continuing", e)
                     if get_ntfy_settings()["inbox_topic"] != s["inbox_topic"]:
+                        since = None
                         break  # topics regenerated in Settings: reconnect
-        except (httpx.HTTPError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001 - whatever dropped the stream, reconnect rather than die
             log.warning("ntfy stream dropped (%s); reconnecting", e)
             time.sleep(5)
 

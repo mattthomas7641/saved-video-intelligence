@@ -13,3 +13,6 @@ __pycache__/
 
 # personal Docker mounts
 docker-compose.override.yml
+
+# local Claude Code state (agent worktrees)
+.claude/

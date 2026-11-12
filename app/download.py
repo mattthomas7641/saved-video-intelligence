@@ -19,6 +19,16 @@ class DownloadResult:
         self.duration_seconds = duration_seconds
 
 
+def discard_files(video_id: int) -> None:
+    """Remove whatever a download left in data/videos for this video (a finished file or
+    yt-dlp's .part / .ytdl leftovers), so a failed step doesn't fill the disk."""
+    for path in VIDEOS_DIR.glob(f"{video_id}.*"):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def download_video(url: str, video_id: int) -> DownloadResult:
     out_template = str(VIDEOS_DIR / f"{video_id}.%(ext)s")
     thumb_template = str(THUMBS_DIR / f"{video_id}.%(ext)s")
