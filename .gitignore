@@ -16,3 +16,7 @@ docker-compose.override.yml
 
 # local Claude Code state (agent worktrees)
 .claude/
+
+# Local design-tool notes
+PRODUCT.md
+.impeccable/

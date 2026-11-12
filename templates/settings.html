@@ -45,7 +45,7 @@
 
 <section class="plain-card" id="research">
   <h2>Research agent</h2>
-  <p style="margin-bottom:12px">Gemini watches each video you send (audio and picture), then researches it with Google Search and Maps. About $0.01–0.03 per item.</p>
+  <p style="margin-bottom:12px">Gemini watches each video you send (audio and picture), then researches it with Google Search and Maps. About $0.03–0.06 per video; links and screenshots cost less.</p>
 
   <div class="key-row">
     <div><strong>Gemini API key</strong> {% if has_gemini_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="tag-warn">{{ icon("alert") }} Needed</span>{% endif %}
@@ -70,7 +70,7 @@
     <label for="about_me"><strong>About me</strong> <span class="hint" style="margin:0">read every time it decides what's “useful for you”</span></label>
     <textarea class="field" id="about_me" name="about_me" rows="4" placeholder="e.g. Technology consultant in Philadelphia. Building a personal AI stack: an LLM gateway, a TikTok research agent, a ticket price monitor. Into agents, data pipelines, cheap good food.">{{ agent_settings.about_me }}</textarea>
     <label for="planned_ideas"><strong>Ideas I haven't started yet</strong> <span class="hint" style="margin:0">judged alongside your project folders and PLAN.md</span></label>
-    <textarea class="field" id="planned_ideas" name="planned_ideas" rows="3" placeholder="e.g. A budget agent on Plaid. A job-search agent that tailors resumes nightly.">{{ agent_settings.planned_ideas }}</textarea>
+    <textarea class="field" id="planned_ideas" name="planned_ideas" rows="3" placeholder="e.g. A budget agent on Plaid. A meal planner that builds a weekly grocery list.">{{ agent_settings.planned_ideas }}</textarea>
     <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--ink-2)">
       <label>Research with
         <select class="field" name="provider" style="width:auto;padding:8px 14px">

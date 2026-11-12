@@ -1,13 +1,16 @@
 # Sidequest (Saved Video Intelligence)
 
-Send it anything you come across. It does the follow-up and tells you if it's worth your time.
-
 [![CI](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/mattthomas7641/saved-video-intelligence/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
 
-Send it anything you come across — a TikTok, an Instagram Reel, a YouTube Short,
-a link or a screenshot — and a research agent (about $0.03–0.06 an item) does the
-follow-up within minutes and puts a clear next step on your **To do** list, so
-you actually act on it instead of it sitting in your saves.
+Send it anything you come across (a TikTok, an Instagram Reel, a YouTube Short,
+a link or a screenshot) and a research agent does the follow-up within minutes
+and puts a clear next step on your **To do** list, so you actually act on it
+instead of it sitting in your saves. A researched video costs about $0.03–0.06;
+links and screenshots cost less.
+
+![The home page: researched items on a To do list, each with a verdict and a next step](docs/screenshot-home.png)
 
 - **New tools and agent skills, judged against your own projects.** The most
   common use: a video about a new agent skill or dev tool. The agent reads your
@@ -48,21 +51,24 @@ Share → Telegram bot (optional)           ─┴─> intake ─> research lane
    action ("comment X and I'll DM you", link in bio, courses) are ignored.
 2. **Gemini watches it** (`gemini-3.8-flash`): one call takes in audio and frames,
    so it reads code, menus and prices on screen, and saves a transcript and the
-   on-screen text. Measured: about $0.009–0.015 per video.
-3. **The research loop** combines Google Search and Maps (free up to 5,000
-   grounded requests a month on paid Gemini 3 models) with the app's own tools:
+   on-screen text. Measured: about $0.006–0.015 per video.
+3. **The research loop** combines Google Search, plus Google Maps for places
+   (free up to 5,000 grounded requests a month on paid Gemini 3 models), with
+   the app's own tools:
    live GitHub lookups, reading your project files (tech content only) and filing
    the report. It works from the saved text, so the video is paid for once.
-   Measured: about $0.025–0.05 per item. A daily cap (default $3) stops it.
+   Measured: about $0.006–0.05 per item, about $0.03 on average. A daily cap
+   (default $3) stops it.
 4. **Tech content** is judged against your projects: where it would plug in, what
-   it changes in the architecture, effort, and whether it's worth doing for fun,
-   personal use + resume, or only a weak resume line. **Everyday content** (food,
+   it changes in the architecture, the effort, and how much it is worth doing.
+   **Everyday content** (food,
    products, fitness, money, travel) gets a practical review instead: real prices,
    red flags, alternatives, and the next step. It never touches your projects.
 5. **Act on it.** The home page sorts results by topic into **To do**, **Nothing
    to do** (looked into, nothing to act on), **Done** and **Not for me**.
 
-Grok and Claude can be switched in for research in Settings.
+Grok and Claude can be switched in for research in Settings; they work from a
+Whisper transcript and OCR instead of watching the video.
 
 ### Traces, memory and evals
 
@@ -81,7 +87,7 @@ Grok and Claude can be switched in for research in Settings.
   projects), which you can correct. A run re-researches each case with the
   current prompts and models and scores type, verdict, project matches, ignored
   calls to action and report format, so a prompt or model change shows up as a
-  number. Runs are manual, capped (about $0.03–0.05 a case) and kept off the
+  number. Runs are manual, capped (an estimated $0.03–0.05 a case) and kept off the
   daily cap; cases live only on your machine.
 
 ## Setup
@@ -91,17 +97,17 @@ Requirements: Docker Desktop, an iPhone for the Shortcut (or Telegram), and a
 input and Google Search aren't on the free tier).
 
 ```bash
-cp .env.example .env        # optional: model and timezone overrides
+cp .env.example .env        # required by docker compose; the defaults are fine
 docker compose up -d --build
 ```
 
 Open `http://127.0.0.1:8787/settings`, then:
 
-1. **Research agent:** paste the Gemini key, fill in **About me** (what you're
+1. **Send to Sidequest:** click **Create my private channel** and follow the steps
+   shown (subscribe in the free ntfy app, build the 2-minute Shortcut).
+2. **Research agent:** paste the Gemini key, fill in **About me** (what you're
    building, where you live: it's what makes "useful for you" mean something),
    and list ideas you haven't started yet.
-2. **Send to Sidequest:** click **Create my private channel** and follow the steps
-   shown (subscribe in the free ntfy app, build the 2-minute Shortcut).
 3. **Your projects:** found in `~/Projects` (`PROJECTS_DIR`), mounted read-only.
    Mark each one active, planned or ignored. Project folders that are symlinks to
    elsewhere need their targets mounted too: list them in a git-ignored
@@ -145,13 +151,16 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, tests and a Docker build on every push.
+CI runs lint, the tests (295), `pip-audit`, a Docker build and a container
+smoke test on every push and pull request.
 
 ## Project layout
 
 ```
 app/
-  main.py            FastAPI routes: home (sidequests), archive, video page, settings
+  main.py            FastAPI routes: home (sidequests), archive, video page, settings,
+                     run traces, evals, health
+  config.py, db.py, models.py, schemas.py   Settings, database session, tables, schemas
   security.py        Host/cross-site guard and security headers
   intake.py          Shared intake + research lane (both doorways)
   ntfy_intake.py     "Send to Sidequest" Shortcut doorway (ntfy relay) + notifications
@@ -172,3 +181,7 @@ templates/, static/  Jinja2 pages and CSS (no build step)
 tests/               pytest suite
 data/                SQLite DB, thumbnails, secrets (git-ignored)
 ```
+
+## License
+
+[MIT](LICENSE)

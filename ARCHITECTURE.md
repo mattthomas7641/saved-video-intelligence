@@ -24,7 +24,7 @@ flowchart LR
     PC[(project cards<br/>app/projects.py)] --> R1
     R1 --> F[(Action.result:<br/>verdict, report,<br/>project fit + value)]
     R2 --> F
-    F --> H[home page<br/>To do / Nothing to do / Done]
+    F --> H[home page<br/>To do / Nothing to do / Done / Not for me]
     F --> N[phone notification<br/>ntfy or Telegram]
 ```
 
@@ -60,7 +60,7 @@ erDiagram
     RUN {
         int id PK
         int action_id FK
-        string kind "analysis | research | card | memory | eval"
+        string kind "analysis | research | project_card | memory | eval"
         string status "ok | failed"
         float cost_usd
         string steps "JSON: model and tool calls, in order"
@@ -86,7 +86,7 @@ erDiagram
 Research on Claude cost $0.10–0.50 per item, mostly from looping and paid web
 searches. Gemini takes the downloaded file itself and processes audio and frames
 together, so it reads code, menus and prices on screen with no Whisper/OCR step
-(measured $0.009–0.015 per video). Grounded Google Search is free up to 5,000
+(measured $0.006–0.015 per video). Grounded Google Search is free up to 5,000
 requests a month on paid Gemini 3 models, and Google Maps grounding covers
 places. The video is watched once: that call saves a transcript and on-screen
 text, and the research loop (Interactions API, chained server-side by
@@ -163,5 +163,5 @@ faked with `httpx.MockTransport` or small fake SDK clients, so the suite runs
 free and offline. Beyond the logic, it covers the security boundaries (foreign
 Host, cross-site posts, private-address fetches, image stripping, secret
 scrubbing, a corrupt secrets file) and the failure paths (rate limits, dropped
-connections, blocked downloads, restarts). CI runs `ruff`, the suite and a Docker
-build on every push.
+connections, blocked downloads, restarts). CI runs `ruff`, the suite, `pip-audit`, a Docker
+build and a container smoke test on every push and pull request.
