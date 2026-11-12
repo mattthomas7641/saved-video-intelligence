@@ -10,7 +10,7 @@ and puts a clear next step on your **To do** list, so you actually act on it
 instead of it sitting in your saves. A researched video costs about $0.03–0.06;
 links and screenshots cost less.
 
-![The home page: researched items on a To do list, each with a verdict and a next step](docs/screenshot-home.png)
+![The home page with sample data: a To do list with one report open, showing a verdict and how a tool fits each project](docs/screenshot-home.png)
 
 - **New tools and agent skills, judged against your own projects.** The agent
   reads your project code and tells you whether a tool is worth adopting, where
