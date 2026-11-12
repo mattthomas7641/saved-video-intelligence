@@ -12,21 +12,18 @@ links and screenshots cost less.
 
 ![The home page: researched items on a To do list, each with a verdict and a next step](docs/screenshot-home.png)
 
-- **New tools and agent skills, judged against your own projects.** The most
-  common use: a video about a new agent skill or dev tool. The agent reads your
-  project code and tells you whether it's worth adopting, where it would plug in
-  and what it would change. Repos a video names are vetted against the live
-  GitHub API.
-- **Everything else, too.** AI news is traced to its source; a food video becomes
-  an address, hours and the best day to go; products get real prices and red
-  flags like paid promotions.
+- **New tools and agent skills, judged against your own projects.** The agent
+  reads your project code and tells you whether a tool is worth adopting, where
+  it would plug in and what it would change. Repos named in a video are checked
+  against the live GitHub API.
+- **Everything else, too.** AI news is traced to its source. A food video becomes
+  an address, hours and the best day to go. Products get real prices and red
+  flags such as paid promotions.
 - **A to-do list that makes you follow through.** Each result arrives as a phone
   notification and stays on the To do list with its next step (try, build, buy,
-  go or skip) until you mark it done or "not for me". See
-  **Send to Sidequest → research agent**, below.
-- **The archive.** The ~450 older TikTok saves analyzed before Sidequest stay
-  browsable under **Archive** (topics, "worth rewatching", promo codes that may
-  have expired).
+  go or skip) until you mark it done or "not for me".
+- **The archive.** About 450 older TikTok saves analyzed before Sidequest stay
+  browsable under **Archive**.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the pipeline and data-model diagrams
 and the reasoning behind the bigger design decisions.
