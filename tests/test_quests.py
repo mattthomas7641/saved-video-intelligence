@@ -336,3 +336,58 @@ def test_activity_line_and_waiting_on_you(session):
     assert _plain_error("Research failed: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF") == \
         "The connection dropped while researching. Tap Retry."
     assert _plain_error("Research agent is paused in Settings.") == "Research agent is paused in Settings."
+
+
+# ---------------- Telegram: buttons on the result, taps, updates ----------------
+
+class FakeTG:
+    def __init__(self):
+        self.calls = []
+        self.token = "t"
+
+    def call(self, method, **params):
+        self.calls.append((method, params))
+        return {"message_id": 99}
+
+    def send(self, chat_id, text, reply_to=None, buttons=None):
+        self.calls.append(("send", {"chat_id": chat_id, "text": text, "buttons": buttons}))
+        return 99
+
+    def edit(self, chat_id, message_id, text, buttons=None):
+        self.calls.append(("edit", {"text": text, "buttons": buttons}))
+
+
+def test_telegram_result_has_slot_buttons_and_taps_work(session, monkeypatch):
+    from app import telegram_bot
+    from app.config import save_telegram_settings
+
+    save_telegram_settings(bot_token="123:abc", chat_id=42)
+    a = _action(session, {**PLACE, "follow_up": {"after_days": 7, "watch_for": "new menu"}})
+    tasks = quests.plan(session, a, json.loads(a.result))
+    tg = FakeTG()
+    telegram_bot.TelegramReporter(42, 7, tg).finished(a, session.get(Video, a.video_id))
+    _, edit = tg.calls[-1]
+    flat = [b for row in edit["buttons"] for b in row]
+    assert [b["callback_data"] for b in flat][:2] == [f"approve:{tasks[0].id}", f"approve:{tasks[1].id}"]
+    assert flat[-1]["callback_data"] == f"deep:{a.id}"
+    assert "Pick a time" in edit["text"] and "check back" in edit["text"]
+
+    telegram_bot.handle_callback({"id": "q1", "data": f"approve:{tasks[0].id}", "message": {"chat": {"id": 42}}}, tg)
+    sent = [c for c in tg.calls if c[0] == "send"][-1][1]
+    assert sent["buttons"][0][0]["url"].startswith("https://calendar.google.com/")
+    session.expire_all()
+    assert session.get(Task, tasks[0].id).status == "done"
+
+    before = len(tg.calls)   # a stranger's chat can't approve anything
+    telegram_bot.handle_callback({"id": "q2", "data": f"approve:{tasks[1].id}", "message": {"chat": {"id": 7}}}, tg)
+    assert [c[0] for c in tg.calls[before:]] == ["answerCallbackQuery"]
+
+
+def test_follow_up_update_goes_to_telegram(monkeypatch):
+    from app import telegram_bot
+
+    sent = []
+    monkeypatch.setattr(telegram_bot, "ready", lambda: True)
+    monkeypatch.setattr(telegram_bot, "notify", lambda text, buttons=None: sent.append(text) or True)
+    quests._notify("🔁 Update: It shipped", "Out today <b>", click=None)
+    assert sent and "It shipped" in sent[0] and "&lt;b&gt;" in sent[0]

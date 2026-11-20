@@ -723,7 +723,6 @@ def settings_page(request: Request, key: str = ""):
         "quest_settings": get_quest_settings(),
         "mcp_token": get_mcp_token() if key == "mcp_new" else "",
         "has_mcp_token": bool(get_mcp_token()),
-        "repo_dir": str(BASE_DIR),
         "has_xai_key": bool(get_xai_key()),
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),

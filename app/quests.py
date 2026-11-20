@@ -337,9 +337,15 @@ def _report_url(action_id: int) -> str | None:
 
 
 def _notify(title: str, message: str, click: str | None = None) -> None:
-    from app import ntfy_intake
+    """To whichever doorway is set up: Telegram, the Shortcut's ntfy channel, or both."""
+    import html
+
+    from app import ntfy_intake, telegram_bot
 
     try:
+        if telegram_bot.ready():
+            link = f'\n\n<a href="{html.escape(click)}">Open</a>' if click else ""
+            telegram_bot.notify(f"<b>{html.escape(title)}</b>\n{html.escape(message)}{link}")
         if ntfy_intake.ready():
             ntfy_intake.notify(title, message, click=click)
     except Exception:  # noqa: BLE001 - the result is on the report either way

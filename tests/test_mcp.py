@@ -92,7 +92,7 @@ def test_settings_shows_the_token_once():
     client = TestClient(app)
     r = client.post("/settings/mcp", follow_redirects=False)
     page = client.get(r.headers["location"]).text
-    assert "shown once" in page and "claude mcp add sidequest" in page
+    assert "shown once" in page and "claude mcp add -s user sidequest" in page
     assert "shown once" not in client.get("/settings").text
 
 

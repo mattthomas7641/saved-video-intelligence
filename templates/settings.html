@@ -141,7 +141,8 @@
   <p style="margin-bottom:12px">Sidequest is an MCP server, so Claude Code, Claude Desktop or any MCP client can search what you've sent, read reports, see what's coming up, and send new things in. Nothing it exposes can approve an action for you.</p>
   <div class="key-row">
     <div><strong>On this Mac</strong> <span class="hint" style="margin:0">nothing exposed: runs inside the container over stdio</span>
-      <pre class="code-block">claude mcp add sidequest -- docker compose -f "{{ repo_dir }}/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
+      <p class="hint" style="margin-top:4px">Run this once in Terminal, from the Sidequest folder:</p>
+      <pre class="code-block">claude mcp add -s user sidequest -- docker compose -f "$PWD/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
   </div>
   <div class="key-row">
     <div><strong>Over the network</strong> {% if has_mcp_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Token created</span>{% endif %}

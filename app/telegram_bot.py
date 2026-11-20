@@ -66,16 +66,19 @@ class TelegramClient:
             raise RuntimeError(f"Telegram {method} failed: {data.get('description', r.status_code)}")
         return data["result"]
 
-    def send(self, chat_id: int, text: str, reply_to: int | None = None) -> int:
+    def send(self, chat_id: int, text: str, reply_to: int | None = None, buttons: list | None = None) -> int:
         params = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "link_preview_options": {"is_disabled": True}}
         if reply_to:
             params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+        if buttons:
+            params["reply_markup"] = {"inline_keyboard": buttons}
         return self.call("sendMessage", **params)["message_id"]
 
-    def edit(self, chat_id: int, message_id: int, text: str) -> None:
+    def edit(self, chat_id: int, message_id: int, text: str, buttons: list | None = None) -> None:
+        extra = {"reply_markup": {"inline_keyboard": buttons}} if buttons else {}
         try:
             self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML",
-                      link_preview_options={"is_disabled": True})
+                      link_preview_options={"is_disabled": True}, **extra)
         except RuntimeError as e:
             if "not modified" not in str(e):  # same text twice in a row is harmless
                 log.warning("%s", e)
@@ -88,15 +91,20 @@ class TelegramReporter(intake.Reporter):
         self.chat_id, self.message_id = chat_id, message_id
         self.tg = tg or TelegramClient(get_telegram_settings()["bot_token"])
 
-    def _edit(self, text: str) -> None:
+    def _edit(self, text: str, buttons: list | None = None) -> None:
         if not get_telegram_settings().get("muted"):  # Settings → Telegram → mute
-            self.tg.edit(self.chat_id, self.message_id, text)
+            self.tg.edit(self.chat_id, self.message_id, text, buttons)
 
     def progress(self, text: str) -> None:
         self._edit(f"⏳ {html.escape(text)}")
 
     def finished(self, action, video) -> None:
-        self._edit(format_result(action, video))
+        follow = follow_through(action.id)
+        text = format_result(action, video)
+        if follow["lines"]:
+            text = (text + "\n\n" + "\n".join(follow["lines"]))[:4000]
+        self._edit(text, follow["buttons"] + [[{"text": "🔎 Research deeper", "callback_data": f"deep:{action.id}"}]]
+                   if action.status.value == "drafted" else None)
 
     def failed(self, text: str) -> None:
         log.warning("Shared item failed: %s", text)
@@ -154,6 +162,79 @@ def format_result(action, video) -> str:
         return f"⏸️ {html.escape(action.error_message)}\n{title}\n\n{_links_line(action, video)}"
     reason = html.escape(action.error_message or "Something went wrong.")
     return f"⚠️ Couldn't finish researching this.\n{reason}\n\n{_links_line(action, video)}"
+
+
+def follow_through(action_id: int) -> dict:
+    """Lines and inline buttons for what the agent proposed or scheduled (app/quests.py):
+    a button per calendar slot, one to approve an issue."""
+    from app import quests
+    from app.db import get_session
+
+    try:
+        with get_session() as session:
+            tasks = quests.for_actions(session, [action_id]).get(action_id, [])
+    except Exception:  # noqa: BLE001 - the result goes out without buttons
+        log.exception("Couldn't load follow-through for action %s", action_id)
+        return {"lines": [], "buttons": []}
+    lines, slots, buttons = [], [], []
+    for t in tasks:
+        if t.kind == "calendar" and t.status == "proposed":
+            slots.append({"text": f"📅 {t.title.split(' · ')[0]}", "callback_data": f"approve:{t.id}"})
+        elif t.kind == "github_issue" and t.status == "proposed":
+            lines.append(f"🛠 Proposed: {html.escape(t.title)}")
+            buttons.append([{"text": "✅ Open the issue", "callback_data": f"approve:{t.id}"},
+                            {"text": "No thanks", "callback_data": f"decline:{t.id}"}])
+        elif t.kind == "follow_up" and t.status == "scheduled":
+            lines.append(f"🔁 I'll check back {t.run_at:%b %-d} and tell you if anything changed.")
+    if slots:
+        lines.insert(0, "📅 Want to go? Pick a time and I'll set up the calendar event:")
+        buttons = [slots[i:i + 2] for i in range(0, len(slots), 2)] + buttons
+    return {"lines": lines, "buttons": buttons}
+
+
+def notify(text: str, buttons: list | None = None) -> bool:
+    """A new message to the paired chat (follow-up updates, an issue opened)."""
+    s = get_telegram_settings()
+    if not ready():
+        return False
+    try:
+        TelegramClient(s["bot_token"], httpx.Client(timeout=15)).send(s["chat_id"], text, buttons=buttons)
+        return True
+    except (RuntimeError, httpx.HTTPError) as e:
+        log.warning("Telegram notify failed: %s", e)
+        return False
+
+
+def handle_callback(query: dict, tg: TelegramClient) -> None:
+    """A tap on one of the bot's buttons, from the paired chat only."""
+    from app import quests
+
+    chat_id = ((query.get("message") or {}).get("chat") or {}).get("id")
+    data = str(query.get("data") or "")
+    answer = ""
+    if chat_id is None or chat_id != get_telegram_settings()["chat_id"]:
+        tg.call("answerCallbackQuery", callback_query_id=query["id"])
+        return
+    verb, _, ident = data.partition(":")
+    try:
+        target = int(ident)
+    except ValueError:
+        target = None
+    if verb == "approve" and target is not None:
+        message, url = quests.approve(target)
+        if url:  # a calendar slot: hand over Google Calendar's prefilled event
+            tg.send(chat_id, "Tap to add it to Google Calendar:",
+                    buttons=[[{"text": "📅 Add to Google Calendar", "url": url}]])
+            answer = "Opening the calendar event"
+        else:
+            answer = message
+    elif verb == "decline" and target is not None:
+        quests.decline(target)
+        answer = "OK, skipped"
+    elif verb == "deep" and target is not None:
+        queued = intake.rerun(target, deep=True)
+        answer = "Researching deeper…" if queued else ("Already on it" if queued is False else "Report not found")
+    tg.call("answerCallbackQuery", callback_query_id=query["id"], text=answer[:190])
 
 
 def report_link(action) -> str | None:
@@ -302,12 +383,15 @@ def _poll_forever() -> None:
         if current != token:  # token added or changed in Settings
             token, tg, offset = current, TelegramClient(current), None
         try:
-            params = {"timeout": POLL_TIMEOUT, "allowed_updates": ["message"]}
+            params = {"timeout": POLL_TIMEOUT, "allowed_updates": ["message", "callback_query"]}
             if offset is not None:
                 params["offset"] = offset
             for update in tg.call("getUpdates", **params):
                 offset = update["update_id"] + 1
                 try:
+                    if "callback_query" in update:
+                        handle_callback(update["callback_query"], tg)
+                        continue
                     handle_update(update, tg)
                 except Exception:  # noqa: BLE001 - one bad message must not stop the bot
                     log.exception("Failed to handle Telegram update %s", update.get("update_id"))
