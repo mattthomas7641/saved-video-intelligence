@@ -622,3 +622,23 @@ code.copy { user-select: all; word-break: break-all; }
 .menu-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 4px; max-width: 440px; }
 .menu-list li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding: 3px 0; }
 .code-block { font: 400 var(--fs-xs)/1.5 var(--mono); background: var(--rail); border-radius: 10px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; word-break: break-all; }
+
+/* "Waiting on you" + "Coming up": what needs a tap, above everything else */
+.attention { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.att-col { background: var(--surface); border: 1.5px solid var(--ink); border-radius: 20px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.att-col h2 { font: 700 var(--fs-xs)/1 var(--sans); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.att-row { display: grid; gap: 2px; padding: 8px 10px; border-radius: 12px; text-decoration: none; color: var(--ink); transition: background 150ms var(--ease-flat); }
+.att-row:hover { background: var(--rail); }
+.att-kind { display: flex; gap: 6px; align-items: center; font: 600 var(--fs-xs)/1.2 var(--sans); color: var(--accent); }
+.att-kind .why { color: var(--flag); font-weight: 500; }
+.att-t { font-size: var(--fs-sm); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* What the agent did, under each report's summary */
+.r-activity { display: flex; gap: 7px; align-items: center; font-size: var(--fs-xs); color: var(--ink-3); }
+.r-activity .icon { width: 14px; height: 14px; flex: none; }
+
+/* The original video's frame, so you recognise what it was */
+.report summary { position: relative; }
+.report summary.has-thumb { padding-right: 108px; }
+.r-thumb { position: absolute; top: 20px; right: 24px; width: 66px; height: 88px; object-fit: cover; border-radius: 12px; border: 1.5px solid var(--line); background: var(--rail); }
+@media (max-width: 600px) { .report summary.has-thumb { padding-right: 82px; } .r-thumb { width: 48px; height: 64px; right: 18px; } }

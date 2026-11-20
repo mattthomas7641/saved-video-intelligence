@@ -20,6 +20,20 @@
 {% elif v == "maybe" %}<span class="verdict v-maybe">Maybe</span>
 {% elif v == "skip" %}<span class="verdict v-skip">Skip</span>{% endif %}
 {%- endmacro %}
+{% macro activity_line(act, watched_video) -%}
+{% if act %}
+<p class="r-activity">{{ icon("sparkles") }}
+  {% set bits = [] %}
+  {% if act.watched and watched_video %}{% set _ = bits.append("watched the video") %}{% endif %}
+  {% if act.searches %}{% set _ = bits.append(act.searches ~ " web search" ~ ("es" if act.searches != 1 else "")) %}{% endif %}
+  {% if act.repos %}{% set _ = bits.append("checked " ~ act.repos ~ " repo" ~ ("s" if act.repos != 1 else "") ~ " on GitHub") %}{% endif %}
+  {% if act.files %}{% set _ = bits.append("read " ~ act.files ~ " file" ~ ("s" if act.files != 1 else "") ~ " in " ~ act.projects|join(", ")) %}{% endif %}
+  {% if act.seconds %}{% set _ = bits.append(act.seconds ~ "s") %}{% endif %}
+  {% if act.cost %}{% set _ = bits.append("$%.2f"|format(act.cost) if act.cost >= 0.005 else "under 1¢") %}{% endif %}
+  <span>{{ (bits|join(" · "))|capitalize if bits else "Researched" }}</span>
+</p>
+{% endif %}
+{%- endmacro %}
 {% macro next_steps(a, ts, here) -%}
 {% set live = ts|rejectattr("status", "in", ["declined", "cancelled"])|list %}
 {% if live %}
@@ -86,7 +100,7 @@
 <header class="page-head agent-head">
   <div>
     <h1>Your sidequests</h1>
-    <p class="sub">Everything you've sent, looked into and sorted. From any app: Share → Send to Sidequest.</p>
+    <p class="sub">{% if needs_you %}<strong>{{ needs_you|length }} waiting on you</strong> · {% endif %}{{ tab_counts.todo }} to do{% if coming_up %} · next check-back {{ coming_up[0].run_at|short_date }}{% endif %}. Send more from any app: Share → Send to Sidequest.</p>
   </div>
   <div class="spend" title="Research spend today, from the run ledger (resets at local midnight)">
     <div class="line"><span>Today</span><span class="num">${{ "%.2f"|format(spent_today) }} <span class="of">of ${{ "%.2f"|format(agent_settings.daily_cap_usd) }}</span></span></div>
@@ -105,6 +119,33 @@
 {% endif %}
 {% if not agent_settings.about_me %}
 <div class="notice">{{ icon("bulb") }}<span>Tell the agent about yourself in <a href="/settings#research">Settings</a>, so “useful for you” means your projects and your city.</span></div>
+{% endif %}
+
+{% if needs_you or coming_up %}
+<section class="attention" aria-label="Waiting on you">
+  {% if needs_you %}
+  <div class="att-col">
+    <h2>{{ icon("check") }} Waiting on you</h2>
+    {% for n in needs_you %}
+    <a class="att-row" href="/?tab=todo#a{{ n.action_id }}" onclick="setTimeout(function(){var d=document.querySelector('#a{{ n.action_id }} details'); if (d) d.open = true;}, 0)">
+      <span class="att-kind">{{ icon("calendar" if n.kind == "calendar" else "code") }} {{ n.label }}{% if n.failed %} <span class="why">(failed: retry)</span>{% endif %}</span>
+      <span class="att-t">{{ n.headline|nocite }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if coming_up %}
+  <div class="att-col">
+    <h2>{{ icon("clock") }} Coming up</h2>
+    {% for t in coming_up %}
+    <a class="att-row" href="/?tab=todo#a{{ t.action_id }}">
+      <span class="att-kind">{{ t.run_at|short_date }}</span>
+      <span class="att-t">{{ (t.payload|fromjson).watch_for or t.title }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
 {% endif %}
 
 <div class="notice" id="updates" hidden>{{ icon("refresh") }}<span>A sidequest just finished. <a href="{{ here }}">Refresh</a> to see it.</span></div>
@@ -143,7 +184,7 @@
   {% for item in stuck %}{% set a = item.action %}{% set v = item.video %}
   <div class="work-row stuck" id="a{{ a.id }}">
     <span class="ci">{{ icon("alert") }}</span>
-    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why or "Something went wrong. Tap Retry." }}</span></span>
+    <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why|plain_error }}</span></span>
     <a class="btn btn-quiet" href="/runs/{{ a.id }}" title="What happened">Trace</a>
     <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
     <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me" aria-label="Not for me">{{ icon("archive") }}</button></form>
@@ -158,7 +199,8 @@
   {% for item in done %}{% set a = item.action %}{% set v = item.video %}{% set r = item.report %}
   <article class="report" id="a{{ a.id }}" data-territory="{{ item.slug }}">
     <details>
-      <summary>
+      <summary {% if v.thumbnail_path %}class="has-thumb"{% endif %}>
+        {% if v.thumbnail_path %}<img class="r-thumb" src="/media/thumb/{{ v.id }}" alt="" loading="lazy">{% endif %}
         <div class="r-meta">
           <span class="r-topic">{{ item.group }}</span>
           <span class="r-type">{{ type_icon(a.action_type.value) }} {{ {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project", "skill": "Skill", "job": "Job"}.get(a.action_type.value, "Other") }}</span>
@@ -175,6 +217,7 @@
         {% set ts = tasks.get(a.id, []) %}
         {% if ts|selectattr("status", "equalto", "proposed")|list %}<p class="r-key r-next">{{ icon("check") }} Waiting on you: {{ "pick a time" if ts|selectattr("kind", "equalto", "calendar")|selectattr("status", "equalto", "proposed")|list else "approve a step" }}</p>
         {% elif ts|selectattr("status", "equalto", "scheduled")|list %}<p class="r-key">{{ icon("clock") }} Checking back {{ (ts|selectattr("status", "equalto", "scheduled")|first).run_at|short_date }}</p>{% endif %}
+        {{ activity_line(activity.get(a.id), v.tiktok_url.startswith("http")) }}
         <span class="r-more">Full report {{ icon("chev") }}</span>
       </summary>
 

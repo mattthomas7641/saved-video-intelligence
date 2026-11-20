@@ -186,7 +186,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (328), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (329), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout

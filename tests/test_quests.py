@@ -314,3 +314,25 @@ def test_settings_section_saves_toggles(session):
     client.post("/settings/quests", data={"flex_shares": "true", "github_token": "github_pat_x"})
     s = get_quest_settings()
     assert s["flex_shares"] and not s["follow_ups"] and s["github_token"] == "github_pat_x"
+
+
+def test_activity_line_and_waiting_on_you(session):
+    from fastapi.testclient import TestClient
+
+    from app.main import _plain_error, app
+
+    a = _action(session, PLACE)
+    quests.plan(session, a, json.loads(a.result))
+    session.add(Run(action_id=a.id, kind="research", status="ok", cost_usd=0.03, searches=3, duration_ms=41000,
+                    steps=json.dumps([{"t": "tool", "name": "github_repo", "args": "repo=a/b", "ok": True},
+                                      {"t": "tool", "name": "read_project_file", "args": "project=gw, path=app.py",
+                                       "ok": True}])))
+    session.commit()
+    act = tracing.activity(session, [a.id])[a.id]
+    assert act["searches"] == 3 and act["repos"] == 1 and act["files"] == 1 and act["projects"] == ["gw"]
+    page = TestClient(app).get("/").text
+    assert "Waiting on you" in page and "1 waiting on you" in page
+    assert "3 web searches" in page and "read 1 file in gw" in page
+    assert _plain_error("Research failed: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF") == \
+        "The connection dropped while researching. Tap Retry."
+    assert _plain_error("Research agent is paused in Settings.") == "Research agent is paused in Settings."

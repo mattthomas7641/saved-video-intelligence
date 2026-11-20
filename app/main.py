@@ -23,6 +23,7 @@ from app import (
     projects,
     quests,
     telegram_bot,
+    tracing,
     xai_client,
 )
 from app.config import (
@@ -160,6 +161,23 @@ def _from_json(text: str | None) -> dict:
 
 
 templates.env.filters["fromjson"] = _from_json
+
+_TECHNICAL = re.compile(r"\[[A-Z_]+:|Traceback|Error:|Exception|errno|0x[0-9a-f]{6,}|https?://\S+\.py", re.I)
+
+
+def _plain_error(text: str | None) -> str:
+    """A stored error as words: older items kept raw exception text, which isn't for people."""
+    if not text:
+        return "Something went wrong. Tap Retry."
+    if _TECHNICAL.search(text):
+        lower = text.lower()
+        if any(w in lower for w in ("ssl", "eof", "connection", "timed out", "timeout", "reset")):
+            return "The connection dropped while researching. Tap Retry."
+        return "Something went wrong while researching (details are in the app log). Tap Retry."
+    return text
+
+
+templates.env.filters["plain_error"] = _plain_error
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
 
@@ -349,7 +367,32 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         "has_research_key": _has_research_key(),
         "project_status": {p.name: p.status for p in projects.cards(session)},
         "tasks": quests.for_actions(session, [i["action"].id for i in reports]),
+        "activity": tracing.activity(session, [i["action"].id for i in reports]),
+        "needs_you": _needs_you(session, items),
+        "coming_up": quests.upcoming(session, 5),
     })
+
+
+def _needs_you(session: Session, items: list[dict]) -> list[dict]:
+    """Everything waiting on a tap, newest first: times to pick and issues to approve."""
+    from app.models import Task
+
+    by_id = {i["action"].id: i for i in items}
+    rows = session.exec(select(Task).where(Task.status.in_(["proposed", "failed"]))
+                        .where(Task.kind != "follow_up").order_by(Task.id.desc())).all()
+    out, seen = [], set()
+    for t in rows:
+        item = by_id.get(t.action_id)
+        if item is None or item["action"].status in (ActionStatus.DONE, ActionStatus.DISMISSED):
+            continue
+        key = (t.action_id, t.kind)
+        if key in seen:
+            continue  # several slots for one place are one thing to do
+        seen.add(key)
+        headline = (item["report"] or {}).get("headline") or item["video"].summary or ""
+        out.append({"action_id": t.action_id, "kind": t.kind, "failed": t.status == "failed",
+                    "label": "Pick a time" if t.kind == "calendar" else "Approve an issue", "headline": headline})
+    return out[:6]
 
 
 def _has_research_key() -> bool:

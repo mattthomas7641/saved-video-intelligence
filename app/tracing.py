@@ -180,3 +180,41 @@ def spend_by_day(session: Session, days: int = 14) -> list[tuple[str, float, int
         totals[day][0] += cost or 0.0
         totals[day][1] += 1
     return [(d.strftime("%b %-d"), round(v[0], 4), v[1]) for d, v in sorted(totals.items(), reverse=True)]
+
+
+def activity(session: Session, action_ids: list[int]) -> dict[int, dict]:
+    """What the agent did for each item, from its runs: searches, repos checked, project files
+    read, time and cost. Shown on each report so the work behind a verdict is visible."""
+    from app.models import Run
+
+    out: dict[int, dict] = {}
+    if not action_ids:
+        return out
+    rows = session.exec(select(Run).where(Run.action_id.in_(action_ids))
+                        .where(Run.kind.in_(["analysis", "research", "follow_up"]))).all()
+    for r in rows:
+        a = out.setdefault(r.action_id, {"searches": 0, "repos": set(), "files": set(), "projects": set(),
+                                          "seconds": 0, "cost": 0.0, "watched": False, "runs": 0})
+        a["runs"] += 1
+        a["cost"] += r.cost_usd or 0.0
+        a["searches"] += r.searches or 0
+        if r.kind == "analysis" and r.status == "ok":
+            a["watched"] = True
+        if r.kind == "research":
+            a["seconds"] = max(a["seconds"], int((r.duration_ms or 0) / 1000))
+        try:
+            steps = json.loads(r.steps or "[]")
+        except ValueError:
+            steps = []
+        for st in steps:
+            if st.get("t") != "tool" or not st.get("ok", True):
+                continue
+            args = dict(kv.split("=", 1) for kv in str(st.get("args", "")).split(", ") if "=" in kv)
+            if st.get("name") == "github_repo":
+                a["repos"].add(args.get("repo", ""))
+            elif st.get("name") == "read_project_file":
+                a["files"].add(f"{args.get('project', '')}/{args.get('path', '')}")
+                a["projects"].add(args.get("project", ""))
+    for a in out.values():
+        a["repos"], a["files"], a["projects"] = len(a["repos"]), len(a["files"]), sorted(p for p in a["projects"] if p)
+    return out
