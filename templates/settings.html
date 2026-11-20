@@ -136,6 +136,21 @@
   {% if key_status == "calendar_bad" %}<p style="color:var(--flag);margin-top:8px">Couldn't read that calendar address. Copy the secret address in iCal format again; the rest was saved.</p>{% endif %}
 </section>
 
+<section class="plain-card" id="mcp">
+  <h2>Use it from Claude (MCP)</h2>
+  <p style="margin-bottom:12px">Sidequest is an MCP server, so Claude Code, Claude Desktop or any MCP client can search what you've sent, read reports, see what's coming up, and send new things in. Nothing it exposes can approve an action for you.</p>
+  <div class="key-row">
+    <div><strong>On this Mac</strong> <span class="hint" style="margin:0">nothing exposed: runs inside the container over stdio</span>
+      <pre class="code-block">claude mcp add sidequest -- docker compose -f "{{ repo_dir }}/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
+  </div>
+  <div class="key-row">
+    <div><strong>Over the network</strong> {% if has_mcp_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Token created</span>{% endif %}
+      <p class="hint" style="margin-top:4px">For a client that needs a URL (e.g. over Tailscale): <code>/mcp/</code> on this app, with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+      {% if mcp_token %}<p class="hint">Your token (shown once; copy it now): <code style="user-select:all">{{ mcp_token }}</code></p>{% endif %}</div>
+    <form action="/settings/mcp" method="post"><button class="btn" type="submit" {% if has_mcp_token %}onclick="return confirm('Make a new token? The old one stops working.')"{% endif %}>{{ "New token" if has_mcp_token else "Create a token" }}</button></form>
+  </div>
+</section>
+
 <section class="plain-card" id="projects">
   <h2>Your projects</h2>
   <p style="margin-bottom:12px">The agent judges every video against these: whether it's worth adding, where it plugs in, and what it does to the architecture. Found in your Projects folder; secrets, data and .env files are never read.</p>

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,7 +14,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app import calendar_busy, gemini_client, intake, ntfy_intake, projects, quests, telegram_bot, xai_client
+from app import (
+    calendar_busy,
+    gemini_client,
+    intake,
+    mcp_server,
+    ntfy_intake,
+    projects,
+    quests,
+    telegram_bot,
+    xai_client,
+)
 from app.config import (
     BASE_DIR,
     GROUPS,
@@ -22,12 +33,14 @@ from app.config import (
     get_agent_settings,
     get_api_key,
     get_gemini_key,
+    get_mcp_token,
     get_ntfy_settings,
     get_project_overrides,
     get_quest_settings,
     get_telegram_settings,
     get_xai_key,
     group_of,
+    new_mcp_token,
     new_ntfy_setup,
     new_pairing_code,
     save_action_settings,
@@ -49,9 +62,19 @@ from app.services import dashboard_query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram/ntfy poll is noise
-app = FastAPI(title="Sidequest")
+_mcp_http = mcp_server.http_app()
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    async with mcp_server.server.session_manager.run():  # the /mcp/ endpoint's sessions
+        yield
+
+
+app = FastAPI(title="Sidequest", lifespan=_lifespan)
 app.add_middleware(GuardMiddleware)  # no login: refuse other hosts and cross-site writes (app/security.py)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/mcp", _mcp_http)  # Sidequest as an MCP server (app/mcp_server.py), behind a bearer token
 LOCAL_TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/New_York"))
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -529,6 +552,12 @@ def settings_quests_clear(what: str = Form("")):
     return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
 
 
+@app.post("/settings/mcp")
+def settings_mcp():
+    new_mcp_token()
+    return RedirectResponse("/settings?key=mcp_new#mcp", status_code=303)
+
+
 @app.post("/settings/telegram")
 def settings_telegram(token: str = Form("")):
     token = token.strip()
@@ -649,6 +678,9 @@ def settings_page(request: Request, key: str = ""):
         "telegram": get_telegram_settings(),
         "agent_settings": get_agent_settings(),
         "quest_settings": get_quest_settings(),
+        "mcp_token": get_mcp_token() if key == "mcp_new" else "",
+        "has_mcp_token": bool(get_mcp_token()),
+        "repo_dir": str(BASE_DIR),
         "has_xai_key": bool(get_xai_key()),
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),

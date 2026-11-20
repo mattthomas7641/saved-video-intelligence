@@ -100,6 +100,9 @@ def run(kind: str, action_id: int | None = None, video_id: int | None = None, pr
         if trace.error and status == "ok":
             status, error = "failed", trace.error
         _save(trace, started_at, status, error)
+        from app import otel
+
+        otel.export_run(trace, started_at, status, error)  # no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
 
 
 def _save(trace: Trace, started_at: datetime, status: str, error: str | None) -> None:

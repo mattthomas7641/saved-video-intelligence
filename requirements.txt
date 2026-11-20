@@ -18,6 +18,9 @@ pydantic-settings==2.6.1
 alembic==1.13.3
 icalendar==7.3.2           # reading your calendar's busy times (secret iCal address)
 recurring-ical-events==3.8.2
+mcp==2.3.0                  # Sidequest as an MCP server (app/mcp_server.py)
+opentelemetry-sdk==1.45.2   # optional trace export (app/otel.py), on when OTEL_EXPORTER_OTLP_ENDPOINT is set
+opentelemetry-exporter-otlp-proto-http==1.45.2
 
 # dev/test only - not needed at runtime, kept in the same file for a one-command
 # `pip install -r requirements.txt` setup rather than splitting into requirements-dev.txt

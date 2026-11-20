@@ -621,3 +621,4 @@ code.copy { user-select: all; word-break: break-all; }
 .r-next { color: var(--accent); font-weight: 600; }
 .menu-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 4px; max-width: 440px; }
 .menu-list li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding: 3px 0; }
+.code-block { font: 400 var(--fs-xs)/1.5 var(--mono); background: var(--rail); border-radius: 10px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; word-break: break-all; }

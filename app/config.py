@@ -217,6 +217,17 @@ def save_gemini_key(key: str) -> None:
 PROVIDERS = ("gemini", "xai", "anthropic")
 
 
+def get_mcp_token() -> str:
+    """Bearer token for Sidequest's MCP endpoint (/mcp/); empty until created in Settings."""
+    return _load_secrets().get("MCP_TOKEN", "")
+
+
+def new_mcp_token() -> str:
+    token = secrets.token_urlsafe(32)
+    _save_secret("MCP_TOKEN", token)
+    return token
+
+
 def get_quest_settings() -> dict:
     """Follow-through after a report (app/quests.py). `calendar_ics_url` is your calendar's
     secret iCal address (read-only: busy times, so suggested dates avoid them);
