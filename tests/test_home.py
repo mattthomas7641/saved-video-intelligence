@@ -84,3 +84,11 @@ def test_quest_pages_and_old_links(session):
     assert "Findable" in client.get("/log?q=findable").text and "Findable" not in client.get("/log?q=zebra").text
     assert client.get("/dashboard").status_code == 404           # the archive is gone
     assert "Ledger" in client.get("/ledger").text
+
+
+def test_bullets_and_bare_urls_render_safely():
+    html = str(_render_markdown('Worth it.\n• Courts: 18\n• Players: 21+\n\nBook at https://book.test/a?x=1, or [docs](https://x.test/d). '
+                                'Bad: https://ok.test/x"onmouseover=1'))
+    assert "<li>Courts: 18</li>" in html and "<li>Players: 21+</li>" in html
+    assert 'href="https://book.test/a?x=1"' in html and html.count('href="https://x.test/d"') == 1
+    assert 'href="https://ok.test/x"' in html and 'onmouseover=1"' not in html.split("href=")[-1][:40]

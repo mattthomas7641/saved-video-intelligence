@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% from "_quest.html" import qnum, marker, row, objectives %}
+{% set tracked_ids = tracked|selectattr("item")|map(attribute="item")|map(attribute="action")|map(attribute="id")|list %}
 {% block title %}{% if tracked %}({{ tracked|length }}) {% endif %}Tracked · Sidequest{% endblock %}
 {% block pageclass %}page-home{% endblock %}
 {% block content %}
@@ -20,20 +21,23 @@
       {% if not tracked %}<p class="lede">When the agent proposes something (a time for a place, an issue to open, flights to add) it lands here for one tap.{% if bot %} Send anything to @{{ bot }}.{% endif %}</p>{% endif %}
     </header>
     {% for t in tracked %}{% set i = t.item %}
-    <article class="quest{% if not t.tasks %} quest-stuck{% endif %}">
-      <div class="quest-id">{{ marker("wait" if t.tasks else "stuck") }}{% if i %}{{ qnum(i.action) }}<span class="quest-type">{{ type_labels.get(i.type, "Other") }}</span>{% else %}<span class="qnum">Chat</span>{% endif %}</div>
-      <h2 class="quest-title">{% if i %}<a href="/q/{{ i.action.id }}">{{ i.title|nocite }}</a>{% else %}{{ t.tasks[0].title.split(" · ")[-1] }}{% endif %}</h2>
-      <p class="objective">{{ t.objective }}</p>
-      {% if t.tasks %}
-      {{ objectives(t.tasks, "/") }}
-      {% else %}
-      <p class="fine">{{ i.why|plain_error }}</p>
-      <div class="acts">
-        <form action="/agent/{{ i.action.id }}/rerun" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-go" type="submit">{{ icon("refresh") }}{{ "Research anyway" if t.objective == "Repeat?" else "Retry" }}</button></form>
-        <form action="/agent/{{ i.action.id }}/dismiss" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-plain" type="submit">Not for me</button></form>
-        <a class="btn btn-plain" href="/runs/{{ i.action.id }}">Trace</a>
+    <article class="quest">
+      {{ marker("wait") }}
+      {% if i %}{{ qnum(i.action) }}{% else %}<span class="qnum">Chat</span>{% endif %}
+      <div class="quest-main">
+        <h2 class="quest-title">{% if i %}<a href="/q/{{ i.action.id }}" style="view-transition-name: q{{ i.action.id }}">{{ i.title|nocite }}</a>{% else %}{{ t.tasks[0].title.split(" · ")[-1] }}{% endif %}</h2>
+        <p class="objective{% if not t.tasks %} is-bad{% endif %}">{{ t.objective }}</p>
+        {% if i %}<p class="fine">{{ type_labels.get(i.type, "Other") }}{% if not t.tasks %}<span class="sep" aria-hidden="true">·</span>{{ i.why|plain_error }}{% endif %}</p>{% endif %}
+        {% if t.tasks %}
+        {{ objectives(t.tasks, "/") }}
+        {% else %}
+        <div class="acts">
+          <form action="/agent/{{ i.action.id }}/rerun" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-go" type="submit">{{ icon("refresh") }}{{ "Research anyway" if t.objective == "Repeat?" else "Retry" }}</button></form>
+          <form action="/agent/{{ i.action.id }}/dismiss" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-plain" type="submit">Not for me</button></form>
+          <a class="btn btn-plain" href="/runs/{{ i.action.id }}">Trace</a>
+        </div>
+        {% endif %}
       </div>
-      {% endif %}
     </article>
     {% endfor %}
   </section>
@@ -56,7 +60,9 @@
       {% endfor %}
     </ol>
     {% else %}
-    <p class="fine">Nothing scheduled. Check-backs, fare watches and flight reminders show up here with their dates.</p>
+    <ol class="way-list way-empty" aria-label="Nothing scheduled this week">
+      {% for d in week %}<li class="way"><span class="way-date">{{ d }}</span><span class="way-body"><span class="way-text dim">{% if loop.first %}Nothing scheduled. Check-backs, fare watches and flight reminders land on their dates.{% endif %}</span></span></li>{% endfor %}
+    </ol>
     {% endif %}
 
     {% if working %}
@@ -68,7 +74,7 @@
   <section class="latest" aria-labelledby="latest-h">
     <header class="sec-row"><h2 id="latest-h" class="sec-label">{{ icon("list") }}New in the log</h2><a class="more" href="/log">All {{ counts.log }} {{ icon("chev") }}</a></header>
     {% if recent %}
-    <ol class="rows">{% for i in recent %}{{ row(i, activity.get(i.action.id), type_labels) }}{% endfor %}</ol>
+    <ol class="rows">{% for i in recent %}{{ row(i, activity.get(i.action.id), type_labels, i.action.id not in tracked_ids) }}{% endfor %}</ol>
     {% else %}
     <p class="fine">Reports appear here a minute or two after you send something.</p>
     {% endif %}

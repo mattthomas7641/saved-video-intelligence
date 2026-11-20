@@ -28,20 +28,20 @@
 {% if act.files %}{% set _ = bits.append(act.files ~ " file" ~ ("s" if act.files != 1 else "") ~ " read in " ~ act.projects|join(", ")) %}{% endif %}
 {% if act.seconds %}{% set _ = bits.append(act.seconds ~ "s") %}{% endif %}
 {% if act.cost %}{% set _ = bits.append("$%.2f"|format(act.cost) if act.cost >= 0.005 else "<1¢") %}{% endif %}
-{% if bits %}<span class="did">{{ bits|join(" · ") }}</span>{% endif %}
+{% if bits %}<span class="did">{% for b in bits %}{% if not loop.first %}<span class="sep" aria-hidden="true">·</span>{% endif %}{{ b }}{% endfor %}</span>{% endif %}
 {% endif %}
 {%- endmacro %}
 
 {# One line in the log: marker, number, title, and what it is / what happened, dense. #}
-{% macro row(i, act, type_labels) -%}
+{% macro row(i, act, type_labels, vt=true) -%}
 {% set a = i.action %}{% set v = i.video %}
 <li class="row row-{{ i.state }}">
   <a class="row-hit" href="/q/{{ a.id }}">
     {{ marker(i.state) }}
     {{ qnum(a) }}
     <span class="row-main">
-      <span class="row-title" style="view-transition-name: q{{ a.id }}">{{ i.title|nocite }}</span>
-      <span class="row-meta">{{ type_labels.get(i.type, "Other") }}{% if i.report %} · {{ verdict(a.verdict) }}{% endif %}{% if act %} · {{ activity_line(act, v.tiktok_url.startswith("http")) }}{% endif %}</span>
+      <span class="row-title"{% if vt %} style="view-transition-name: q{{ a.id }}"{% endif %}>{{ i.title|nocite }}</span>
+      <span class="row-meta">{{ type_labels.get(i.type, "Other") }}{% if i.report %}<span class="sep" aria-hidden="true">·</span>{{ verdict(a.verdict) }}{% endif %}{% if act %}<span class="sep" aria-hidden="true">·</span>{{ activity_line(act, v.tiktok_url.startswith("http")) }}{% endif %}</span>
     </span>
     <span class="row-date">{{ a.updated_at|short_date }}</span>
   </a>
@@ -54,11 +54,9 @@
 {% if cal %}
 <div class="acts">
   {% for t in cal %}
-  <form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("calendar") }}{{ t.title.split(" · ")[0] }}</button></form>
+  <span class="slot"><form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit" title="Opens Google Calendar with it filled in">{{ icon("calendar") }}{{ t.title.split(" · ")[0] }}</button></form><a class="icon-btn" href="/tasks/{{ t.id }}/event.ics" title="Apple Calendar (.ics)" aria-label="{{ t.title.split(' · ')[0] }} for Apple Calendar">{{ icon("upload") }}</a></span>
   {% endfor %}
 </div>
-
-<p class="fine">Opens Google Calendar with it filled in. Apple Calendar: {% for t in cal %}<a href="/tasks/{{ t.id }}/event.ics">{{ t.title.split(" · ")[0] }}</a>{{ ", " if not loop.last }}{% endfor %}.</p>
 {% endif %}
 {% for t in tasks if t.kind == "flights_calendar" %}
 <div class="acts"><form action="/tasks/{{ t.id }}/approve" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("plane") }}{{ t.title }}</button></form></div>

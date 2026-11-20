@@ -48,7 +48,7 @@ h1, h2, h3, h4, h5, p, ol, ul, dl, dd, figure { margin: 0; }
 ol, ul { padding: 0; list-style: none; }
 a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 a:hover { color: var(--route-ink); }
-::selection { background: var(--marker); color: var(--ink); }
+::selection { background: var(--route-soft); color: var(--ink); }
 :focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
 button { font: inherit; color: inherit; }
 img { max-width: 100%; }
@@ -151,11 +151,11 @@ label { font-size: .9375rem; }
   display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; font-size: .75rem; font-weight: 700;
   border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--ink-2); background: transparent; white-space: nowrap;
 }
-.tag-warn { border-color: var(--marker); background: var(--marker-soft); color: var(--marker-ink); }
+.tag-warn { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
 .tag-err { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
 .vd { font-weight: 700; font-size: .8125rem; }
-.vd-yes { color: var(--moss); }
-.vd-maybe { color: var(--marker-ink); }
+.vd-yes { color: var(--ink); }
+.vd-maybe { color: var(--ink-2); font-weight: 600; }
 .vd-skip { color: var(--ink-3); }
 .verdict.v-yes { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; font-weight: 700; color: var(--moss); }
 
@@ -167,17 +167,24 @@ label { font-size: .9375rem; }
 .latest { grid-area: latest; }
 .tracked .sec-head { margin-bottom: 16px; }
 
-.quest { position: relative; padding: 18px 20px 18px 50px; background: var(--sheet); border: var(--frame); margin-bottom: 14px; }
-.quest + .quest { margin-top: -1px; }
-.quest-stuck { border-style: dashed; border-color: var(--bad); }
-.quest-id { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.quest > .quest-id .dia { position: absolute; left: 20px; top: 23px; }
-.quest-type { font-size: .8125rem; color: var(--ink-3); }
-.quest-title { margin-top: 6px; font-size: 1.25rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; max-width: 60ch; }
+.tracked { margin-bottom: 8px; }
+.quest {
+  display: grid; grid-template-columns: 14px 4.3em minmax(0, 1fr); gap: 0 12px; align-items: start;
+  padding: 18px 20px; background: var(--sheet); border: var(--frame);
+}
+.quest + .quest { margin-top: -1.5px; }
+.quest > .dia { margin-top: 6px; }
+.quest > .qnum { line-height: 1.6rem; }
+.quest-main { min-width: 0; }
+.quest-title { font-size: 1.25rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; max-width: 60ch; }
 .quest-title a { text-decoration: none; }
 .quest-title a:hover { text-decoration: underline; color: var(--ink); }
 .objective { margin-top: 8px; display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--marker-ink); }
-.quest-stuck .objective { color: var(--bad); }
+.objective.is-bad { color: var(--bad); }
+.sep { margin-inline: .4em; color: var(--rule-2); }
+.slot { display: inline-flex; align-items: center; gap: 2px; }
+.way-empty .way { min-height: 40px; }
+.way-empty .way-text { font-size: .875rem; }
 .obj-detail { margin-top: 6px; color: var(--ink-2); }
 .quest .fine { margin-top: 8px; }
 
@@ -216,7 +223,9 @@ label { font-size: .9375rem; }
 .search-box { position: relative; display: block; }
 .search-box .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
 .search-box .field { padding-left: 36px; min-height: 44px; border-color: var(--ink); }
-.views { display: flex; gap: 2px; overflow-x: auto; border-bottom: var(--hair); margin-bottom: 12px; scrollbar-width: none; }
+.views { display: flex; gap: 2px; overflow-x: auto; border-bottom: var(--hair); margin-bottom: 12px; scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.views:hover, .views:focus-within { mask-image: none; }
 .views a { padding: 10px 12px; text-decoration: none; font-weight: 600; font-size: .9375rem; color: var(--ink-2); white-space: nowrap; border-bottom: 3px solid transparent; margin-bottom: -1px; }
 .views a b { font-weight: 500; color: var(--ink-3); margin-left: 4px; }
 .views a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
@@ -226,9 +235,11 @@ label { font-size: .9375rem; }
 
 /* ---------- a quest ---------- */
 .qhead { padding-bottom: 22px; border-bottom: var(--frame); }
-.qhead .quest-id { margin-bottom: 10px; }
+.crumbs { display: flex; align-items: center; gap: 0; }
+.crumbs .dia { margin: 0 8px 0 2px; }
 .qhead h1 { font-size: 2rem; line-height: 1.15; font-weight: 800; letter-spacing: -.02em; max-width: 34ch; text-wrap: balance; }
-.qhead .lede { margin-top: 12px; font-size: 1.0625rem; white-space: pre-line; overflow-wrap: anywhere; }
+.qhead .lede { margin-top: 14px; font-size: 1.0625rem; overflow-wrap: anywhere; }
+.qhead .did-line { margin-top: 10px; }
 .quest-title, .prose, .row-title, .way-text, .fine { overflow-wrap: anywhere; }
 .qhead .note { margin-top: 14px; }
 .did-line { margin-top: 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .875rem; color: var(--ink-3); }
@@ -336,12 +347,16 @@ details > summary { cursor: pointer; }
   .page { padding: 22px 16px calc(96px + env(safe-area-inset-bottom)); }
   .sec-head h1, .page-head h1 { font-size: 1.625rem; }
   .qhead h1 { font-size: 1.5rem; }
-  .quest { padding: 16px 16px 16px 40px; }
-  .quest > .quest-id .dia { left: 15px; top: 21px; }
+  .quest { grid-template-columns: 14px minmax(0, 1fr); padding: 16px; }
+  .quest > .qnum { display: none; }
+  .quest-main { grid-column: 2; }
   .quest-title { font-size: 1.125rem; }
   .acts .btn { flex: 1 1 auto; justify-content: center; }
   .row-hit { grid-template-columns: 12px minmax(0, 1fr) auto; }
-  .row-hit .qnum { display: none; }
+  .row-hit .qnum { grid-column: 3; grid-row: 2; text-align: right; font-weight: 600; color: var(--ink-3); }
+  .row-hit .row-main { grid-column: 2; grid-row: 1 / span 2; }
+  .row-hit .dia { grid-column: 1; grid-row: 1; }
+  .row-hit .row-date { grid-column: 3; grid-row: 1; }
   .plain-card { padding: 18px 16px; }
   .flights li { grid-template-columns: 1fr 1fr; }
   .flights .dim { grid-column: auto; }

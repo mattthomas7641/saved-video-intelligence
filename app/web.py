@@ -62,9 +62,24 @@ def _item(a: Action, v: Video, report: dict | None) -> dict:
     why = a.error_message
     if state == "stuck" and not why and a.status == ActionStatus.DRAFTED:
         why = "The saved report can't be read. Retry to research it again."
-    title = (report or {}).get("headline") or v.summary or v.caption or v.tiktok_url
+    title = (report or {}).get("headline") or v.summary or _source_label(v)
     return {"action": a, "video": v, "report": report, "state": state, "why": why, "title": title,
             "type": a.action_type.value}
+
+
+def _source_label(v: Video) -> str:
+    """A name for an item with no report yet: what it is and where it came from, never a raw URL."""
+    from urllib.parse import urlsplit
+
+    url = v.tiktok_url or ""
+    if url.startswith("image:"):
+        return "A screenshot you sent"
+    if url.startswith("text:"):
+        return (v.caption or "A note you sent")[:90]
+    host = urlsplit(url).netloc.lower().removeprefix("www.").removeprefix("m.")
+    kinds = {"tiktok.com": "TikTok video", "vm.tiktok.com": "TikTok video", "instagram.com": "Instagram reel",
+             "youtube.com": "YouTube video", "youtu.be": "YouTube video", "x.com": "Post on X", "twitter.com": "Post on X"}
+    return kinds.get(host, f"Link from {host}" if host else "Something you sent")
 
 
 def _proposals(session: Session) -> dict[int, list[Task]]:
@@ -139,6 +154,7 @@ def home(request: Request, session: Session = Depends(get_db)):
     working = [i for i in items if i["state"] == "working"]
     return _templates().TemplateResponse(request, "home.html", {
         **_common(session), "tracked": track, "waypoints": ways, "recent": recent, "working": working,
+        "week": [f"{d:%a %-d}" for d in (datetime.now() + timedelta(days=n) for n in range(7))],
         "activity": tracing.activity(session, [i["action"].id for i in recent]),
         "nav": "tracked", "counts": _nav_counts(items, len(track)), "total": len(items),
     })

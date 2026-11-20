@@ -179,6 +179,23 @@ templates.env.filters["plain_error"] = _plain_error
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
 
+_BARE_URL = re.compile(r"https?://[^\s<>\"')\]]+[^\s<>\"')\].,;:!?]")
+
+
+def _autolink(rendered: str) -> str:
+    """Bare http(s) URLs in rendered text become links; text already inside a link is left alone."""
+    out, in_link = [], False
+    for part in re.split(r"(<[^>]+>)", rendered):
+        if part.startswith("<"):
+            in_link = part.startswith("<a ") or (in_link and not part.startswith("</a"))
+            out.append(part)
+        elif in_link:
+            out.append(part)
+        else:
+            out.append(_BARE_URL.sub(lambda m: f'<a href="{m.group(0)}">{m.group(0)}</a>', part))
+    return "".join(out)
+
+
 def _render_markdown(text: str | None) -> str:
     """Agent reports are model output built partly from web pages: escape any raw
     HTML first, render Markdown, then drop links that aren't plain http(s)."""
@@ -189,6 +206,8 @@ def _render_markdown(text: str | None) -> str:
     from markupsafe import Markup
 
     text = _strip_citations(text)
+    # Phone-style "•" bullets (the Telegram summary) as Markdown list items.
+    text = re.sub(r"(?m)^\s*•\s+", "- ", text or "")
     # Models often start a list right under a paragraph line; Markdown needs a blank line there.
     text = re.sub(r"(?m)^(?!\s*(?:[-*+]|\d+\.)\s)(.+)\n(\s*(?:[-*+]|\d+\.)\s)", r"\1\n\n\2", text or "")
     rendered = markdown.markdown(_html.escape(text, quote=False), extensions=["sane_lists"])
@@ -197,6 +216,7 @@ def _render_markdown(text: str | None) -> str:
     rendered = re.sub(r'<img[^>]*alt="([^"]*)"[^>]*>', r"\1", rendered)
     rendered = re.sub(r"<img[^>]*>", "", rendered)
     rendered = re.sub(r'href="(?!https?://)[^"]*"', 'href="#"', rendered)
+    rendered = _autolink(rendered)
     # Report headings sit under the card's headline (an h3): keep them visually below it.
     rendered = re.sub(r"<(/?)h[1-4]>", r"<\1h5>", rendered)
     rendered = rendered.replace("<a href=", '<a target="_blank" rel="noopener" href=')
