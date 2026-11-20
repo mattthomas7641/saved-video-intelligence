@@ -273,8 +273,10 @@ def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
                 _report(reporter, "failed", text)
                 return
             try:
-                action = process_shared_video(session, video, lambda t: _report(reporter, "progress", t),
-                                              chat_id=reporter.chat_id, message_id=reporter.message_id, deep=deep)
+                with _tier_for_shares():
+                    action = process_shared_video(session, video, lambda t: _report(reporter, "progress", t),
+                                                  chat_id=reporter.chat_id, message_id=reporter.message_id,
+                                                  deep=deep)
             except FatalAnalysisError as e:
                 log.warning("Shared item %s stopped: %s", video_id, e)
                 session.rollback()
@@ -300,6 +302,14 @@ def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
     finally:
         with _in_flight_lock:
             _in_flight.discard(video_id)
+
+
+def _tier_for_shares():
+    """Gemini's half-price Flex tier for new shares, if turned on in Settings (results take minutes longer)."""
+    from app import gemini_client
+    from app.config import get_quest_settings
+
+    return gemini_client.tier("flex" if get_quest_settings()["flex_shares"] else "standard")
 
 
 def mark_failed(video_id: int, text: str, status=None) -> None:

@@ -297,6 +297,33 @@ def read_project_file(project: str, path: str) -> dict:
     return {"project": project, "path": path, "content": scrub_secrets(content)}
 
 
+_REMOTE_RE = re.compile(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+
+
+def github_repo_of(project: str) -> str | None:
+    """'owner/name' of a project's GitHub remote, from its .git/config (only the origin URL
+    line is read; the agent's file reader never opens .git). None if it has no GitHub remote."""
+    root = project_roots().get(project.strip())
+    if root is None:
+        return None
+    # In Docker this app's own folder has no .git, but its ~/Projects link may resolve to one.
+    candidates = [root / ".git" / "config", PROJECTS_DIR / project.strip() / ".git" / "config"]
+    config = next((c for c in candidates if c.is_file()), None)
+    if config is None:
+        return None
+    try:
+        text = config.read_text(errors="ignore")[:20_000]
+    except OSError:
+        return None
+    section = re.search(r'\[remote "origin"\]([^\[]*)', text)
+    for line in (section.group(1) if section else text).splitlines():
+        if line.strip().startswith("url"):
+            m = _REMOTE_RE.search(line.split("=", 1)[-1].strip())
+            if m:
+                return f"{m.group(1)}/{m.group(2)}"
+    return None
+
+
 # Credential shapes that could sit in an innocently-named file (config.yaml, settings.py...).
 _SECRET_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"

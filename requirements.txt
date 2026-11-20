@@ -16,6 +16,8 @@ tzdata==2026.5  # zoneinfo data for APP_TIMEZONE in the slim image
 python-dotenv==1.2.4
 pydantic-settings==2.6.1
 alembic==1.13.3
+icalendar==7.3.2           # reading your calendar's busy times (secret iCal address)
+recurring-ical-events==3.8.2
 
 # dev/test only - not needed at runtime, kept in the same file for a one-command
 # `pip install -r requirements.txt` setup rather than splitting into requirements-dev.txt

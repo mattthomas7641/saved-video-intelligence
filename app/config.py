@@ -217,6 +217,29 @@ def save_gemini_key(key: str) -> None:
 PROVIDERS = ("gemini", "xai", "anthropic")
 
 
+def get_quest_settings() -> dict:
+    """Follow-through after a report (app/quests.py). `calendar_ics_url` is your calendar's
+    secret iCal address (read-only: busy times, so suggested dates avoid them);
+    `github_token` may open issues in your own repos, and only after you approve each one.
+    Flex is Gemini's half-price tier: slower (minutes), so by default only background work uses it."""
+    s = _load_secrets().get("QUESTS", {})
+    return {
+        "calendar_ics_url": s.get("calendar_ics_url", ""),
+        "github_token": s.get("github_token", ""),
+        "follow_ups": bool(s.get("follow_ups", True)),
+        "flex_background": bool(s.get("flex_background", True)),
+        "flex_shares": bool(s.get("flex_shares", False)),
+        "signing_key": s.get("signing_key", ""),   # signs approve buttons in notifications (app/quests.py)
+    }
+
+
+def save_quest_settings(**updates) -> dict:
+    current = get_quest_settings()
+    current.update({k: v for k, v in updates.items() if v is not None})
+    _save_secret("QUESTS", current)
+    return current
+
+
 def get_project_overrides() -> dict:
     """Per-project status chosen in Settings: active | planned | ignore."""
     return _load_secrets().get("PROJECT_OVERRIDES", {})

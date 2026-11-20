@@ -235,3 +235,66 @@ def test_network_drop_is_retried(monkeypatch):
     client = Flaky([_ix([_call("record_findings", FINDINGS)])])
     assert gemini_client.research(V(), "repo", None, 1.0, client=client, web=False).verdict == "worth_it"
     assert calls["n"] == 2
+
+
+# ---------------- Flex tier and follow-ups ----------------
+
+def test_flex_requests_ask_for_flex_and_bill_half():
+    ix = _ix([_call("record_findings", FINDINGS)], i=8000, audio=0, o=400, thought=0)
+    ix.service_tier = "flex"
+    client = FakeGenAI([ix])
+    with gemini_client.tier("flex"):
+        findings = gemini_client.research(V(), "skill", "b", 1.0, client=client, web=False)
+    assert client.requests[0]["service_tier"] == "flex"
+    assert client.requests[0]["timeout"] == gemini_client.FLEX_TIMEOUT_S
+    assert findings.cost_usd == pytest.approx(round((8000 * 0.75 + 400 * 3.75) / 1e6 * 0.5, 4))
+
+
+def test_flex_request_shed_by_google_falls_back_to_standard():
+    class Shed(Exception):
+        status_code = 503
+
+    ok = _ix([_call("record_findings", FINDINGS)])
+    calls = []
+
+    def create(**params):
+        calls.append(params)
+        if params.get("service_tier") == "flex":
+            raise Shed("overloaded")
+        return ok
+
+    client = SimpleNamespace(interactions=SimpleNamespace(create=create))
+    with gemini_client.tier("flex"):
+        gemini_client.research(V(), "skill", "b", 1.0, client=client, web=False)
+    assert [c.get("service_tier") for c in calls] == ["flex", None]
+
+
+def test_standard_is_the_default_tier():
+    client = FakeGenAI([_ix([_call("record_findings", FINDINGS)])])
+    gemini_client.research(V(), "skill", "b", 1.0, client=client, web=False)
+    assert "service_tier" not in client.requests[0]
+
+
+def test_follow_up_check_returns_the_update():
+    update = {"changed": True, "headline": "Shipped", "summary": "Out now", "keep_watching": False,
+              "links": [{"url": "https://example.com/a", "title": "A"}, {"url": "javascript:x"}]}
+    client = FakeGenAI([_ix([_call("record_update", update)])])
+    out = gemini_client.follow_up({"headline": "h", "watch_for": "release", "reported_on": "2026-11-01"},
+                                  client=client)
+    assert out["changed"] and out["headline"] == "Shipped" and not out["keep_watching"]
+    assert [x["url"] for x in out["links"]] == ["https://example.com/a"]
+    assert {"type": "google_search"} in client.requests[0]["tools"]
+    assert "release" in client.requests[0]["input"]
+
+
+def test_report_keeps_times_follow_up_and_issue():
+    f = agent._findings_from({**FINDINGS,
+                              "suggested_times": [{"start": "2026-11-28T19:00", "minutes": 9999, "why": "Fri"},
+                                                  {"why": "no start"}],
+                              "follow_up": {"after_days": 500, "watch_for": "launch"},
+                              "github_issue": {"project": "gw", "title": "Add X", "body": "b"}}, 0.0)
+    assert f.suggested_times == [{"start": "2026-11-28T19:00", "why": "Fri", "minutes": 90}]
+    assert f.follow_up == {"after_days": 60, "watch_for": "launch"}
+    assert f.github_issue["title"] == "Add X"
+    stored = agent.load_report(f.to_json())
+    assert stored["suggested_times"] and stored["follow_up"] and stored["github_issue"]

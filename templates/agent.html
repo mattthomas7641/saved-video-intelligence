@@ -20,6 +20,66 @@
 {% elif v == "maybe" %}<span class="verdict v-maybe">Maybe</span>
 {% elif v == "skip" %}<span class="verdict v-skip">Skip</span>{% endif %}
 {%- endmacro %}
+{% macro next_steps(a, ts, here) -%}
+{% set live = ts|rejectattr("status", "in", ["declined", "cancelled"])|list %}
+{% if live %}
+<h4>Next steps</h4>
+<div class="steps">
+  {% set cal = live|selectattr("kind", "equalto", "calendar")|list %}
+  {% if cal %}{% set chosen = cal|selectattr("status", "equalto", "done")|first %}
+  <div class="step">
+    <span class="ci">{{ icon("calendar") }}</span>
+    <div class="step-main">
+      {% if chosen %}
+      <p>Picked <strong>{{ chosen.title }}</strong>. <a href="/tasks/{{ chosen.id }}/event.ics">Apple Calendar (.ics)</a></p>
+      {% else %}
+      <p>Pick a time to go:</p>
+      <div class="slot-row">{% for t in cal %}
+        <form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit" title="Opens Google Calendar with it filled in">{{ t.title }}</button></form>
+      {% endfor %}</div>
+      <p class="hint">Opens Google Calendar to save it. For Apple Calendar: {% for t in cal %}<a href="/tasks/{{ t.id }}/event.ics">{{ t.title.split(" · ")[0] }}</a>{{ ", " if not loop.last }}{% endfor %}.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% for t in live if t.kind == "github_issue" %}{% set res = t.result|fromjson %}
+  <div class="step">
+    <span class="ci">{{ icon("code") }}</span>
+    <div class="step-main">
+      {% if t.status == "done" %}<p>Opened: <a href="{{ res.url }}" target="_blank" rel="noopener">{{ t.title }} {{ icon("external") }}</a></p>
+      {% elif t.status == "running" %}<p>Opening: {{ t.title }}…</p>
+      {% else %}
+      <p>{{ t.title }}</p>
+      <details class="step-preview"><summary>Preview the issue</summary><div class="prose">{{ (t.payload|fromjson).body|markdown }}</div></details>
+      {% if t.error %}<p class="why">{{ t.error }}</p>{% endif %}
+      <div class="slot-row">
+        <form action="/tasks/{{ t.id }}/approve" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-primary" type="submit">{{ icon("check") }} Open it</button></form>
+        <form action="/tasks/{{ t.id }}/decline" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">No thanks</button></form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% for t in live if t.kind == "follow_up" %}{% set res = t.result|fromjson %}
+  <div class="step">
+    <span class="ci">{{ icon("clock") }}</span>
+    <div class="step-main">
+      {% if t.status == "scheduled" %}
+      <p>Checking back <strong>{{ t.run_at|short_date }}</strong> for: {{ (t.payload|fromjson).watch_for }}</p>
+      <form action="/tasks/{{ t.id }}/cancel" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">Stop following</button></form>
+      {% elif t.status == "running" %}<p>Checking now…</p>
+      {% elif t.status == "done" and res.changed %}
+      <p><strong>Update {{ t.updated_at|short_date }}:</strong> {{ res.headline }}</p>
+      {% if res.summary %}<p>{{ res.summary|nocite }}</p>{% endif %}
+      {% if res.links %}<ul class="links">{% for l in res.links %}<li><a href="{{ l.url }}" target="_blank" rel="noopener">{{ l.title or l.url }} {{ icon("external") }}</a></li>{% endfor %}</ul>{% endif %}
+      {% elif t.status == "done" %}<p class="faint">Checked {{ t.updated_at|short_date }}: no news.</p>
+      {% elif t.status == "failed" %}<p class="why">Couldn't check back: {{ t.error }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
 {% block content %}
 {% set here = "/?tab=" ~ tab ~ ("&group=" ~ group if group else "") %}
 
@@ -112,16 +172,25 @@
         {% elif r.project_fit and r.project_fit[0].fit != "skip" %}<p class="r-key">{{ icon("wrench") }} Fits {{ r.project_fit[0].project }}: {{ r.project_fit[0].where }} {{ value_tag(r.project_fit[0].value) }}</p>
         {% elif r.new_project %}<p class="r-key">{{ icon("bulb") }} New project: {{ r.new_project.idea }} {{ value_tag(r.new_project.value) }}</p>
         {% elif r.ideas %}<p class="r-key">{{ icon("bulb") }} {{ r.ideas[0] }}</p>{% endif %}
+        {% set ts = tasks.get(a.id, []) %}
+        {% if ts|selectattr("status", "equalto", "proposed")|list %}<p class="r-key r-next">{{ icon("check") }} Waiting on you: {{ "pick a time" if ts|selectattr("kind", "equalto", "calendar")|selectattr("status", "equalto", "proposed")|list else "approve a step" }}</p>
+        {% elif ts|selectattr("status", "equalto", "scheduled")|list %}<p class="r-key">{{ icon("clock") }} Checking back {{ (ts|selectattr("status", "equalto", "scheduled")|first).run_at|short_date }}</p>{% endif %}
         <span class="r-more">Full report {{ icon("chev") }}</span>
       </summary>
 
       <div class="r-body">
+        {{ next_steps(a, tasks.get(a.id, []), here) }}
         {% if r.place %}
         <dl class="facts">
-          {% for k, label in [("address", "Address"), ("hours", "Hours"), ("best_times", "Best time"), ("price", "Price"), ("reservations", "Reservations"), ("status", "Status")] if r.place[k] %}
+          {% for k, label in [("address", "Address"), ("hours", "Hours"), ("best_times", "Best time"), ("price_range", "Price range"), ("price", "Price"), ("reservations", "Reservations"), ("availability", "Getting in"), ("status", "Status")] if r.place[k] %}
           <div><dt>{{ label }}</dt><dd>{{ r.place[k] }}</dd></div>
           {% endfor %}
+          {% if r.place.reservation_url and r.place.reservation_url.startswith("http") %}<div><dt>Book</dt><dd><a href="{{ r.place.reservation_url }}" target="_blank" rel="noopener">Booking page {{ icon("external") }}</a></dd></div>{% endif %}
         </dl>
+        {% if r.place.menu %}
+        <h4>On the menu</h4>
+        <ul class="menu-list">{% for m in r.place.menu if m.item %}<li><span>{{ m.item }}</span><span class="num faint">{{ m.price or "" }}</span></li>{% endfor %}</ul>
+        {% endif %}
         {% endif %}
 
         {% if r.project_fit or r.new_project or r.new_project_idea %}

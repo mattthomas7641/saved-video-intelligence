@@ -606,3 +606,18 @@ code.copy { user-select: all; word-break: break-all; }
 .case-form label { display: grid; gap: 4px; font-size: var(--fs-xs); color: var(--ink-3); }
 .case-form .field { padding: 8px 12px; }
 @media (max-width: 760px) { .eval-table { display: block; overflow-x: auto; } }
+
+/* Next steps on a report (app/quests.py): calendar slots, issues to approve, check-backs */
+.steps { display: grid; gap: 10px; margin-bottom: 18px; }
+.step { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--surface); }
+.step .ci { margin-top: 3px; }
+.step-main { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.step-main p { margin: 0; }
+.step-main .hint { font-size: var(--fs-xs); color: var(--ink-3); }
+.step-main .why { color: var(--flag); font-size: var(--fs-sm); }
+.slot-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.slot-row form { margin: 0; }
+.step-preview summary { cursor: pointer; color: var(--ink-3); font-size: var(--fs-sm); }
+.r-next { color: var(--accent); font-weight: 600; }
+.menu-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 4px; max-width: 440px; }
+.menu-list li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding: 3px 0; }

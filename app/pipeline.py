@@ -295,7 +295,8 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         cards = projects_mod.cards(session) if tech else []
         web, x_search = research_plan(provider, action_type, deep)
         context = agent_mod.Context(projects=agent_mod.projects_context(cards, [c.name for c in cards]) if tech else "",
-                                    prefetch=prefetch_mod.as_context(found))
+                                    prefetch=prefetch_mod.as_context(found),
+                                    calendar="" if tech else _calendar_context())
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
         with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
             related = _recall(session, video, action)
@@ -335,7 +336,35 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     _touch_action(session, action)
     if action.status == ActionStatus.DRAFTED:
         _remember(session, action, video)
+        _plan_follow_through(session, action)
     return action
+
+
+def _calendar_context() -> str:
+    """Your busy times for the next two weeks, so suggested dates avoid them; "" without a
+    calendar or if it can't be read (research goes on either way)."""
+    from app import calendar_busy
+    from app.config import get_quest_settings
+
+    url = get_quest_settings()["calendar_ics_url"]
+    if not url:
+        return ""
+    try:
+        return calendar_busy.context_block(calendar_busy.busy(url))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't read the calendar (%s); suggesting times without it", e)
+        return ""
+
+
+def _plan_follow_through(session: Session, action: Action) -> None:
+    """Calendar slots, an issue to approve, a check-back later (app/quests.py). Best effort:
+    the report is already saved."""
+    from app import quests
+
+    try:
+        quests.plan(session, action, json.loads(action.result or "{}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Couldn't plan follow-through for action %s", action.id)
 
 
 def _recall(session: Session, video: Video, action: Action) -> list[dict]:

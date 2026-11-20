@@ -109,6 +109,33 @@
   </form>
 </section>
 
+<section class="plain-card" id="follow">
+  <h2>Follow-through</h2>
+  <p style="margin-bottom:12px">After a report, the agent can do the next step: suggest times for a food spot and add one to your calendar, open an issue in the project something fits, or check back on a story later. Anything that changes something outside Sidequest waits for your tap.</p>
+  <form action="/settings/quests" method="post" style="display:grid;gap:12px">
+    <div class="key-row">
+      <div><strong>Your calendar</strong> {% if quest_settings.calendar_ics_url %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
+        <p class="hint" style="margin-top:4px">So suggested times avoid when you're busy. Paste your calendar's <em>secret address in iCal format</em> (Google Calendar → Settings → your calendar → Integrate calendar). It's read-only, and only busy times are used: event names never leave this computer.</p></div>
+      <input class="field" type="password" name="calendar_ics_url" autocomplete="off" aria-label="Secret iCal address" placeholder="{{ 'Paste a new address to replace it' if quest_settings.calendar_ics_url else 'https://calendar.google.com/calendar/ical/…/basic.ics' }}">
+    </div>
+    <div class="key-row">
+      <div><strong>GitHub token for issues</strong> {% if quest_settings.github_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
+        <p class="hint" style="margin-top:4px">A <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> limited to your own repos, with <strong>Issues: read and write</strong> only. Used only when you approve an issue.</p></div>
+      <input class="field" type="password" name="github_token" autocomplete="off" aria-label="GitHub token" placeholder="{{ 'Paste a new token to replace it' if quest_settings.github_token else 'github_pat_…' }}">
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="follow_ups" value="true" {{ "checked" if quest_settings.follow_ups }}> Check back on developing stories, launches and price drops (about $0.01 a check; you're told only when something changed)</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_background" value="true" {{ "checked" if quest_settings.flex_background }}> Half price for background work (follow-ups, evals): Gemini Flex, slower but nobody's waiting</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_shares" value="true" {{ "checked" if quest_settings.flex_shares }}> Half price for new shares too (results take up to 15 minutes instead of 1–2)</label>
+    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+  </form>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    {% if quest_settings.calendar_ics_url %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="calendar_ics_url"><button class="btn btn-quiet" type="submit">Disconnect calendar</button></form>{% endif %}
+    {% if quest_settings.github_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="github_token"><button class="btn btn-quiet" type="submit">Remove GitHub token</button></form>{% endif %}
+  </div>
+  {% if key_status == "quests_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  {% if key_status == "calendar_bad" %}<p style="color:var(--flag);margin-top:8px">Couldn't read that calendar address. Copy the secret address in iCal format again; the rest was saved.</p>{% endif %}
+</section>
+
 <section class="plain-card" id="projects">
   <h2>Your projects</h2>
   <p style="margin-bottom:12px">The agent judges every video against these: whether it's worth adding, where it plugs in, and what it does to the architecture. Found in your Projects folder; secrets, data and .env files are never read.</p>

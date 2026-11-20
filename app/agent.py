@@ -135,7 +135,40 @@ _FINDINGS_TOOL = {
                     "hours": {"type": "string"}, "best_times": {"type": "string"},
                     "price": {"type": "string"}, "reservations": {"type": "string"},
                     "status": {"type": "string", "description": "open, temporarily closed, permanently closed, or unknown"},
+                    "price_range": {"type": "string", "description": "Typical spend per person, e.g. '$15-25 pp'."},
+                    "menu": {"type": "array", "maxItems": 8, "description": "Popular or recommended items with "
+                             "their current prices, from the menu itself where possible.",
+                             "items": {"type": "object", "properties": {"item": {"type": "string"},
+                                                                         "price": {"type": "string"}},
+                                       "required": ["item"]}},
+                    "reservation_url": {"type": "string", "description": "The booking page (Resy, OpenTable, Tock, "
+                                                                         "their site), if there is one."},
+                    "availability": {"type": "string", "description": "How hard it is to get in: walk-in only, "
+                                                                      "books out N days ahead, easy, etc."},
                 },
+            },
+            "suggested_times": {
+                "type": "array", "maxItems": 3,
+                "description": "Only for a place or event worth going to: 2-3 specific times in the next two weeks "
+                               "when it's open and (if their calendar is given) the user is free. Each becomes a "
+                               "one-tap 'add to calendar' option.",
+                "items": {"type": "object", "properties": {
+                    "start": {"type": "string", "description": "Local time, YYYY-MM-DDTHH:MM"},
+                    "minutes": {"type": "integer", "description": "How long to block, usually 60-120"},
+                    "why": {"type": "string", "description": "Under 80 characters, e.g. 'Fri dinner, before the weekend rush'"},
+                }, "required": ["start"]},
+            },
+            "follow_up": {
+                "type": "object",
+                "description": "Only when something is still developing and worth checking back on: an announced "
+                               "but unreleased product, a rumour, a lawsuit, a price drop, a date. You'll be woken "
+                               "after `after_days` to look again, and the user is told only if something changed.",
+                "properties": {
+                    "after_days": {"type": "integer", "minimum": 2, "maximum": 60},
+                    "watch_for": {"type": "string", "description": "Exactly what would count as news, e.g. "
+                                                                  "'public release date or pricing for X'."},
+                },
+                "required": ["after_days", "watch_for"],
             },
             "project_fit": {
                 "type": "array",
@@ -171,6 +204,18 @@ _FINDINGS_TOOL = {
                     "effort": {"type": "string", "enum": ["S", "M", "L"]},
                 },
                 "required": ["idea", "value"],
+            },
+            "github_issue": {
+                "type": "object",
+                "description": "Only when a project_fit entry is worth_it and concrete: an issue to open in that "
+                               "project's GitHub repo. It is opened only if the user approves it.",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name exactly as listed"},
+                    "title": {"type": "string", "description": "Under 80 characters, imperative."},
+                    "body": {"type": "string", "description": "Markdown: why, where it plugs in (files), first "
+                                                              "steps as a checklist, and links."},
+                },
+                "required": ["project", "title", "body"],
             },
             "repos": {
                 "type": "array",
@@ -216,16 +261,19 @@ Project fit: the user lists their projects, active and planned, under "Your proj
 
 New project: if testing it out works better as its own project than inside an existing one, fill `new_project` with what to build.
 
+Follow-through: if one project fit is worth_it and concrete, fill `github_issue` with the issue you'd open in that project (why, where it plugs in, a first-steps checklist, links); it's opened only if the user approves. If it's news still unfolding (announced but not shipped, a rumour, a pending release), fill `follow_up` with when to check back and what to watch for.
+
 Value, for every project_fit entry and new_project: rate what doing it is worth to the user - fun or personal use only; personal use plus a credible resume boost; only a weak resume boost; or not worth it - and say why in one sentence. Be honest: most tutorial-style builds are weak resume boosts, and that's fine to say."""
 
 _GENERAL_PLAYBOOKS = """This is everyday content, not tech: judge it on its own terms for this person's life. Don't relate it to any software projects. Playbooks:
-- place (restaurant, bar, shop, spot): identify the exact place and city; address, hours, which days or times to go, price range, how to reserve, what to order; check it's still open. Fill `place`.
+- place (restaurant, bar, shop, spot): identify the exact place and city; check it's still open; address, hours, which days or times to go. Find the menu (their site, Google Maps, delivery apps) and list popular items with current prices in `place.menu`, plus `place.price_range` per person. Say how to get in: the booking page in `place.reservation_url` if there is one, and in `place.availability` how far ahead it books out or whether it's walk-in only. If it's worth going, fill `suggested_times` with 2-3 specific times in the next two weeks when it's open, favouring its best times and, if "Your calendar" is given, times the user is free. Fill `place`.
 - product or deal: what it actually is, the real price and where it's cheapest, what reviews say, whether it's a paid promotion, and better or cheaper alternatives.
 - recipe or food: ingredients, time, difficulty, and any shortcut or swap worth knowing.
 - fitness, health or beauty: whether the claim holds up against good evidence, and anything unsafe. Not medical advice.
 - money: whether it's legitimate, the risks and costs, and red flags. Not financial advice.
-- travel or event: dates, costs, booking, best time to go.
-- news or ideas: the primary source, what's true, what's overstated.
+- travel or event: dates, costs, booking, best time to go; for an event worth going to, fill `suggested_times` with its actual dates/times.
+- news or ideas: the primary source, what's true, what's overstated. If it's still developing, fill `follow_up`.
+- product or deal you'd wait on (a price drop, a restock, a launch): fill `follow_up` with when to check and what price or news counts.
 - anything else: work out what would be most useful to know or do about it, and do that.
 Always end with the practical next step (book, buy, try, skip) in telegram_text."""
 
@@ -244,7 +292,7 @@ _GENERAL_FINDINGS_TOOL = {
     "input_schema": {
         **_FINDINGS_TOOL["input_schema"],
         "properties": {k: v for k, v in _FINDINGS_TOOL["input_schema"]["properties"].items()
-                       if k not in ("project_fit", "new_project", "repos")},
+                       if k not in ("project_fit", "new_project", "repos", "github_issue")},
     },
 }
 
@@ -284,6 +332,9 @@ class Findings:
     new_project_idea: str | None = None
     new_project: dict | None = None
     related: list = field(default_factory=list)  # past reports recalled from memory (pipeline fills this)
+    suggested_times: list = field(default_factory=list)
+    follow_up: dict | None = None
+    github_issue: dict | None = None
     cost_usd: float = 0.0
 
     def to_json(self) -> str:
@@ -292,6 +343,7 @@ class Findings:
             "report_markdown": self.report_markdown, "ideas": self.ideas, "links": self.links,
             "place": self.place, "repos": self.repos, "project_fit": self.project_fit,
             "new_project_idea": self.new_project_idea, "new_project": self.new_project, "related": self.related,
+            "suggested_times": self.suggested_times, "follow_up": self.follow_up, "github_issue": self.github_issue,
         })
 
 
@@ -302,6 +354,7 @@ class Context:
     projects: str = ""
     prefetch: str = ""
     memory: str = ""
+    calendar: str = ""   # busy times (app/calendar_busy.py), for places and events
 
 
 def projects_context(cards: list, relevant: list[str]) -> str:
@@ -359,6 +412,8 @@ On-screen text (OCR, noisy): {video.ocr_text or "(none)"}"""]
         parts.append(context.projects)
     if context.memory:
         parts.append(context.memory)
+    if context.calendar:
+        parts.append(context.calendar)
     return "\n\n".join(parts)
 
 
@@ -517,8 +572,31 @@ def _findings_from(tool_input: dict, cost: float) -> Findings:
         project_fit=_dicts(tool_input.get("project_fit"), "project", 4),
         new_project_idea=_text(new_project.get("idea")) or _text(tool_input.get("new_project_idea")) or None,
         new_project=new_project if _text(new_project.get("idea")) else None,
+        suggested_times=[{"start": _text(t.get("start"), 16), "why": _text(t.get("why"), 120),
+                          "minutes": t["minutes"] if isinstance(t.get("minutes"), int) and 15 <= t["minutes"] <= 480
+                          else 90}
+                         for t in _dicts(tool_input.get("suggested_times"), "start", 3)],
+        follow_up=_follow_up(tool_input.get("follow_up")),
+        github_issue=_issue(tool_input.get("github_issue")),
         cost_usd=round(cost, 4),
     )
+
+
+def _follow_up(value) -> dict | None:
+    if not isinstance(value, dict) or not _text(value.get("watch_for")):
+        return None
+    try:
+        days = min(max(int(value.get("after_days") or 7), 2), 60)
+    except (TypeError, ValueError):
+        days = 7
+    return {"after_days": days, "watch_for": _text(value.get("watch_for"), 300)}
+
+
+def _issue(value) -> dict | None:
+    if not isinstance(value, dict) or not (_text(value.get("project")) and _text(value.get("title"))):
+        return None
+    return {"project": _text(value.get("project"), 100), "title": _text(value.get("title"), 120),
+            "body": _text(value.get("body"), 6000)}
 
 
 def load_report(text: str | None) -> dict | None:

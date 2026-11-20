@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app import gemini_client, intake, ntfy_intake, projects, telegram_bot, xai_client
+from app import calendar_busy, gemini_client, intake, ntfy_intake, projects, quests, telegram_bot, xai_client
 from app.config import (
     BASE_DIR,
     GROUPS,
@@ -24,6 +24,7 @@ from app.config import (
     get_gemini_key,
     get_ntfy_settings,
     get_project_overrides,
+    get_quest_settings,
     get_telegram_settings,
     get_xai_key,
     group_of,
@@ -34,6 +35,7 @@ from app.config import (
     save_api_key,
     save_gemini_key,
     save_project_override,
+    save_quest_settings,
     save_telegram_settings,
     save_xai_key,
 )
@@ -124,6 +126,17 @@ def _strip_citations(text: str | None) -> str:
 
 templates.env.filters["short_date"] = _short_date
 templates.env.filters["nocite"] = _strip_citations
+
+
+def _from_json(text: str | None) -> dict:
+    try:
+        value = json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+templates.env.filters["fromjson"] = _from_json
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
 
@@ -162,6 +175,7 @@ except Exception:  # noqa: BLE001
     logging.getLogger(__name__).exception("Startup recovery failed")
 telegram_bot.start_poller()
 ntfy_intake.start()
+quests.start()
 if not os.environ.get("SVI_DISABLE_TELEGRAM"):  # no background work in tests
     projects.start_rescans()
 
@@ -311,6 +325,7 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         "intake_ready": ntfy_intake.ready() or bool(tg["bot_token"] and tg["chat_id"]),
         "has_research_key": _has_research_key(),
         "project_status": {p.name: p.status for p in projects.cards(session)},
+        "tasks": quests.for_actions(session, [i["action"].id for i in reports]),
     })
 
 
@@ -439,6 +454,81 @@ def agent_dismiss(action_id: int, session: Session = Depends(get_db), next: str 
     return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
 
 
+def _local_next(next: str) -> str:
+    return next if next.startswith("/") and not next.startswith("//") else "/"
+
+
+@app.post("/tasks/{task_id}/approve")
+def task_approve(task_id: int, next: str = Form("/")):
+    _, url = quests.approve(task_id)
+    return RedirectResponse(url or _local_next(next), status_code=303)
+
+
+@app.get("/tasks/{task_id}/approve")
+def task_approve_link(task_id: int, sig: str = ""):
+    """A notification's button on the phone. Signed for this one task, since it's a link."""
+    if not quests.check_signature(task_id, sig):
+        raise HTTPException(status_code=403, detail="This link isn't valid.")
+    _, url = quests.approve(task_id)
+    return RedirectResponse(url or "/", status_code=303)
+
+
+@app.post("/tasks/{task_id}/decline")
+def task_decline(task_id: int, next: str = Form("/")):
+    quests.decline(task_id)
+    return RedirectResponse(_local_next(next), status_code=303)
+
+
+@app.post("/tasks/{task_id}/cancel")
+def task_cancel(task_id: int, next: str = Form("/")):
+    quests.cancel(task_id)
+    return RedirectResponse(_local_next(next), status_code=303)
+
+
+@app.get("/tasks/{task_id}/event.ics")
+def task_ics(task_id: int, session: Session = Depends(get_db)):
+    """The calendar slot as an .ics file, for Apple Calendar."""
+    from fastapi.responses import Response
+
+    from app.models import Task
+
+    task = session.get(Task, task_id)
+    if task is None or task.kind != "calendar":
+        raise HTTPException(status_code=404)
+    p = json.loads(task.payload)
+    data = calendar_busy.ics(p["summary"], calendar_busy.parse_local(p["start"]), calendar_busy.parse_local(p["end"]),
+                             p.get("location", ""), p.get("details", ""), uid=f"task-{task.id}@sidequest")
+    return Response(data, media_type="text/calendar",
+                    headers={"Content-Disposition": f'attachment; filename="sidequest-{task.id}.ics"'})
+
+
+@app.post("/settings/quests")
+def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str | None = Form(None),
+                    follow_ups: bool = Form(False), flex_background: bool = Form(False),
+                    flex_shares: bool = Form(False)):
+    """Blank secret fields keep what's saved (they're never shown back); Remove clears them."""
+    status = "quests_saved"
+    updates = {"follow_ups": follow_ups, "flex_background": flex_background, "flex_shares": flex_shares}
+    url = (calendar_ics_url or "").strip()
+    if url:
+        try:
+            calendar_busy.busy(url, days=1)
+            updates["calendar_ics_url"] = url
+        except Exception:  # noqa: BLE001 - anything wrong with the address
+            status = "calendar_bad"
+    if (github_token or "").strip():
+        updates["github_token"] = github_token.strip()
+    save_quest_settings(**updates)
+    return RedirectResponse(f"/settings?key={status}#follow", status_code=303)
+
+
+@app.post("/settings/quests/clear")
+def settings_quests_clear(what: str = Form("")):
+    if what in ("calendar_ics_url", "github_token"):
+        save_quest_settings(**{what: ""})
+    return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
+
+
 @app.post("/settings/telegram")
 def settings_telegram(token: str = Form("")):
     token = token.strip()
@@ -558,6 +648,7 @@ def settings_page(request: Request, key: str = ""):
         "action_settings": get_action_settings(),
         "telegram": get_telegram_settings(),
         "agent_settings": get_agent_settings(),
+        "quest_settings": get_quest_settings(),
         "has_xai_key": bool(get_xai_key()),
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),
