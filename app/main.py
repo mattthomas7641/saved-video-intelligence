@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,7 +14,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app import gemini_client, intake, ntfy_intake, projects, telegram_bot, xai_client
+from app import (
+    calendar_busy,
+    gemini_client,
+    intake,
+    mcp_server,
+    ntfy_intake,
+    projects,
+    quests,
+    telegram_bot,
+    tracing,
+)
 from app.config import (
     BASE_DIR,
     GROUPS,
@@ -22,11 +33,13 @@ from app.config import (
     get_agent_settings,
     get_api_key,
     get_gemini_key,
+    get_mcp_token,
     get_ntfy_settings,
     get_project_overrides,
+    get_quest_settings,
     get_telegram_settings,
-    get_xai_key,
     group_of,
+    new_mcp_token,
     new_ntfy_setup,
     new_pairing_code,
     save_action_settings,
@@ -34,8 +47,8 @@ from app.config import (
     save_api_key,
     save_gemini_key,
     save_project_override,
+    save_quest_settings,
     save_telegram_settings,
-    save_xai_key,
 )
 from app.db import get_db, init_db
 from app.models import Action, ActionStatus, Status, Video
@@ -47,9 +60,19 @@ from app.services import dashboard_query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram/ntfy poll is noise
-app = FastAPI(title="Sidequest")
+_mcp_http = mcp_server.http_app()
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    async with mcp_server.server.session_manager.run():  # the /mcp/ endpoint's sessions
+        yield
+
+
+app = FastAPI(title="Sidequest", lifespan=_lifespan)
 app.add_middleware(GuardMiddleware)  # no login: refuse other hosts and cross-site writes (app/security.py)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/mcp", _mcp_http)  # Sidequest as an MCP server (app/mcp_server.py), behind a bearer token
 LOCAL_TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/New_York"))
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -124,6 +147,34 @@ def _strip_citations(text: str | None) -> str:
 
 templates.env.filters["short_date"] = _short_date
 templates.env.filters["nocite"] = _strip_citations
+
+
+def _from_json(text: str | None) -> dict:
+    try:
+        value = json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+templates.env.filters["fromjson"] = _from_json
+
+_TECHNICAL = re.compile(r"\[[A-Z_]+:|Traceback|Error:|Exception|errno|0x[0-9a-f]{6,}|https?://\S+\.py", re.I)
+
+
+def _plain_error(text: str | None) -> str:
+    """A stored error as words: older items kept raw exception text, which isn't for people."""
+    if not text:
+        return "Something went wrong. Tap Retry."
+    if _TECHNICAL.search(text):
+        lower = text.lower()
+        if any(w in lower for w in ("ssl", "eof", "connection", "timed out", "timeout", "reset")):
+            return "The connection dropped while researching. Tap Retry."
+        return "Something went wrong while researching (details are in the app log). Tap Retry."
+    return text
+
+
+templates.env.filters["plain_error"] = _plain_error
 templates.env.filters["fmt_date"] = lambda d: d.strftime("%b %-d, %Y") if d else "date unknown"
 
 
@@ -162,6 +213,7 @@ except Exception:  # noqa: BLE001
     logging.getLogger(__name__).exception("Startup recovery failed")
 telegram_bot.start_poller()
 ntfy_intake.start()
+quests.start()
 if not os.environ.get("SVI_DISABLE_TELEGRAM"):  # no background work in tests
     projects.start_rescans()
 
@@ -241,10 +293,10 @@ def health():
 
 
 # ---------------- Sidequests (things you sent) ----------------
-AGENT_TYPES = ["repo", "research", "place", "project", "skill", "job", "other"]
+AGENT_TYPES = ["repo", "research", "place", "travel", "project", "skill", "job", "other"]
 
 
-TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project",
+TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "travel": "Travel", "project": "Project",
                "skill": "Skill", "job": "Job", "other": "Other"}
 QUEST_TABS = [("todo", "To do"), ("fyi", "Nothing to do"), ("done", "Done"), ("skipped", "Not for me")]
 
@@ -311,12 +363,42 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         "intake_ready": ntfy_intake.ready() or bool(tg["bot_token"] and tg["chat_id"]),
         "has_research_key": _has_research_key(),
         "project_status": {p.name: p.status for p in projects.cards(session)},
+        "tasks": quests.for_actions(session, [i["action"].id for i in reports]),
+        "activity": tracing.activity(session, [i["action"].id for i in reports]),
+        "needs_you": _needs_you(session, items),
+        "saved_nearby": {i["action"].id: quests.saved_places_in(session, (i["report"].get("trip") or {})
+                                                                 .get("destination_city", ""), i["action"].id)
+                         for i in reports if i["report"].get("trip")},
+        "coming_up": quests.upcoming(session, 5),
     })
+
+
+def _needs_you(session: Session, items: list[dict]) -> list[dict]:
+    """Everything waiting on a tap, newest first: times to pick and issues to approve."""
+    from app.models import Task
+
+    by_id = {i["action"].id: i for i in items}
+    rows = session.exec(select(Task).where(Task.status.in_(["proposed", "failed"]))
+                        .where(Task.kind != "follow_up").order_by(Task.id.desc())).all()
+    out, seen = [], set()
+    for t in rows:
+        item = by_id.get(t.action_id)
+        if item is None or item["action"].status in (ActionStatus.DONE, ActionStatus.DISMISSED):
+            continue
+        key = (t.action_id, t.kind)
+        if key in seen:
+            continue  # several slots for one place are one thing to do
+        seen.add(key)
+        headline = (item["report"] or {}).get("headline") or item["video"].summary or ""
+        label = {"calendar": "Pick a time", "flights_calendar": "Add your flights"}.get(t.kind, "Approve an issue")
+        out.append({"action_id": t.action_id, "kind": t.kind, "failed": t.status == "failed",
+                    "label": label, "headline": headline})
+    return out[:6]
 
 
 def _has_research_key() -> bool:
     provider = get_agent_settings()["provider"]
-    return bool({"gemini": get_gemini_key, "xai": get_xai_key}.get(provider, get_api_key)())
+    return bool(get_gemini_key() if provider == "gemini" else get_api_key())
 
 
 def _set_status(session: Session, action_id: int, status: ActionStatus) -> None:
@@ -439,6 +521,88 @@ def agent_dismiss(action_id: int, session: Session = Depends(get_db), next: str 
     return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
 
 
+def _local_next(next: str) -> str:
+    return next if next.startswith("/") and not next.startswith("//") else "/"
+
+
+@app.post("/tasks/{task_id}/approve")
+def task_approve(task_id: int, next: str = Form("/")):
+    _, url = quests.approve(task_id)
+    return RedirectResponse(url or _local_next(next), status_code=303)
+
+
+@app.get("/tasks/{task_id}/approve")
+def task_approve_link(task_id: int, sig: str = ""):
+    """A notification's button on the phone. Signed for this one task, since it's a link."""
+    if not quests.check_signature(task_id, sig):
+        raise HTTPException(status_code=403, detail="This link isn't valid.")
+    _, url = quests.approve(task_id)
+    return RedirectResponse(url or "/", status_code=303)
+
+
+@app.post("/tasks/{task_id}/decline")
+def task_decline(task_id: int, next: str = Form("/")):
+    quests.decline(task_id)
+    return RedirectResponse(_local_next(next), status_code=303)
+
+
+@app.post("/tasks/{task_id}/cancel")
+def task_cancel(task_id: int, next: str = Form("/")):
+    quests.cancel(task_id)
+    return RedirectResponse(_local_next(next), status_code=303)
+
+
+@app.get("/tasks/{task_id}/event.ics")
+def task_ics(task_id: int, session: Session = Depends(get_db)):
+    """A calendar step as an .ics file (one slot, or every flight on a trip), for Apple Calendar."""
+    from fastapi.responses import Response
+
+    from app.models import Task
+
+    task = session.get(Task, task_id)
+    if task is None or task.kind not in ("calendar", "flights_calendar"):
+        raise HTTPException(status_code=404)
+    return Response(quests.calendar_ics(task), media_type="text/calendar",
+                    headers={"Content-Disposition": f'attachment; filename="sidequest-{task.id}.ics"'})
+
+
+@app.post("/settings/quests")
+def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str | None = Form(None),
+                    home_airport: str | None = Form(None),
+                    follow_ups: bool = Form(False), flex_background: bool = Form(False),
+                    flex_shares: bool = Form(False), economy: bool = Form(False)):
+    """Blank secret fields keep what's saved (they're never shown back); Remove clears them."""
+    status = "quests_saved"
+    updates = {"follow_ups": follow_ups, "flex_background": flex_background, "flex_shares": flex_shares,
+               "economy": economy}
+    url = (calendar_ics_url or "").strip()
+    if url:
+        try:
+            calendar_busy.busy(url, days=1)
+            updates["calendar_ics_url"] = url
+        except Exception:  # noqa: BLE001 - anything wrong with the address
+            status = "calendar_bad"
+    if (github_token or "").strip():
+        updates["github_token"] = github_token.strip()
+    if home_airport is not None:
+        updates["home_airport"] = re.sub(r"[^A-Za-z]", "", home_airport)[:3].upper()
+    save_quest_settings(**updates)
+    return RedirectResponse(f"/settings?key={status}#follow", status_code=303)
+
+
+@app.post("/settings/quests/clear")
+def settings_quests_clear(what: str = Form("")):
+    if what in ("calendar_ics_url", "github_token"):
+        save_quest_settings(**{what: ""})
+    return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
+
+
+@app.post("/settings/mcp")
+def settings_mcp():
+    new_mcp_token()
+    return RedirectResponse("/settings?key=mcp_new#mcp", status_code=303)
+
+
 @app.post("/settings/telegram")
 def settings_telegram(token: str = Form("")):
     token = token.strip()
@@ -464,17 +628,8 @@ def settings_agent(about_me: str = Form(""), daily_cap_usd: str = Form(""), plan
     cap = _optional_money(daily_cap_usd)
     save_agent_settings(about_me=about_me.strip(), daily_cap_usd=cap,
                         planned_ideas=planned_ideas.strip() if planned_ideas is not None else None,
-                        provider=provider if provider in ("gemini", "xai", "anthropic") else None)
+                        provider=provider if provider in ("gemini", "anthropic") else None)
     return RedirectResponse("/settings?key=agent_saved#research", status_code=303)
-
-
-@app.post("/settings/xai")
-def settings_xai(key: str = Form("")):
-    key = key.strip()
-    if not key or not xai_client.check_key(key):
-        return RedirectResponse("/settings?key=xai_invalid#research", status_code=303)
-    save_xai_key(key)
-    return RedirectResponse("/settings?key=xai_saved#research", status_code=303)
 
 
 @app.post("/settings/gemini")
@@ -558,7 +713,9 @@ def settings_page(request: Request, key: str = ""):
         "action_settings": get_action_settings(),
         "telegram": get_telegram_settings(),
         "agent_settings": get_agent_settings(),
-        "has_xai_key": bool(get_xai_key()),
+        "quest_settings": get_quest_settings(),
+        "mcp_token": get_mcp_token() if key == "mcp_new" else "",
+        "has_mcp_token": bool(get_mcp_token()),
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),
         "projects": _projects_for_settings(),

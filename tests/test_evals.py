@@ -144,3 +144,30 @@ def test_evals_page_and_run_button(session, monkeypatch):
     monkeypatch.setattr(evals, "start_background", lambda cap, reviewed_only: started.append(cap) or True)
     client.post("/evals/run", data={"max_usd": "500"})
     assert started == [10.0]  # hard ceiling per run
+
+
+def test_comparison_table_and_config_label():
+    from app import evals as ev
+
+    assert ev.config_label("gemini", {"watch_model": "gemini-3.5-flash-lite", "research_model": "gemini-3.5-flash-lite",
+                                      "tier": "flex"}) == "gemini-3.5-flash-lite / flex"
+    assert ev.config_label("anthropic", None) == "anthropic"
+    runs = [{"config": "lite / flex", "cases": 21, "accuracy": {m: 0.9 for m in ev.METRICS},
+             "cost_per_case": 0.008, "latency_p50": 140.0},
+            {"config": "flash / standard", "cases": 21, "accuracy": {m: 1.0 for m in ev.METRICS},
+             "cost_per_case": 0.03, "latency_p50": 40.0}]
+    table = ev.comparison_table(runs).splitlines()
+    assert table[2].startswith("| flash / standard | 21 | 100%") and "$0.0300" in table[2]
+    assert table[3].startswith("| lite / flex") and "| 140.0 |" in table[3]
+
+
+def test_model_and_tier_overrides_reach_gemini():
+    from app import gemini_client
+
+    seen = []
+    with gemini_client.models(watch="gemini-3.5-flash-lite"), gemini_client.tier("flex"):
+        seen.append((gemini_client._model("watch"), gemini_client._model("research"), gemini_client._tier.get()))
+    seen.append((gemini_client._model("watch"), gemini_client._tier.get()))
+    assert seen[0][0] == "gemini-3.5-flash-lite" and seen[0][2] == "flex"
+    assert seen[0][1] == gemini_client.AGENT_MODEL_GEMINI
+    assert seen[1] == (gemini_client.ANALYSIS_MODEL_GEMINI, "standard")

@@ -44,12 +44,14 @@ _TOOL_SCHEMA = {
             },
             "action_type": {
                 "type": "string",
-                "enum": ["skill", "project", "job", "repo", "research", "place", "other"],
+                "enum": ["skill", "project", "job", "repo", "research", "place", "travel", "other"],
                 "description": (
                     "Required if is_actionable is true; omit/ignore otherwise. skill/project/job as above; "
                     "repo = names specific GitHub repos, libraries or dev tools worth evaluating; "
                     "research = news, a new AI model/product, or a claim worth looking into; "
                     "place = a specific restaurant, bar, cafe, shop or spot to visit; "
+                    "travel = a flight itinerary or booking confirmation, a flight or travel deal, or a trip "
+                    "or destination to plan; "
                     "other = only when the user shared it on purpose and none of the others fit."
                 ),
             },

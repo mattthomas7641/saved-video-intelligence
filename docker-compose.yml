@@ -4,8 +4,8 @@ services:
     ports:
       # Loopback-only - "8787:8787" alone binds 0.0.0.0, exposing this (and
       # the bearer-token /api/* routes) to the whole local network, not just
-      # this machine.
-      - "127.0.0.1:8787:8787"
+      # this machine. The app is at http://127.0.0.1:8790 (SIDEQUEST_PORT moves it).
+      - "127.0.0.1:${SIDEQUEST_PORT:-8790}:8787"
     env_file:
       - .env
     environment:

@@ -27,6 +27,17 @@ class PipelineError(RuntimeError):
     """A step failed in a way already put into plain words for the owner's card."""
 
 
+class AlreadySent(Exception):
+    """This exact item was researched before: its report is reused instead of paying again."""
+
+    def __init__(self, action_id: int):
+        super().__init__(f"Already researched as action {action_id}")
+        self.action_id = action_id
+
+
+DUP_SIMILARITY = 0.88   # recall similarity above which a new item is treated as a repeat (related ones score ~0.6-0.75)
+
+
 def collect_video(session: Session, video: Video, should_stop=lambda: False, transcribe: bool = True) -> None:
     """Download, transcribe and read on-screen text. Leaves the video TRANSCRIBED.
     With `transcribe=False` (Gemini watches the file itself) it only downloads,
@@ -135,7 +146,7 @@ def apply_analysis(session: Session, video: Video, analysis: analyze_mod.Analysi
         has_promo_code=video.has_promo_code, has_dated_offer=video.has_dated_offer)
     video.input_tokens = analysis.input_tokens
     video.output_tokens = analysis.output_tokens
-    own_cost = getattr(analysis, "cost_usd", None)  # set by analyzers with their own pricing (Gemini, Grok)
+    own_cost = getattr(analysis, "cost_usd", None)  # set by analyzers with their own pricing (Gemini)
     video.cost_usd = own_cost if own_cost is not None else analyze_mod.cost_usd(
         analysis.input_tokens, analysis.output_tokens, batch=batch)
     video.batch_id = None
@@ -204,11 +215,14 @@ def _action_for(session: Session, video: Video) -> Action:
 
 
 def process_shared_video(session: Session, video: Video, on_progress=lambda text: None,
-                         chat_id: int | None = None, message_id: int | None = None, deep: bool = False) -> Action:
+                         chat_id: int | None = None, message_id: int | None = None, deep: bool = False,
+                         force: bool = False) -> Action:
     """Download -> watch/analyze -> prefetch -> research for one shared item.
     Returns its Action, whose status/result/error_message say how it went. Raises
     FatalAnalysisError for problems only you can fix (no key, no credit).
-    `deep` forces web research on (the "Research deeper" button)."""
+    `deep` forces web research on (the "Research deeper" button). Unless `deep` or `force`
+    (a Retry or "Research anyway"), a repeat isn't researched again: the exact item sent twice
+    raises AlreadySent, and something that looks like a past report waits for your OK."""
     from app import agent as agent_mod
     from app import prefetch as prefetch_mod
     from app import projects as projects_mod
@@ -220,9 +234,11 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     if provider == "gemini":
         from app import gemini_client
         analyzer = gemini_client.analyze_video  # watches the video file itself: no Whisper/OCR
-    elif provider == "xai":
-        from app import xai_client
-        analyzer = xai_client.analyze_video  # shared videos never need Anthropic credit
+
+    existing = session.exec(select(Action).where(Action.video_id == video.id)).first()
+    if (not (deep or force) and existing and existing.result
+            and existing.status in (ActionStatus.DRAFTED, ActionStatus.DONE, ActionStatus.DISMISSED)):
+        raise AlreadySent(existing.id)   # sent the same thing again: free, nothing re-run
 
     if video.status in (Status.PENDING, Status.ERROR, Status.DOWNLOADING, Status.TRANSCRIBING, Status.DOWNLOADED):
         on_progress("Downloading…" if provider == "gemini" else "Downloading and transcribing…")
@@ -277,6 +293,16 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         return action
 
+    related = _recall(session, video, action)
+    if not (deep or force) and related and related[0]["similarity"] >= DUP_SIMILARITY:
+        earlier = related[0]
+        action.status = ActionStatus.NEEDS_INPUT
+        action.error_message = (f"Looks like a repeat of what you sent {earlier['date']}: “{earlier['headline']}”. "
+                                f"Tap Research anyway to look into it again.")[:500]
+        action.brief = action.brief or video.summary or ""
+        _touch_action(session, action)
+        return action
+
     budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)  # analysis is already in the ledger
     action.status = ActionStatus.IN_PROGRESS
     action.error_message = None
@@ -295,10 +321,10 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         cards = projects_mod.cards(session) if tech else []
         web, x_search = research_plan(provider, action_type, deep)
         context = agent_mod.Context(projects=agent_mod.projects_context(cards, [c.name for c in cards]) if tech else "",
-                                    prefetch=prefetch_mod.as_context(found))
+                                    prefetch=prefetch_mod.as_context(found),
+                                    calendar="" if tech else _calendar_context())
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
         with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
-            related = _recall(session, video, action)
             context.memory = memory_mod.context_block(related)
             findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
                                      web=web, x_search=x_search, context=context, provider=provider, tech=tech)
@@ -335,7 +361,35 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     _touch_action(session, action)
     if action.status == ActionStatus.DRAFTED:
         _remember(session, action, video)
+        _plan_follow_through(session, action)
     return action
+
+
+def _calendar_context() -> str:
+    """Your busy times for the next two weeks, so suggested dates avoid them; "" without a
+    calendar or if it can't be read (research goes on either way)."""
+    from app import calendar_busy
+    from app.config import get_quest_settings
+
+    url = get_quest_settings()["calendar_ics_url"]
+    if not url:
+        return ""
+    try:
+        return calendar_busy.context_block(calendar_busy.busy(url))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't read the calendar (%s); suggesting times without it", e)
+        return ""
+
+
+def _plan_follow_through(session: Session, action: Action) -> None:
+    """Calendar slots, an issue to approve, a check-back later (app/quests.py). Best effort:
+    the report is already saved."""
+    from app import quests
+
+    try:
+        quests.plan(session, action, json.loads(action.result or "{}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Couldn't plan follow-through for action %s", action.id)
 
 
 def _recall(session: Session, video: Video, action: Action) -> list[dict]:
@@ -346,7 +400,8 @@ def _recall(session: Session, video: Video, action: Action) -> list[dict]:
         return []
     try:
         query = "\n".join(x for x in [action.brief, video.summary, getattr(video, "user_note", None)] if x)
-        return memory_mod.recall(session, query, exclude_action_id=action.id)
+        with tracing.run("memory", action_id=action.id, video_id=video.id, provider="gemini"):
+            return memory_mod.recall(session, query, exclude_action_id=action.id)
     except Exception:  # noqa: BLE001
         log.exception("Memory recall failed for video %s; researching without it", video.id)
         return []
@@ -373,17 +428,16 @@ def _touch_action(session: Session, action: Action) -> None:
     session.refresh(action)
 
 
-_WEB_TYPES = {"place", "research", "job"}
+_WEB_TYPES = {"place", "research", "job", "travel"}
 
 
 def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[bool, bool]:
-    """(web search allowed, X search allowed). Gemini's grounded search is free up to
-    5,000 requests a month, so it's always on there and the model decides when to use
-    it; on paid-per-search providers it's on only for types that need current facts."""
+    """(web search allowed, X search allowed: always False now). Gemini's grounded search is
+    free up to 5,000 requests a month, so it's always on there and the model decides when
+    to use it; on Claude (paid per search) it's on only for types that need current facts."""
     if provider == "gemini":
         return True, False
-    web = deep or action_type in _WEB_TYPES
-    return web, provider == "xai" and action_type == "research" and deep
+    return deep or action_type in _WEB_TYPES, False
 
 
 def transcribe_existing(session: Session, video: Video) -> None:

@@ -24,7 +24,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app import tracing
-from app.config import BASE_DIR, PROJECTS_DIR, get_agent_settings, get_gemini_key, get_project_overrides, get_xai_key
+from app.config import BASE_DIR, PROJECTS_DIR, get_agent_settings, get_gemini_key, get_project_overrides
 from app.models import Project
 
 log = logging.getLogger(__name__)
@@ -189,23 +189,30 @@ def planned_ideas_text(projects_dir: Path = None) -> str:
                                    f"## PLAN.md\n{plan}" if plan else ""] if x)
 
 
+CARD_PROMPT = """Write a project card for an assistant that will later judge whether new tools, libraries, skills and ideas fit this project. 150-220 words, plain text, no preamble, these labelled lines:
+Purpose: what it does and for whom.
+Stack: languages, frameworks, services.
+Architecture: main components and how data flows between them.
+Pain points: limitations, slow or costly parts, TODOs or open problems visible in the material.
+Next: planned work or obvious next steps.
+Key files: up to 6 paths worth opening to understand it.
+Only use what's in the material; write "unknown" rather than guessing."""
+
+
 def _over_cap(session: Session) -> bool:
     return tracing.spend_today(session) >= get_agent_settings()["daily_cap_usd"]
 
 
 def _card_maker():
-    """Whichever cheap model has a key: Gemini first, then Grok; None means README cards."""
+    """Gemini when there's a key; None means README cards."""
     if get_gemini_key():
         from app import gemini_client
         return gemini_client.project_card
-    if get_xai_key():
-        from app import xai_client
-        return xai_client.project_card
     return None
 
 
 def _fallback_card(name: str, scanned: dict) -> str:
-    """Free card when there's no xAI key yet: the README's opening plus the stack."""
+    """Free card when there's no Gemini key yet: the README's opening plus the stack."""
     readme = re.sub(r"\s+", " ", scanned["readme"] or "").strip()[:700]
     deps = ", ".join(scanned["deps"]) or "unknown stack"
     return f"{readme or name} (Files: {deps}.)"
@@ -295,6 +302,33 @@ def read_project_file(project: str, path: str) -> dict:
         return {"error": str(e)}
     log.info("Agent read %s/%s", project.strip(), path)
     return {"project": project, "path": path, "content": scrub_secrets(content)}
+
+
+_REMOTE_RE = re.compile(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+
+
+def github_repo_of(project: str) -> str | None:
+    """'owner/name' of a project's GitHub remote, from its .git/config (only the origin URL
+    line is read; the agent's file reader never opens .git). None if it has no GitHub remote."""
+    root = project_roots().get(project.strip())
+    if root is None:
+        return None
+    # In Docker this app's own folder has no .git, but its ~/Projects link may resolve to one.
+    candidates = [root / ".git" / "config", PROJECTS_DIR / project.strip() / ".git" / "config"]
+    config = next((c for c in candidates if c.is_file()), None)
+    if config is None:
+        return None
+    try:
+        text = config.read_text(errors="ignore")[:20_000]
+    except OSError:
+        return None
+    section = re.search(r'\[remote "origin"\]([^\[]*)', text)
+    for line in (section.group(1) if section else text).splitlines():
+        if line.strip().startswith("url"):
+            m = _REMOTE_RE.search(line.split("=", 1)[-1].strip())
+            if m:
+                return f"{m.group(1)}/{m.group(2)}"
+    return None
 
 
 # Credential shapes that could sit in an innocently-named file (config.yaml, settings.py...).

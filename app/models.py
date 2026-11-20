@@ -80,6 +80,7 @@ class ActionType(str, Enum):
     REPO = "repo"        # GitHub repos/tools worth evaluating
     RESEARCH = "research"  # news, a new AI product, a claim worth looking into
     PLACE = "place"      # a restaurant, bar, shop or spot to visit
+    TRAVEL = "travel"    # a flight itinerary or booking, a flight/travel deal, a trip to plan
     OTHER = "other"      # shared on purpose, but none of the above
 
 
@@ -125,7 +126,7 @@ class Project(SQLModel, table=True):
     status: str = "active"            # detected: active | planned
     content_hash: str | None = None   # hash of the scanned files; the card is rebuilt only when it changes
     card: str | None = None           # ~200-word summary: purpose, stack, architecture, next steps
-    card_source: str | None = None    # "grok" or "readme" (no xAI key yet)
+    card_source: str | None = None    # "gemini" or "readme" (no key yet)
     cost_usd: float | None = None
     scanned_at: datetime = Field(default_factory=datetime.utcnow)
     card_updated_at: datetime | None = None
@@ -160,3 +161,22 @@ class Memory(SQLModel, table=True):
     vector: str                        # JSON list of floats, unit length
     model: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Task(SQLModel, table=True):
+    """Follow-through on a report (app/quests.py): a calendar slot, a GitHub issue, a check
+    back on a story later. Durable, so a restart or a week's wait doesn't lose it."""
+    id: int | None = Field(default=None, primary_key=True)
+    action_id: int = Field(index=True)
+    kind: str                          # calendar | github_issue | follow_up
+    status: str = Field(default="proposed", index=True)
+    # proposed -> (approve) running -> done | failed;  proposed -> declined
+    # scheduled (run_at) -> running -> done | scheduled (retry) | failed;  scheduled -> cancelled
+    title: str
+    payload: str = "{}"                # JSON: what to do
+    result: str | None = None          # JSON: what happened (event link, issue URL, the update found)
+    run_at: datetime | None = Field(default=None, index=True)
+    attempts: int = 0
+    error: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

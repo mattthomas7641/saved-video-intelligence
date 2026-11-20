@@ -5,7 +5,7 @@ This module holds the provider-neutral core - the prompt and playbooks, the
 tool schemas, the client-side tools, and the `Findings` the dashboard and
 notifications render - plus the Claude loop. The Gemini loop (the default:
 it watches the video itself, and its search is free up to 5,000 a month) lives in
-app/gemini_client.py, and a Grok loop in app/xai_client.py; both share all of it.
+app/gemini_client.py and shares all of it.
 
 Client-side tools: `github_repo` (live repo facts from the GitHub API, so a
 "10 repos you need" video gets checked against reality rather than the
@@ -19,6 +19,7 @@ pause a turn, the spend cap has to be checked between requests, and
 """
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -39,6 +40,7 @@ MAX_SEARCHES = 6
 MAX_FETCHES = 8
 MAX_REPOS = 12
 MAX_PROJECT_READS = 8
+MAX_FLIGHT_SEARCHES = 4
 README_CHARS = 3000
 
 # $ per million tokens (input, output). Web search is billed separately at $10 / 1,000.
@@ -96,6 +98,34 @@ _READ_PROJECT_TOOL = {
     },
 }
 
+_FLIGHTS_TOOL = {
+    "name": "flight_prices",
+    "description": (
+        "Live Google Flights fares for one route and date: the cheapest options (price, airlines, stops, times) "
+        "and whether that's low, typical or high for the route. Use it to check any flight deal or fare before "
+        "judging it. Airport or city codes (PHL, NYC, TYO); dates YYYY-MM-DD; omit return_date for one-way. "
+        "Limited lookups: pick the dates that matter."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "origin": {"type": "string"}, "destination": {"type": "string"},
+            "outbound_date": {"type": "string"}, "return_date": {"type": "string"},
+        },
+        "required": ["origin", "destination", "outbound_date"],
+    },
+}
+
+_SEGMENT = {"type": "object", "properties": {
+    "flight": {"type": "string", "description": "e.g. AA 1234"}, "airline": {"type": "string"},
+    "from": {"type": "string", "description": "Airport code"}, "to": {"type": "string"},
+    "depart": {"type": "string", "description": "Local departure time, YYYY-MM-DDTHH:MM"},
+    "arrive": {"type": "string", "description": "Local arrival time, YYYY-MM-DDTHH:MM"},
+    "depart_tz": {"type": "string", "description": "IANA timezone of the departure airport, e.g. America/New_York"},
+    "arrive_tz": {"type": "string"},
+    "terminal": {"type": "string"}, "seat": {"type": "string"},
+}, "required": ["from", "to", "depart"]}
+
 _FINDINGS_TOOL = {
     "name": "record_findings",
     "description": "Record your final report. Call this exactly once, at the end, after your research.",
@@ -135,7 +165,68 @@ _FINDINGS_TOOL = {
                     "hours": {"type": "string"}, "best_times": {"type": "string"},
                     "price": {"type": "string"}, "reservations": {"type": "string"},
                     "status": {"type": "string", "description": "open, temporarily closed, permanently closed, or unknown"},
+                    "price_range": {"type": "string", "description": "Typical spend per person, e.g. '$15-25 pp'."},
+                    "menu": {"type": "array", "maxItems": 8, "description": "Popular or recommended items with "
+                             "their current prices, from the menu itself where possible.",
+                             "items": {"type": "object", "properties": {"item": {"type": "string"},
+                                                                         "price": {"type": "string"}},
+                                       "required": ["item"]}},
+                    "reservation_url": {"type": "string", "description": "The booking page (Resy, OpenTable, Tock, "
+                                                                         "their site), if there is one."},
+                    "availability": {"type": "string", "description": "How hard it is to get in: walk-in only, "
+                                                                      "books out N days ahead, easy, etc."},
                 },
+            },
+            "suggested_times": {
+                "type": "array", "maxItems": 3,
+                "description": "Only for a place or event worth going to: 2-3 specific times in the next two weeks "
+                               "when it's open and (if their calendar is given) the user is free. Each becomes a "
+                               "one-tap 'add to calendar' option.",
+                "items": {"type": "object", "properties": {
+                    "start": {"type": "string", "description": "Local time, YYYY-MM-DDTHH:MM"},
+                    "minutes": {"type": "integer", "description": "How long to block, usually 60-120"},
+                    "why": {"type": "string", "description": "Under 80 characters, e.g. 'Fri dinner, before the weekend rush'"},
+                }, "required": ["start"]},
+            },
+            "trip": {
+                "type": "object",
+                "description": "Only for a flight itinerary or booking confirmation the user sent: exactly what's in "
+                               "it, never guessed. Each flight becomes a calendar event, a check-in reminder and a "
+                               "status check on the day.",
+                "properties": {
+                    "destination_city": {"type": "string"},
+                    "confirmation": {"type": "string", "description": "Booking/confirmation code"},
+                    "segments": {"type": "array", "maxItems": 8, "items": _SEGMENT},
+                    "hotel": {"type": "string", "description": "Hotel name and address, if included"},
+                },
+                "required": ["segments"],
+            },
+            "fare_check": {
+                "type": "object",
+                "description": "Only for a flight deal or a trip with prices: what the post claimed vs what live "
+                               "fares show now. Set watch_below to offer a price watch (the user is messaged when "
+                               "the fare drops below it).",
+                "properties": {
+                    "origin": {"type": "string"}, "destination": {"type": "string"},
+                    "outbound_date": {"type": "string"}, "return_date": {"type": "string"},
+                    "claimed_price": {"type": "number"}, "current_lowest": {"type": "number"},
+                    "typical_range": {"type": "string", "description": "e.g. '$650-900 round trip'"},
+                    "verdict": {"type": "string", "description": "One line: is the deal real, and is now a good time?"},
+                    "watch_below": {"type": "number", "description": "A fare worth booking at, in USD"},
+                },
+                "required": ["origin", "destination", "verdict"],
+            },
+            "follow_up": {
+                "type": "object",
+                "description": "Only when something is still developing and worth checking back on: an announced "
+                               "but unreleased product, a rumour, a lawsuit, a price drop, a date. You'll be woken "
+                               "after `after_days` to look again, and the user is told only if something changed.",
+                "properties": {
+                    "after_days": {"type": "integer", "minimum": 2, "maximum": 60},
+                    "watch_for": {"type": "string", "description": "Exactly what would count as news, e.g. "
+                                                                  "'public release date or pricing for X'."},
+                },
+                "required": ["after_days", "watch_for"],
             },
             "project_fit": {
                 "type": "array",
@@ -171,6 +262,18 @@ _FINDINGS_TOOL = {
                     "effort": {"type": "string", "enum": ["S", "M", "L"]},
                 },
                 "required": ["idea", "value"],
+            },
+            "github_issue": {
+                "type": "object",
+                "description": "Only when a project_fit entry is worth_it and concrete: an issue to open in that "
+                               "project's GitHub repo. It is opened only if the user approves it.",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name exactly as listed"},
+                    "title": {"type": "string", "description": "Under 80 characters, imperative."},
+                    "body": {"type": "string", "description": "Markdown: why, where it plugs in (files), first "
+                                                              "steps as a checklist, and links."},
+                },
+                "required": ["project", "title", "body"],
             },
             "repos": {
                 "type": "array",
@@ -216,16 +319,20 @@ Project fit: the user lists their projects, active and planned, under "Your proj
 
 New project: if testing it out works better as its own project than inside an existing one, fill `new_project` with what to build.
 
+Follow-through: if one project fit is worth_it and concrete, fill `github_issue` with the issue you'd open in that project (why, where it plugs in, a first-steps checklist, links); it's opened only if the user approves. If it's news still unfolding (announced but not shipped, a rumour, a pending release), fill `follow_up` with when to check back and what to watch for.
+
 Value, for every project_fit entry and new_project: rate what doing it is worth to the user - fun or personal use only; personal use plus a credible resume boost; only a weak resume boost; or not worth it - and say why in one sentence. Be honest: most tutorial-style builds are weak resume boosts, and that's fine to say."""
 
 _GENERAL_PLAYBOOKS = """This is everyday content, not tech: judge it on its own terms for this person's life. Don't relate it to any software projects. Playbooks:
-- place (restaurant, bar, shop, spot): identify the exact place and city; address, hours, which days or times to go, price range, how to reserve, what to order; check it's still open. Fill `place`.
+- place (restaurant, bar, shop, spot): identify the exact place and city; check it's still open; address, hours, which days or times to go. Find the menu (their site, Google Maps, delivery apps) and list popular items with current prices in `place.menu`, plus `place.price_range` per person. Say how to get in: the booking page in `place.reservation_url` if there is one, and in `place.availability` how far ahead it books out or whether it's walk-in only. If it's worth going, fill `suggested_times` with 2-3 specific times in the next two weeks when it's open, favouring its best times and, if "Your calendar" is given, times the user is free. Fill `place`.
 - product or deal: what it actually is, the real price and where it's cheapest, what reviews say, whether it's a paid promotion, and better or cheaper alternatives.
 - recipe or food: ingredients, time, difficulty, and any shortcut or swap worth knowing.
 - fitness, health or beauty: whether the claim holds up against good evidence, and anything unsafe. Not medical advice.
 - money: whether it's legitimate, the risks and costs, and red flags. Not financial advice.
-- travel or event: dates, costs, booking, best time to go.
-- news or ideas: the primary source, what's true, what's overstated.
+- travel: two cases. (1) An itinerary or booking confirmation (a screenshot, email or text): fill `trip` with exactly what it says (flights with local times and the airports' timezones, confirmation code, hotel), then add what's useful: check-in and bag rules for that airline, how early to get to that airport, connection times, and what to know at the destination. (2) A flight or travel deal, or a trip idea: find the real current fares (flight_prices if available, otherwise search), compare with what the post claimed and what's typical, and fill `fare_check`; if it isn't bookable now at a good price, set `fare_check.watch_below` to a price worth booking at. Fares start from the user's home airport unless the post says otherwise.
+- event: dates, costs, booking, best time to go; for an event worth going to, fill `suggested_times` with its actual dates/times.
+- news or ideas: the primary source, what's true, what's overstated. If it's still developing, fill `follow_up`.
+- product or deal you'd wait on (a price drop, a restock, a launch): fill `follow_up` with when to check and what price or news counts.
 - anything else: work out what would be most useful to know or do about it, and do that.
 Always end with the practical next step (book, buy, try, skip) in telegram_text."""
 
@@ -244,7 +351,7 @@ _GENERAL_FINDINGS_TOOL = {
     "input_schema": {
         **_FINDINGS_TOOL["input_schema"],
         "properties": {k: v for k, v in _FINDINGS_TOOL["input_schema"]["properties"].items()
-                       if k not in ("project_fit", "new_project", "repos")},
+                       if k not in ("project_fit", "new_project", "repos", "github_issue")},
     },
 }
 
@@ -258,8 +365,13 @@ def is_tech(action_type: str, category: str | None) -> bool:
 
 
 def client_tools(tech: bool) -> list[dict]:
-    """Our tools in Anthropic format; non-tech research gets no access to your projects."""
-    return [_GITHUB_TOOL, _READ_PROJECT_TOOL, _FINDINGS_TOOL] if tech else [_GITHUB_TOOL, _GENERAL_FINDINGS_TOOL]
+    """Our tools in Anthropic format; non-tech research gets no access to your projects, and
+    gets live flight fares when a fare source is set up."""
+    from app import flights
+
+    if tech:
+        return [_GITHUB_TOOL, _READ_PROJECT_TOOL, _FINDINGS_TOOL]
+    return [_GITHUB_TOOL, *([_FLIGHTS_TOOL] if flights.enabled() else []), _GENERAL_FINDINGS_TOOL]
 
 
 class AgentError(Exception):
@@ -284,6 +396,11 @@ class Findings:
     new_project_idea: str | None = None
     new_project: dict | None = None
     related: list = field(default_factory=list)  # past reports recalled from memory (pipeline fills this)
+    suggested_times: list = field(default_factory=list)
+    trip: dict | None = None
+    fare_check: dict | None = None
+    follow_up: dict | None = None
+    github_issue: dict | None = None
     cost_usd: float = 0.0
 
     def to_json(self) -> str:
@@ -292,6 +409,8 @@ class Findings:
             "report_markdown": self.report_markdown, "ideas": self.ideas, "links": self.links,
             "place": self.place, "repos": self.repos, "project_fit": self.project_fit,
             "new_project_idea": self.new_project_idea, "new_project": self.new_project, "related": self.related,
+            "suggested_times": self.suggested_times, "follow_up": self.follow_up, "github_issue": self.github_issue,
+            "trip": self.trip, "fare_check": self.fare_check,
         })
 
 
@@ -302,6 +421,7 @@ class Context:
     projects: str = ""
     prefetch: str = ""
     memory: str = ""
+    calendar: str = ""   # busy times (app/calendar_busy.py), for places and events
 
 
 def projects_context(cards: list, relevant: list[str]) -> str:
@@ -342,7 +462,7 @@ def user_content(video, action_type: str, brief: str | None, context: Context | 
     about_me = get_agent_settings()["about_me"].strip() or "(not filled in yet - keep advice general)"
     parts = [f"""About the user: {about_me}
 
-Today's date: {datetime.utcnow():%Y-%m-%d}
+Today's date: {datetime.utcnow():%Y-%m-%d}{_home_airport()}
 Type: {action_type}
 What to look into (from a first pass over the video): {brief or "(none)"}
 Note from the user: {getattr(video, "user_note", None) or "(none)"}
@@ -359,7 +479,16 @@ On-screen text (OCR, noisy): {video.ocr_text or "(none)"}"""]
         parts.append(context.projects)
     if context.memory:
         parts.append(context.memory)
+    if context.calendar:
+        parts.append(context.calendar)
     return "\n\n".join(parts)
+
+
+def _home_airport() -> str:
+    from app.config import get_quest_settings
+
+    home = get_quest_settings()["home_airport"].strip().upper()
+    return f"\nHome airport: {home}" if home else ""
 
 
 def run_client_tool(name: str, args: dict, state: dict, on_progress=lambda text: None, tech: bool = True) -> dict:
@@ -380,6 +509,15 @@ def _run_tool(name: str, args: dict, state: dict, on_progress, tech: bool) -> di
             return {"error": f"Repo lookup limit ({MAX_REPOS}) reached; judge the rest from what you have."}
         on_progress(f"Checking {repo} on GitHub…")
         return github_repo(repo)
+    if name == "flight_prices" and not tech:
+        from app import flights
+
+        state["flights"] = state.get("flights", 0) + 1
+        if state["flights"] > MAX_FLIGHT_SEARCHES:
+            return {"error": f"Flight lookup limit ({MAX_FLIGHT_SEARCHES}) reached; decide with what you have."}
+        on_progress(f"Checking fares {args.get('origin')}→{args.get('destination')}…")
+        return flights.search(str(args.get("origin", "")), str(args.get("destination", "")),
+                              str(args.get("outbound_date", "")), args.get("return_date") or None)
     if name == "read_project_file" and tech:
         state["reads"] = state.get("reads", 0) + 1
         if state["reads"] > MAX_PROJECT_READS:
@@ -492,20 +630,28 @@ def _dicts(value, key: str | None = None, limit: int = 8) -> list[dict]:
     return [x for x in items if isinstance(x, dict) and (key is None or _text(x.get(key)))][:limit]
 
 
+_CITATION = re.compile(r"\s?\[\d+(?:\.\d+)*(?:,\s*\d+(?:\.\d+)*)*\](?!\()")
+
+
+def _nocite(text: str) -> str:
+    """Grounded answers carry markers like [1] or [2, 4]: noise once the links are listed separately."""
+    return _CITATION.sub("", text)
+
+
 def _findings_from(tool_input: dict, cost: float) -> Findings:
     """Findings from a record_findings call. The schema is only a suggestion to the model:
     every field is coerced to the shape the dashboard and notifications render, so a
     stray type (a URL as a number, a place as a string) can't take the home page down."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     verdict = tool_input.get("verdict") if tool_input.get("verdict") in VERDICTS else "maybe"
-    headline = _text(tool_input.get("headline"))
-    report = _text(tool_input.get("report_markdown"), MAX_REPORT_CHARS)
+    headline = _nocite(_text(tool_input.get("headline")))
+    report = _nocite(_text(tool_input.get("report_markdown"), MAX_REPORT_CHARS))
     if not headline or not report:
         raise AgentError("The agent's report was missing a headline or body.")
     new_project = tool_input.get("new_project") if isinstance(tool_input.get("new_project"), dict) else {}
     return Findings(
         verdict=verdict, headline=headline[:140],
-        telegram_text=_text(tool_input.get("telegram_text"), 900) or headline[:900],
+        telegram_text=_nocite(_text(tool_input.get("telegram_text"), 900)) or headline[:900],
         report_markdown=report,
         ideas=[i.strip() for i in tool_input.get("ideas") if isinstance(i, str) and i.strip()][:5]
         if isinstance(tool_input.get("ideas"), list) else [],
@@ -517,8 +663,61 @@ def _findings_from(tool_input: dict, cost: float) -> Findings:
         project_fit=_dicts(tool_input.get("project_fit"), "project", 4),
         new_project_idea=_text(new_project.get("idea")) or _text(tool_input.get("new_project_idea")) or None,
         new_project=new_project if _text(new_project.get("idea")) else None,
+        suggested_times=[{"start": _text(t.get("start"), 16), "why": _text(t.get("why"), 120),
+                          "minutes": t["minutes"] if isinstance(t.get("minutes"), int) and 15 <= t["minutes"] <= 480
+                          else 90}
+                         for t in _dicts(tool_input.get("suggested_times"), "start", 3)],
+        trip=_trip(tool_input.get("trip")),
+        fare_check=_fare_check(tool_input.get("fare_check")),
+        follow_up=_follow_up(tool_input.get("follow_up")),
+        github_issue=_issue(tool_input.get("github_issue")),
         cost_usd=round(cost, 4),
     )
+
+
+_SEGMENT_KEYS = ("flight", "airline", "from", "to", "depart", "arrive", "depart_tz", "arrive_tz", "terminal", "seat")
+
+
+def _trip(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    segments = [{k: _text(seg.get(k), 60) for k in _SEGMENT_KEYS if _text(seg.get(k))}
+                for seg in _dicts(value.get("segments"), "depart", 8) if _text(seg.get("from"))]
+    if not segments:
+        return None
+    return {"segments": segments, "destination_city": _text(value.get("destination_city"), 80),
+            "confirmation": _text(value.get("confirmation"), 20), "hotel": _text(value.get("hotel"), 200)}
+
+
+def _number(value) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) and value > 0 else None
+
+
+def _fare_check(value) -> dict | None:
+    if not isinstance(value, dict) or not (_text(value.get("origin")) and _text(value.get("destination"))):
+        return None
+    return {"origin": _text(value.get("origin"), 3).upper(), "destination": _text(value.get("destination"), 3).upper(),
+            "outbound_date": _text(value.get("outbound_date"), 10), "return_date": _text(value.get("return_date"), 10),
+            "claimed_price": _number(value.get("claimed_price")), "current_lowest": _number(value.get("current_lowest")),
+            "typical_range": _text(value.get("typical_range"), 60), "verdict": _text(value.get("verdict"), 300),
+            "watch_below": _number(value.get("watch_below"))}
+
+
+def _follow_up(value) -> dict | None:
+    if not isinstance(value, dict) or not _text(value.get("watch_for")):
+        return None
+    try:
+        days = min(max(int(value.get("after_days") or 7), 2), 60)
+    except (TypeError, ValueError):
+        days = 7
+    return {"after_days": days, "watch_for": _text(value.get("watch_for"), 300)}
+
+
+def _issue(value) -> dict | None:
+    if not isinstance(value, dict) or not (_text(value.get("project")) and _text(value.get("title"))):
+        return None
+    return {"project": _text(value.get("project"), 100), "title": _text(value.get("title"), 120),
+            "body": _text(value.get("body"), 6000)}
 
 
 def load_report(text: str | None) -> dict | None:
@@ -557,10 +756,6 @@ def run(video, action_type: str, brief: str | None, budget_usd: float, on_progre
         from app import gemini_client
         return gemini_client.research(video, action_type, brief, budget_usd, on_progress=on_progress, client=client,
                                       web=web, x_search=x_search, context=context, tech=tech)
-    if provider == "xai":
-        from app import xai_client
-        return xai_client.research(video, action_type, brief, budget_usd, on_progress=on_progress, client=client,
-                                   web=web, x_search=x_search, context=context, tech=tech)
     return _run_anthropic(video, action_type, brief, budget_usd, on_progress, client, web, context, tech)
 
 

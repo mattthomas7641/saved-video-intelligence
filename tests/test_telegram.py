@@ -115,7 +115,8 @@ def test_status_command_reports_spend(paired):
     assert "$0.00" in tg.sent[0][1]
 
 
-def test_plain_text_without_link_gets_a_hint(paired):
-    tg, submitted = FakeTelegram(), []
+def test_plain_text_is_answered_by_the_assistant(paired, monkeypatch):
+    tg, submitted, asked = FakeTelegram(), [], []
+    monkeypatch.setattr(tb, "_ask_async", lambda chat_id, text, reply_to, tg: asked.append(text))
     tb.handle_update(_update(paired, "hello"), tg, submit=lambda *a: submitted.append(a))
-    assert submitted == [] and "link" in tg.sent[0][1]
+    assert submitted == [] and asked == ["hello"]

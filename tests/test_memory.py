@@ -103,7 +103,8 @@ def test_pipeline_uses_memory_and_stores_related(session, monkeypatch):
         return agent.Findings(verdict="maybe", headline="Use retries", telegram_text="t", report_markdown="r")
     monkeypatch.setattr(agent, "run", fake_run)
     vid = intake.ingest_shared_text("agent harness retries video")
-    action = pipeline.process_shared_video(session, session.get(Video, vid))
+    # Near-identical to the earlier report: without force it would stop as a repeat (tested below).
+    action = pipeline.process_shared_video(session, session.get(Video, vid), force=True)
     assert "Checkpoint your agent harness" in seen["memory"]
     assert json.loads(action.result)["related"][0]["action_id"] == old.id
     assert session.exec(select(Memory).where(Memory.action_id == action.id)).first() is not None
@@ -144,3 +145,85 @@ def test_related_survives_report_normalising_and_renders(session):
     session.commit()
     assert "Related things you sent" in TestClient(app).get("/").text
 
+
+
+def _setup_pipeline(session, monkeypatch, summary="Another agent harness trick"):
+    from app import agent, gemini_client, prefetch
+    from app.analyze import AnalysisResult
+    save_gemini_key("AIza-test")
+    client = FakeEmbed()
+    monkeypatch.setattr(memory, "_client", lambda: client)
+    analysis = AnalysisResult(category="Tech / AI / Coding", summary=summary, tags=[], worth_rewatching_score=3,
+                              worth_rewatching_reason="r", has_promo_code=False, has_dated_offer=False,
+                              mentions_link_in_bio=False, key_facts=[], is_actionable=True, action_type="skill",
+                              action_brief=summary)
+    analysis.cost_usd = 0.0
+    monkeypatch.setattr(gemini_client, "analyze_video", lambda v: analysis)
+    monkeypatch.setattr(prefetch, "gather", lambda v: {"repos": [], "pages": []})
+    runs = []
+
+    def fake_run(*a, **k):
+        runs.append(1)
+        return agent.Findings(verdict="maybe", headline="Use retries", telegram_text="t", report_markdown="r")
+    monkeypatch.setattr(agent, "run", fake_run)
+    return client, runs
+
+
+def test_a_near_repeat_waits_for_your_ok(session, monkeypatch):
+    from app import intake, pipeline
+    client, runs = _setup_pipeline(session, monkeypatch)
+    old, old_v = _report(session, "Checkpoint your agent harness", "agent harness crash recovery")
+    memory.remember(session, old, old_v, json.loads(old.result), client=client)
+    vid = intake.ingest_shared_text("agent harness retries video")
+    action = pipeline.process_shared_video(session, session.get(Video, vid))
+    assert runs == [] and action.status == ActionStatus.NEEDS_INPUT
+    assert action.error_message.startswith("Looks like a repeat") and "Checkpoint your agent harness" in action.error_message
+    pipeline.process_shared_video(session, session.get(Video, vid), force=True)   # "Research anyway"
+    assert runs == [1]
+
+
+def test_unrelated_item_is_researched(session, monkeypatch):
+    from app import intake, pipeline
+    client, runs = _setup_pipeline(session, monkeypatch, summary="best pizza spot")
+    old, old_v = _report(session, "Checkpoint your agent harness", "agent harness crash recovery")
+    memory.remember(session, old, old_v, json.loads(old.result), client=client)
+    vid = intake.ingest_shared_text("a pizza place to try")
+    action = pipeline.process_shared_video(session, session.get(Video, vid))
+    assert runs == [1] and action.status == ActionStatus.DRAFTED
+
+
+def test_the_same_item_again_reuses_its_report(session, monkeypatch):
+    import pytest
+
+    from app import intake, pipeline
+    _, runs = _setup_pipeline(session, monkeypatch, summary="best pizza spot")
+    vid = intake.ingest_shared_text("a pizza place to try")
+    first = pipeline.process_shared_video(session, session.get(Video, vid))
+    vid2 = intake.ingest_shared_text("a pizza place to try")
+    assert vid2 == vid
+    with pytest.raises(pipeline.AlreadySent) as e:
+        pipeline.process_shared_video(session, session.get(Video, vid))
+    assert e.value.action_id == first.id and runs == [1]
+
+
+def test_lane_reports_a_repeat_without_researching(session, monkeypatch):
+    from app import intake, pipeline
+    _, runs = _setup_pipeline(session, monkeypatch, summary="best pizza spot")
+    vid = intake.ingest_shared_text("a pizza place to try")
+    pipeline.process_shared_video(session, session.get(Video, vid))
+
+    class R(intake.Reporter):
+        def __init__(self):
+            self.events = []
+
+        def already_sent(self, action, video):
+            self.events.append(("again", action.id))
+
+        def finished(self, action, video):
+            self.events.append(("finished", action.id))
+
+    r = R()
+    intake._process(vid, r, deep=False)
+    assert [e[0] for e in r.events] == ["again"] and runs == [1]
+    intake._process(vid, r, deep=False, force=True)   # Retry / Research again
+    assert r.events[-1][0] == "finished" and runs == [1, 1]

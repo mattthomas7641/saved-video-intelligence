@@ -15,6 +15,7 @@ Two deliberately separate mechanisms, not one:
 """
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -43,11 +44,9 @@ class Settings(BaseSettings):
     agent_provider: str = Field(default="gemini", alias="AGENT_PROVIDER")
     agent_model_gemini: str = Field(default="gemini-3.8-flash", alias="AGENT_MODEL_GEMINI")
     analysis_model_gemini: str = Field(default="gemini-3.8-flash", alias="ANALYSIS_MODEL_GEMINI")
-    agent_model_xai: str = Field(default="grok-4.3", alias="AGENT_MODEL_XAI")
-    analysis_model_xai: str = Field(default="grok-4.3", alias="ANALYSIS_MODEL_XAI")
     projects_dir: str = Field(default="", alias="PROJECTS_DIR")
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
-    public_base_url: str = Field(default="http://127.0.0.1:8787", alias="PUBLIC_BASE_URL")
+    public_base_url: str = Field(default="http://127.0.0.1:8790", alias="PUBLIC_BASE_URL")
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
     stale_threshold_months: int = Field(default=3, alias="STALE_THRESHOLD_MONTHS")
     workers: int = Field(default=4, alias="WORKERS")
@@ -180,7 +179,7 @@ def new_pairing_code() -> str:
 def get_agent_settings() -> dict:
     """'About me' is injected into every research prompt so 'useful for me'
     means something; the daily cap bounds what the research agent spends.
-    `provider` picks who watches and researches: "gemini" (default), "xai" (Grok) or "anthropic"."""
+    `provider` picks who watches and researches: "gemini" (default) or "anthropic" (Claude)."""
     s = _load_secrets().get("AGENT", {})
     provider = s.get("provider") or settings.agent_provider.strip() or "gemini"
     return {
@@ -198,13 +197,6 @@ def save_agent_settings(**updates) -> dict:
     return current
 
 
-def get_xai_key() -> str:
-    return _load_secrets().get("XAI_API_KEY", "").strip() or os.environ.get("XAI_API_KEY", "").strip()
-
-
-def save_xai_key(key: str) -> None:
-    _save_secret("XAI_API_KEY", key.strip())
-
 
 def get_gemini_key() -> str:
     return _load_secrets().get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -214,7 +206,65 @@ def save_gemini_key(key: str) -> None:
     _save_secret("GEMINI_API_KEY", key.strip())
 
 
-PROVIDERS = ("gemini", "xai", "anthropic")
+PROVIDERS = ("gemini", "anthropic")
+
+
+def get_mcp_token() -> str:
+    """Bearer token for Sidequest's MCP endpoint (/mcp/); empty until created in Settings."""
+    return _load_secrets().get("MCP_TOKEN", "")
+
+
+def new_mcp_token() -> str:
+    token = secrets.token_urlsafe(32)
+    _save_secret("MCP_TOKEN", token)
+    return token
+
+
+def get_profile() -> dict:
+    """Facts the assistant keeps about you (points balances, cards, preferences), set by you
+    in chat ("I have 142k Chase points"). Never passwords or card numbers."""
+    return _load_secrets().get("PROFILE", {})
+
+
+_CARD_NUMBER = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
+
+def save_profile_fact(key: str, value: str) -> dict:
+    key, value = key.strip()[:60], value.strip()[:300]
+    if _CARD_NUMBER.search(value) or re.search(r"(?i)password|passcode|\bcvv\b|\bpin\b", key + " " + value):
+        raise ValueError("Not storing card numbers or passwords.")
+    profile = get_profile()
+    if value:
+        profile[key] = value
+    else:
+        profile.pop(key, None)
+    _save_secret("PROFILE", dict(list(profile.items())[-40:]))
+    return profile
+
+
+def get_quest_settings() -> dict:
+    """Follow-through after a report (app/quests.py). `calendar_ics_url` is your calendar's
+    secret iCal address (read-only: busy times, so suggested dates avoid them);
+    `github_token` may open issues in your own repos, and only after you approve each one.
+    Flex is Gemini's half-price tier: slower (minutes), so by default only background work uses it."""
+    s = _load_secrets().get("QUESTS", {})
+    return {
+        "calendar_ics_url": s.get("calendar_ics_url", ""),
+        "github_token": s.get("github_token", ""),
+        "follow_ups": bool(s.get("follow_ups", True)),
+        "flex_background": bool(s.get("flex_background", True)),
+        "flex_shares": bool(s.get("flex_shares", False)),
+        "economy": bool(s.get("economy", False)),   # Flash-Lite for new shares: ~10x cheaper, a little less accurate
+        "signing_key": s.get("signing_key", ""),   # signs approve buttons in notifications (app/quests.py)
+        "home_airport": s.get("home_airport", ""), # e.g. PHL: where fare checks and deals start from
+    }
+
+
+def save_quest_settings(**updates) -> dict:
+    current = get_quest_settings()
+    current.update({k: v for k, v in updates.items() if v is not None})
+    _save_secret("QUESTS", current)
+    return current
 
 
 def get_project_overrides() -> dict:
@@ -268,8 +318,6 @@ ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key(
 # sense as the fields in Settings.
 ANALYSIS_MODEL = settings.analysis_model.strip()
 AGENT_MODEL = settings.agent_model.strip()
-AGENT_MODEL_XAI = settings.agent_model_xai.strip()
-ANALYSIS_MODEL_XAI = settings.analysis_model_xai.strip()
 AGENT_MODEL_GEMINI = settings.agent_model_gemini.strip()
 ANALYSIS_MODEL_GEMINI = settings.analysis_model_gemini.strip()
 PROJECTS_DIR = Path(settings.projects_dir.strip()).expanduser() if settings.projects_dir.strip() else Path.home() / "Projects"

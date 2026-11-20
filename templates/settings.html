@@ -57,14 +57,6 @@
     {% if key_status == "gemini_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
   </div>
 
-  <details class="key-row" {% if has_xai_key or key_status.startswith("xai") %}open{% endif %}>
-    <summary class="settings-summary"><strong>xAI API key</strong> <span class="hint" style="margin:0">optional: only if you switch research to Grok</span></summary>
-    <form action="/settings/xai" method="post" class="inline-form" style="margin-top:8px">
-      <input class="field" type="password" name="key" autocomplete="off" aria-label="xAI API key" placeholder="{{ 'Paste a new key to replace it' if has_xai_key else 'xai-…' }}" required>
-      <button class="btn btn-primary" type="submit">Save</button></form>
-    {% if key_status == "xai_invalid" %}<p style="color:var(--flag)">xAI didn't accept that key.</p>{% endif %}
-    {% if key_status == "xai_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
-  </details>
 
   <form action="/settings/agent" method="post" style="display:grid;gap:10px;margin-top:16px">
     <label for="about_me"><strong>About me</strong> <span class="hint" style="margin:0">read every time it decides what's “useful for you”</span></label>
@@ -75,7 +67,6 @@
       <label>Research with
         <select class="field" name="provider" style="width:auto;padding:8px 14px">
           <option value="gemini" {{ "selected" if agent_settings.provider == "gemini" }}>Gemini (watches the video)</option>
-          <option value="xai" {{ "selected" if agent_settings.provider == "xai" }}>Grok</option>
           <option value="anthropic" {{ "selected" if agent_settings.provider == "anthropic" }}>Claude</option>
         </select></label>
       <label>Daily cap $<input class="field num" type="number" name="daily_cap_usd" min="0" step="0.5" value="{{ '%.2f'|format(agent_settings.daily_cap_usd) }}"></label>
@@ -107,6 +98,55 @@
       <input class="check" type="checkbox" name="paused" value="true" {{ "checked" if action_settings.agent_paused }} onchange="this.form.submit()">
       Pause research (things you send are still saved and analyzed)</label>
   </form>
+</section>
+
+<section class="plain-card" id="follow">
+  <h2>Follow-through</h2>
+  <p style="margin-bottom:12px">After a report, the agent can do the next step: suggest times for a food spot and add one to your calendar, open an issue in the project something fits, or check back on a story later. Anything that changes something outside Sidequest waits for your tap.</p>
+  <form action="/settings/quests" method="post" style="display:grid;gap:12px">
+    <div class="key-row">
+      <div><strong>Your calendar</strong> {% if quest_settings.calendar_ics_url %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
+        <p class="hint" style="margin-top:4px">So suggested times avoid when you're busy. Paste your calendar's <em>secret address in iCal format</em> (Google Calendar → Settings → your calendar → Integrate calendar). It's read-only, and only busy times are used: event names never leave this computer.</p></div>
+      <input class="field" type="password" name="calendar_ics_url" autocomplete="off" aria-label="Secret iCal address" placeholder="{{ 'Paste a new address to replace it' if quest_settings.calendar_ics_url else 'https://calendar.google.com/calendar/ical/…/basic.ics' }}">
+    </div>
+    <div class="key-row">
+      <div><strong>GitHub token for issues</strong> {% if quest_settings.github_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
+        <p class="hint" style="margin-top:4px">A <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> limited to your own repos, with <strong>Issues: read and write</strong> only. Used only when you approve an issue.</p></div>
+      <input class="field" type="password" name="github_token" autocomplete="off" aria-label="GitHub token" placeholder="{{ 'Paste a new token to replace it' if quest_settings.github_token else 'github_pat_…' }}">
+    </div>
+    <div class="key-row">
+      <div><strong>Home airport</strong>
+        <p class="hint" style="margin-top:4px">Where flight searches, deals and fare watches start from. Fares come from Kiwi.com (free, no key).</p></div>
+      <input class="field" name="home_airport" maxlength="3" style="width:90px;text-transform:uppercase" aria-label="Home airport" placeholder="PHL" value="{{ quest_settings.home_airport }}">
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="follow_ups" value="true" {{ "checked" if quest_settings.follow_ups }}> Check back on developing stories, launches and price drops (about $0.01 a check; you're told only when something changed)</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_background" value="true" {{ "checked" if quest_settings.flex_background }}> Half price for background work (follow-ups, evals): Gemini Flex, slower but nobody's waiting</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="economy" value="true" {{ "checked" if quest_settings.economy }}> Cheaper model for new shares (Gemini Flash-Lite: about $0.004 instead of $0.04 an item, but noticeably weaker reports: a judge preferred the default model's 10 of 12 times)</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_shares" value="true" {{ "checked" if quest_settings.flex_shares }}> Half price for new shares too (results take up to 15 minutes instead of 1–2)</label>
+    <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
+  </form>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    {% if quest_settings.calendar_ics_url %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="calendar_ics_url"><button class="btn btn-quiet" type="submit">Disconnect calendar</button></form>{% endif %}
+    {% if quest_settings.github_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="github_token"><button class="btn btn-quiet" type="submit">Remove GitHub token</button></form>{% endif %}
+  </div>
+  {% if key_status == "quests_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
+  {% if key_status == "calendar_bad" %}<p style="color:var(--flag);margin-top:8px">Couldn't read that calendar address. Copy the secret address in iCal format again; the rest was saved.</p>{% endif %}
+</section>
+
+<section class="plain-card" id="mcp">
+  <h2>Use it from Claude (MCP)</h2>
+  <p style="margin-bottom:12px">Sidequest is an MCP server, so Claude Code, Claude Desktop or any MCP client can search what you've sent, read reports, see what's coming up, and send new things in. Nothing it exposes can approve an action for you.</p>
+  <div class="key-row">
+    <div><strong>On this Mac</strong> <span class="hint" style="margin:0">nothing exposed: runs inside the container over stdio</span>
+      <p class="hint" style="margin-top:4px">Run this once in Terminal, from the Sidequest folder:</p>
+      <pre class="code-block">claude mcp add -s user sidequest -- docker compose -f "$PWD/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
+  </div>
+  <div class="key-row">
+    <div><strong>Over the network</strong> {% if has_mcp_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Token created</span>{% endif %}
+      <p class="hint" style="margin-top:4px">For a client that needs a URL (e.g. over Tailscale): <code>/mcp/</code> on this app, with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+      {% if mcp_token %}<p class="hint">Your token (shown once; copy it now): <code style="user-select:all">{{ mcp_token }}</code></p>{% endif %}</div>
+    <form action="/settings/mcp" method="post"><button class="btn" type="submit" {% if has_mcp_token %}onclick="return confirm('Make a new token? The old one stops working.')"{% endif %}>{{ "New token" if has_mcp_token else "Create a token" }}</button></form>
+  </div>
 </section>
 
 <section class="plain-card" id="projects">

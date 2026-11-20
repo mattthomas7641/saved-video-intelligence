@@ -170,20 +170,22 @@ def _video_like(case: dict) -> SimpleNamespace:
     )
 
 
-def run_case(case: dict, session: Session, budget_usd: float, provider: str = "gemini") -> dict:
-    """The real pipeline steps for one case, without touching the database's items."""
-    from app import agent, prefetch, projects
+def run_case(case: dict, session: Session, budget_usd: float, provider: str = "gemini", config: dict | None = None) -> dict:
+    """The real pipeline steps for one case, without touching the database's items.
+    `config` (Gemini only) can override the models per step and the service tier."""
+    from app import agent, gemini_client, prefetch, projects
     from app.pipeline import research_plan
 
+    config = config or {}
     video = _video_like(case)
     started = time.monotonic()
     out: dict = {"id": case["id"], "error": None}
     try:
-        with tracing.run("eval", provider=provider) as trace:
+        with (tracing.run("eval", provider=provider) as trace,
+              gemini_client.models(config.get("watch_model"), config.get("research_model")),
+              gemini_client.tier(config.get("tier") or "standard")):
             if provider == "gemini":
                 from app.gemini_client import analyze_video
-            elif provider == "xai":
-                from app.xai_client import analyze_video
             else:
                 from app.analyze import analyze_video
             analysis = analyze_video(video)
@@ -206,7 +208,7 @@ def run_case(case: dict, session: Session, budget_usd: float, provider: str = "g
 
 
 def run_eval(session: Session, max_usd: float = 2.0, limit: int | None = None, reviewed_only: bool = False,
-             provider: str = "gemini", on_case=lambda done, total, spent: None) -> dict:
+             provider: str = "gemini", on_case=lambda done, total, spent: None, config: dict | None = None) -> dict:
     from app.projects import project_roots
 
     cases = [c for c in load_cases() if c.get("reviewed") or not reviewed_only][: limit or None]
@@ -216,16 +218,30 @@ def run_eval(session: Session, max_usd: float = 2.0, limit: int | None = None, r
         if spent >= max_usd:
             log.warning("Eval stopped at the $%.2f cap after %d of %d cases", max_usd, i, len(cases))
             break
-        out = run_case(case, session, budget_usd=max_usd - spent, provider=provider)
+        out = run_case(case, session, budget_usd=max_usd - spent, provider=provider, config=config)
         out["scores"] = score(case, out, known)
         spent += out["cost_usd"]
         results.append(out)
         on_case(i + 1, len(cases), spent)
     summary = {"at": datetime.utcnow().isoformat(timespec="seconds"), "provider": provider, "max_usd": max_usd,
+               "config": config_label(provider, config),
                "reviewed_only": reviewed_only, **summarise(results), "results": results}
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     (RUNS_DIR / f"{summary['at'].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
     return summary
+
+
+def config_label(provider: str, config: dict | None) -> str:
+    """e.g. 'gemini-3.5-flash-lite / flex', for comparing runs."""
+    from app.config import AGENT_MODEL_GEMINI, ANALYSIS_MODEL_GEMINI
+
+    config = config or {}
+    if provider != "gemini":
+        return provider
+    watch = config.get("watch_model") or ANALYSIS_MODEL_GEMINI
+    research = config.get("research_model") or AGENT_MODEL_GEMINI
+    models = watch if watch == research else f"{watch} + {research}"
+    return f"{models} / {config.get('tier') or 'standard'}"
 
 
 def runs(limit: int = 10) -> list[dict]:
@@ -287,6 +303,25 @@ def start_background(max_usd: float, reviewed_only: bool) -> bool:
 
 # ---------------- CLI ----------------
 
+TABLE_METRICS = ["type", "tech", "verdict", "verdict_within_one", "ignores_cta", "projects_found", "format_ok"]
+
+
+def comparison_table(history: list[dict]) -> str:
+    """Saved runs as a Markdown table, oldest first: accuracy per metric, cost and latency."""
+    head = "| Setup | Cases | " + " | ".join(METRIC_SHORT.get(m, m) for m in TABLE_METRICS) + " | $/case | p50 s |"
+    rows = [head, "|" + "---|" * (len(TABLE_METRICS) + 4)]
+    for s in reversed(history):
+        acc = s.get("accuracy", {})
+        cells = [f"{acc[m] * 100:.0f}%" if m in acc else "—" for m in TABLE_METRICS]
+        rows.append(f"| {s.get('config') or s.get('provider')} | {s.get('cases')} | " + " | ".join(cells)
+                    + f" | ${s.get('cost_per_case', 0):.4f} | {s.get('latency_p50')} |")
+    return "\n".join(rows)
+
+
+METRIC_SHORT = {"type": "Type", "tech": "Tech/everyday", "verdict": "Verdict", "verdict_within_one": "Verdict ±1",
+                "ignores_cta": "Ignores CTAs", "projects_found": "Projects found", "format_ok": "Format"}
+
+
 def _print_summary(s: dict, prev: dict | None) -> None:
     print(f"{s['cases']} cases · ${s['cost_total']:.2f} total · ${s['cost_per_case']:.4f}/case · "
           f"p50 {s['latency_p50']}s · p95 {s['latency_p95']}s")
@@ -307,8 +342,12 @@ def main(argv=None) -> None:
     r.add_argument("--max-usd", type=float, default=2.0)
     r.add_argument("--limit", type=int)
     r.add_argument("--reviewed-only", action="store_true")
-    r.add_argument("--provider", default="gemini", choices=["gemini", "xai", "anthropic"])
+    r.add_argument("--provider", default="gemini", choices=["gemini", "anthropic"])
+    r.add_argument("--watch-model", help="Gemini model for the first pass (default: configured)")
+    r.add_argument("--research-model", help="Gemini model for research (default: configured)")
+    r.add_argument("--tier", choices=["standard", "flex"], default="standard")
     sub.add_parser("report", help="latest run vs the one before")
+    sub.add_parser("table", help="every saved run side by side, as a Markdown table")
     args = parser.parse_args(argv)
 
     from app.db import get_session, init_db
@@ -319,9 +358,12 @@ def main(argv=None) -> None:
         elif args.cmd == "run":
             prev = (runs(1) or [None])[0]
             s = run_eval(session, max_usd=args.max_usd, limit=args.limit, reviewed_only=args.reviewed_only,
-                         provider=args.provider,
+                         provider=args.provider, config={"watch_model": args.watch_model,
+                                                         "research_model": args.research_model, "tier": args.tier},
                          on_case=lambda d, t, sp: print(f"  case {d}/{t} · ${sp:.3f} so far", flush=True))
             _print_summary(s, prev)
+        elif args.cmd == "table":
+            print(comparison_table(runs(50)))
         else:
             history = runs(2)
             if not history:

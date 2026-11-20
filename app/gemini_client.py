@@ -24,6 +24,8 @@ import json
 import logging
 import mimetypes
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import httpx
@@ -31,7 +33,7 @@ import httpx
 from app import agent, tracing
 from app.analyze import _TOOL_SCHEMA as ANALYSIS_TOOL
 from app.analyze import AnalysisResult, FatalAnalysisError, build_params
-from app.config import AGENT_MODEL_GEMINI, ANALYSIS_MODEL_GEMINI, get_gemini_key
+from app.config import AGENT_MODEL_GEMINI, ANALYSIS_MODEL_GEMINI, get_agent_settings, get_gemini_key
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +49,43 @@ _PRICES = {
     "gemini-3.1-pro": (2.00, 2.00, 12.00), "gemini-2.5-flash": (0.30, 1.00, 2.50),
 }
 CACHED_DISCOUNT = 0.1
+FLEX_DISCOUNT = 0.5             # Flex (and Batch) bill at half the standard rate
+FLEX_TIMEOUT_S = 900            # Flex targets 1-15 minutes; Google recommends client timeouts of 10+
+
+# Which service tier calls on this thread use: "standard", or "flex" (half price, slower, and
+# best effort - a call Google sheds is retried once at standard; there's no server-side fallback).
+_tier: ContextVar[str] = ContextVar("gemini_tier", default="standard")
+
+
+# The cheap model: about 10x cheaper than 3.8 Flash, but a pairwise judge preferred 3.8 Flash's
+# reports 10 of 12 times (1 tie). Fine for background yes/no checks, not for full reports by default.
+LITE_MODEL = "gemini-3.5-flash-lite"
+
+# Per-step model overrides (the eval comparison runs the same cases on different models).
+_models: ContextVar[dict] = ContextVar("gemini_models", default={})
+
+
+@contextmanager
+def models(watch: str | None = None, research: str | None = None):
+    token = _models.set({k: v for k, v in {"watch": watch, "research": research}.items() if v})
+    try:
+        yield
+    finally:
+        _models.reset(token)
+
+
+def _model(step: str) -> str:
+    """The model for a step: an override if one is set, else the configured default."""
+    return _models.get().get(step) or (AGENT_MODEL_GEMINI if step == "research" else ANALYSIS_MODEL_GEMINI)
+
+
+@contextmanager
+def tier(name: str):
+    token = _tier.set(name if name in ("standard", "flex") else "standard")
+    try:
+        yield
+    finally:
+        _tier.reset(token)
 
 # The library's analysis schema, plus what Gemini heard and saw - stored on the
 # Video so the research step (and the archive) can work from text.
@@ -103,7 +142,19 @@ def _is_network_error(e: Exception) -> bool:
 
 def _create(client, retries: int = 2, **params):
     """One Interactions API call. 429s are retried with a short backoff, then raised as
-    Throttled; a rejected key becomes FatalAnalysisError (only you can fix it)."""
+    Throttled; a rejected key becomes FatalAnalysisError (only you can fix it). On the
+    Flex tier, a shed request (429/503) is retried once at the standard tier."""
+    if _tier.get() == "flex":
+        try:
+            started = time.monotonic()
+            interaction = client.interactions.create(**params, service_tier="flex", timeout=FLEX_TIMEOUT_S)
+            _trace(interaction, params.get("model", ""), started, flex=True)
+            return interaction
+        except Exception as e:  # noqa: BLE001 - classified below; anything else goes the normal way
+            status = _status(e)
+            if status in (401, 403):
+                raise FatalAnalysisError("Gemini rejected the API key. Check it in Settings.") from e
+            log.warning("Flex request not served (%s); retrying at the standard tier", str(e)[:120])
     for attempt in range(retries + 1):
         try:
             started = time.monotonic()
@@ -127,15 +178,15 @@ def _create(client, retries: int = 2, **params):
             time.sleep(BACKOFF_S * (attempt + 1))
 
 
-def _trace(interaction, model: str, started: float) -> None:
+def _trace(interaction, model: str, started: float, flex: bool = False) -> None:
     u = getattr(interaction, "usage", None)
-    tracing.model_call(model, interaction_cost(interaction, model),
+    tracing.model_call(model + (" (flex)" if flex else ""), interaction_cost(interaction, model, flex),
                        (getattr(u, "total_input_tokens", 0) or 0) if u else 0,
                        ((getattr(u, "total_output_tokens", 0) or 0) + (getattr(u, "total_thought_tokens", 0) or 0)) if u else 0,
                        searches=_searches(interaction), ms=int((time.monotonic() - started) * 1000))
 
 
-def interaction_cost(interaction, model: str) -> float:
+def interaction_cost(interaction, model: str, flex: bool | None = None) -> float:
     price_in, price_audio, price_out = next((v for k, v in _PRICES.items() if model.startswith(k)), (0.75, 3.0, 3.75))
     u = getattr(interaction, "usage", None)
     if u is None:
@@ -146,8 +197,11 @@ def interaction_cost(interaction, model: str) -> float:
     cached = u.total_cached_tokens or 0
     other = max(total_in - audio - cached, 0)
     out = (u.total_output_tokens or 0) + (u.total_thought_tokens or 0)
-    return (other * price_in + cached * price_in * CACHED_DISCOUNT + audio * price_audio
-            + (u.total_tool_use_tokens or 0) * price_in + out * price_out) / 1_000_000
+    if flex is None:
+        flex = str(getattr(interaction, "service_tier", "") or "").lower() == "flex"
+    return ((other * price_in + cached * price_in * CACHED_DISCOUNT + audio * price_audio
+             + (u.total_tool_use_tokens or 0) * price_in + out * price_out) / 1_000_000
+            * (FLEX_DISCOUNT if flex else 1.0))
 
 
 def _steps(interaction, kind: str) -> list:
@@ -183,7 +237,7 @@ def can_watch(video) -> bool:
 def analyze_video(video, client=None) -> AnalysisResult:
     """Watch once, fill record_analysis, and keep what was heard and seen on the Video."""
     client = client or _client()
-    model = ANALYSIS_MODEL_GEMINI
+    model = _model("watch")
     prompt = build_params(video)["messages"][0]["content"]
     media = _media(video)
     if media:
@@ -212,10 +266,10 @@ def analyze_video(video, client=None) -> AnalysisResult:
 # ---------------- project cards ----------------
 
 def project_card(name: str, material: str, client=None) -> tuple[str, float]:
-    from app.xai_client import _CARD_PROMPT
+    from app.projects import CARD_PROMPT as _CARD_PROMPT
 
     client = client or _client()
-    model = ANALYSIS_MODEL_GEMINI
+    model = _model("watch")
     interaction = _create(client, model=model, system_instruction=_CARD_PROMPT,
                           input=f"Project: {name}\n\n{material[:24000]}",
                           generation_config={"thinking_level": "low"})
@@ -248,7 +302,7 @@ def research(video, action_type: str, brief: str | None, budget_usd: float, on_p
 
 
 def _research(video, action_type, brief, budget_usd, on_progress, client, web, context, tech) -> agent.Findings:
-    model = AGENT_MODEL_GEMINI
+    model = _model("research")
     builtins = [{"type": "google_search"}] + ([{"type": "google_maps"}] if action_type == "place" else [])
     tools = [*(builtins if web else []), *[_fn(t) for t in agent.client_tools(tech)]]
     system = agent.system_prompt(tech) + (
@@ -293,6 +347,63 @@ def _research(video, action_type, brief, budget_usd, on_progress, client, web, c
                               generation_config={"tool_choice": "any"})
 
     raise agent.AgentError("Gemini finished without producing a report.")
+
+
+# ---------------- 3. follow-ups ----------------
+
+_UPDATE_TOOL = {
+    "name": "record_update",
+    "description": "Record what you found. Call exactly once.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "changed": {"type": "boolean", "description": "True only if something new happened that matches what "
+                                                          "to watch for (or clearly matters to the user). Old news, "
+                                                          "rehashes and speculation are not a change."},
+            "headline": {"type": "string", "description": "Under 90 characters: what changed (or 'No news')."},
+            "summary": {"type": "string", "description": "Under 500 characters, plain text: what's new and what "
+                                                        "it means for the user; empty if nothing changed."},
+            "keep_watching": {"type": "boolean", "description": "Still worth another check later?"},
+            "links": {"type": "array", "maxItems": 4, "items": {
+                "type": "object", "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
+                "required": ["url"]}},
+        },
+        "required": ["changed", "headline"],
+    },
+}
+
+_FOLLOW_UP_PROMPT = """You are checking back on something for one person, as promised in an earlier report. Search for what has happened since that report, then call record_update once. Be strict: only call it a change if there is real news matching what to watch for (or clearly important to them). Never pad: "no news" is a fine answer."""
+
+
+def follow_up(payload: dict, client=None) -> dict:
+    """One check-back: search for news since the report, return record_update's fields
+    (`changed`, `headline`, `summary`, `keep_watching`, `links`) plus `cost_usd`."""
+    client = client or _client()
+    model = _model("watch")
+    text = (f"Today's date: {time.strftime('%Y-%m-%d')}\n"
+            f"Report date: {payload.get('reported_on', 'unknown')}\n"
+            f"What it was about: {payload.get('headline', '')}\n"
+            f"What the report said: {payload.get('summary', '')}\n"
+            f"What to watch for: {payload.get('watch_for', '')}\n"
+            f"About the user: {get_agent_settings()['about_me'] or '(not given)'}")
+    tools = [{"type": "google_search"}, _fn(_UPDATE_TOOL)]
+    interaction = _create(client, model=model, system_instruction=_FOLLOW_UP_PROMPT, input=text, tools=tools,
+                          generation_config={"thinking_level": "low"})
+    cost = interaction_cost(interaction, model)
+    for _ in range(2):
+        for call in _steps(interaction, "function_call"):
+            if call.name == "record_update":
+                args = dict(call.arguments or {})
+                return {"changed": bool(args.get("changed")), "headline": str(args.get("headline") or "")[:140],
+                        "summary": str(args.get("summary") or "")[:800],
+                        "keep_watching": bool(args.get("keep_watching", True)),
+                        "links": [x for x in args.get("links") or [] if isinstance(x, dict)
+                                  and str(x.get("url", "")).startswith("http")][:4],
+                        "cost_usd": cost}
+        interaction = _create(client, model=model, tools=tools, previous_interaction_id=interaction.id,
+                              input="Now call record_update.", generation_config={"tool_choice": "any"})
+        cost += interaction_cost(interaction, model)
+    raise agent.AgentError("Gemini didn't report on the follow-up.")
 
 
 def check_key(key: str) -> bool:

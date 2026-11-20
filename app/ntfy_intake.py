@@ -97,9 +97,34 @@ def result_notification(action, video) -> dict:
                 "clear": True}
         title = (f"{VERDICT_LABELS.get(action.verdict, '')} · {TYPE_LABELS.get(action.action_type.value, '')}: "
                  f"{r.get('headline', '')}")
-        return {"title": title, "message": "\n".join(lines), "click": click, "actions": [deep]}
+        follow = _follow_through(action.id)
+        if follow["lines"]:
+            lines += [""] + follow["lines"]
+        return {"title": title, "message": "\n".join(lines), "click": click, "actions": follow["actions"] + [deep]}
     reason = action.error_message or "Something went wrong."
     return {"title": "⚠️ Couldn't finish researching this", "message": reason, "click": click}
+
+
+def _follow_through(action_id: int) -> dict:
+    """Buttons and a line or two for what the agent proposed or scheduled (app/quests.py)."""
+    from app import quests
+    from app.db import get_session
+
+    try:
+        with get_session() as session:
+            tasks = quests.for_actions(session, [action_id]).get(action_id, [])
+            lines = []
+            if any(t.kind == "calendar" and t.status == "proposed" for t in tasks):
+                lines.append("📅 Tap a time to add it to your calendar.")
+            for t in tasks:
+                if t.kind == "github_issue" and t.status == "proposed":
+                    lines.append(f"🛠 Proposed: {t.title}")
+                elif t.kind == "follow_up" and t.status == "scheduled":
+                    lines.append(f"🔁 I'll check back {t.run_at:%b %-d} and tell you if anything changed.")
+            return {"lines": lines, "actions": quests.notification_actions(tasks)}
+    except Exception:  # noqa: BLE001 - the notification goes out without buttons
+        log.exception("Couldn't add follow-through to the notification")
+        return {"lines": [], "actions": []}
 
 
 class NtfyReporter(intake.Reporter):
@@ -114,12 +139,16 @@ class NtfyReporter(intake.Reporter):
     def failed(self, text: str) -> None:
         notify("⚠️ Couldn't process that video", text)
 
+    def already_sent(self, action, video) -> None:
+        n = result_notification(action, video)
+        notify(**{**n, "title": "🔁 You sent this before: " + n["title"]})
+
 
 # ---------------- incoming ----------------
 
 def handle_message(raw: str, submit=None, attachment: dict | None = None, http: httpx.Client | None = None) -> str:
     """Route one inbox message. Returns what happened, for logs and tests:
-    'ignored', 'queued', 'deep', 'busy' or 'empty'."""
+    'ignored', 'queued', 'deep', 'approved', 'busy' or 'empty'."""
     submit = submit or (lambda video_id, deep=False: intake.submit(video_id, NtfyReporter(), deep=deep))
     s = get_ntfy_settings()
     try:
@@ -128,6 +157,18 @@ def handle_message(raw: str, submit=None, attachment: dict | None = None, http: 
         return "ignored"
     if not isinstance(body, dict) or not s["token"]:
         return "ignored"
+    if body.get("approve") is not None:  # a notification's approve button (e.g. "Open the issue")
+        from app import quests
+
+        try:
+            task_id = int(body["approve"])
+        except (TypeError, ValueError):
+            return "ignored"
+        if not quests.check_signature(task_id, str(body.get("sig", ""))):
+            return "ignored"
+        message, _ = quests.approve(task_id)
+        log.info("Approved task %s from a notification: %s", task_id, message)
+        return "approved"
     if body.get("deep") is not None:  # the notification's "Research deeper" button
         try:
             action_id = int(body["deep"])

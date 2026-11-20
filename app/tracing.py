@@ -13,6 +13,7 @@ Recording uses a context variable, so the provider clients just call
 """
 import json
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -48,6 +49,7 @@ class Trace:
 
 
 _current: ContextVar[Trace | None] = ContextVar("sidequest_trace", default=None)
+_mutate = threading.Lock()   # parallel agents (app/trip_planner.py) record into one trace
 
 
 def current() -> Trace | None:
@@ -59,13 +61,14 @@ def model_call(model: str, cost_usd: float, input_tokens: int = 0, output_tokens
     t = _current.get()
     if t is None:
         return
-    t.model = t.model or model
-    t.cost_usd += cost_usd or 0.0
-    t.input_tokens += input_tokens or 0
-    t.output_tokens += output_tokens or 0
-    t.searches += searches or 0
-    _step(t, {"t": "model", "model": model, "cost": round(cost_usd or 0.0, 5), "in": input_tokens,
-              "out": output_tokens, "searches": searches, "ms": ms})
+    with _mutate:
+        t.model = t.model or model
+        t.cost_usd += cost_usd or 0.0
+        t.input_tokens += input_tokens or 0
+        t.output_tokens += output_tokens or 0
+        t.searches += searches or 0
+        _step(t, {"t": "model", "model": model, "cost": round(cost_usd or 0.0, 5), "in": input_tokens,
+                  "out": output_tokens, "searches": searches, "ms": ms})
 
 
 def tool_call(name: str, args: dict, ok: bool, ms: int, note: str = "") -> None:
@@ -73,7 +76,8 @@ def tool_call(name: str, args: dict, ok: bool, ms: int, note: str = "") -> None:
     if t is None:
         return
     summary = ", ".join(f"{k}={str(v)[:60]}" for k, v in (args or {}).items())[:ARG_CHARS]
-    _step(t, {"t": "tool", "name": name, "args": summary, "ok": ok, "ms": ms, "note": note[:ARG_CHARS]})
+    with _mutate:
+        _step(t, {"t": "tool", "name": name, "args": summary, "ok": ok, "ms": ms, "note": note[:ARG_CHARS]})
 
 
 def _step(t: Trace, step: dict) -> None:
@@ -100,6 +104,9 @@ def run(kind: str, action_id: int | None = None, video_id: int | None = None, pr
         if trace.error and status == "ok":
             status, error = "failed", trace.error
         _save(trace, started_at, status, error)
+        from app import otel
+
+        otel.export_run(trace, started_at, status, error)  # no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
 
 
 def _save(trace: Trace, started_at: datetime, status: str, error: str | None) -> None:
@@ -177,3 +184,41 @@ def spend_by_day(session: Session, days: int = 14) -> list[tuple[str, float, int
         totals[day][0] += cost or 0.0
         totals[day][1] += 1
     return [(d.strftime("%b %-d"), round(v[0], 4), v[1]) for d, v in sorted(totals.items(), reverse=True)]
+
+
+def activity(session: Session, action_ids: list[int]) -> dict[int, dict]:
+    """What the agent did for each item, from its runs: searches, repos checked, project files
+    read, time and cost. Shown on each report so the work behind a verdict is visible."""
+    from app.models import Run
+
+    out: dict[int, dict] = {}
+    if not action_ids:
+        return out
+    rows = session.exec(select(Run).where(Run.action_id.in_(action_ids))
+                        .where(Run.kind.in_(["analysis", "research", "follow_up"]))).all()
+    for r in rows:
+        a = out.setdefault(r.action_id, {"searches": 0, "repos": set(), "files": set(), "projects": set(),
+                                          "seconds": 0, "cost": 0.0, "watched": False, "runs": 0})
+        a["runs"] += 1
+        a["cost"] += r.cost_usd or 0.0
+        a["searches"] += r.searches or 0
+        if r.kind == "analysis" and r.status == "ok":
+            a["watched"] = True
+        if r.kind == "research":
+            a["seconds"] = max(a["seconds"], int((r.duration_ms or 0) / 1000))
+        try:
+            steps = json.loads(r.steps or "[]")
+        except ValueError:
+            steps = []
+        for st in steps:
+            if st.get("t") != "tool" or not st.get("ok", True):
+                continue
+            args = dict(kv.split("=", 1) for kv in str(st.get("args", "")).split(", ") if "=" in kv)
+            if st.get("name") == "github_repo":
+                a["repos"].add(args.get("repo", ""))
+            elif st.get("name") == "read_project_file":
+                a["files"].add(f"{args.get('project', '')}/{args.get('path', '')}")
+                a["projects"].add(args.get("project", ""))
+    for a in out.values():
+        a["repos"], a["files"], a["projects"] = len(a["repos"]), len(a["files"]), sorted(p for p in a["projects"] if p)
+    return out
