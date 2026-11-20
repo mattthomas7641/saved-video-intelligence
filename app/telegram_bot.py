@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 POLL_TIMEOUT = 50  # seconds Telegram holds a getUpdates request open
 
 VERDICT_LABELS = {"worth_it": "✅ Do it", "maybe": "🤔 Optional", "skip": "💤 Nothing to do"}
-TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project",
+TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "travel": "Travel", "project": "Project",
                "skill": "Skill", "job": "Job", "other": "Other"}
 FIT_LABELS = {"worth_it": "worth it", "maybe": "maybe", "skip": "skip"}
 VALUE_LABELS = {"fun": "fun / personal use", "personal_and_resume": "personal use + resume boost",
@@ -186,6 +186,12 @@ def follow_through(action_id: int) -> dict:
                             {"text": "No thanks", "callback_data": f"decline:{t.id}"}])
         elif t.kind == "follow_up" and t.status == "scheduled":
             lines.append(f"🔁 I'll check back {t.run_at:%b %-d} and tell you if anything changed.")
+        elif t.kind == "flights_calendar" and t.status == "proposed":
+            buttons.append([{"text": f"✈️ {t.title}", "callback_data": f"approve:{t.id}"}])
+        elif t.kind == "fare_watch" and t.status == "scheduled":
+            lines.append(f"💸 {html.escape(t.title)}: I'll check every few days and message you if it drops.")
+    if any(t.kind == "reminder" and t.status == "scheduled" for t in tasks):
+        lines.append("⏰ I'll remind you to check in 24h before each flight, and send its status 3h before.")
     if slots:
         lines.insert(0, "📅 Want to go? Pick a time and I'll set up the calendar event:")
         buttons = [slots[i:i + 2] for i in range(0, len(slots), 2)] + buttons
@@ -222,10 +228,11 @@ def handle_callback(query: dict, tg: TelegramClient) -> None:
         target = None
     if verb == "approve" and target is not None:
         message, url = quests.approve(target)
-        if url:  # a calendar slot: hand over Google Calendar's prefilled event
-            tg.send(chat_id, "Tap to add it to Google Calendar:",
-                    buttons=[[{"text": "📅 Add to Google Calendar", "url": url}]])
-            answer = "Opening the calendar event"
+        links = _calendar_links(target)
+        if links:  # calendar steps: hand over Google Calendar's prefilled events
+            tg.send(chat_id, "Tap to add to Google Calendar:",
+                    buttons=[[{"text": f"📅 {label}"[:60], "url": link}] for label, link in links][:8])
+            answer = "Here's the calendar event" if len(links) == 1 else "Here are your flights"
         else:
             answer = message
     elif verb == "decline" and target is not None:
@@ -235,6 +242,16 @@ def handle_callback(query: dict, tg: TelegramClient) -> None:
         queued = intake.rerun(target, deep=True)
         answer = "Researching deeper…" if queued else ("Already on it" if queued is False else "Report not found")
     tg.call("answerCallbackQuery", callback_query_id=query["id"], text=answer[:190])
+
+
+def _calendar_links(task_id: int) -> list[tuple[str, str]]:
+    from app import quests
+    from app.db import get_session
+    from app.models import Task
+
+    with get_session() as session:
+        task = session.get(Task, task_id)
+        return quests.calendar_links(task) if task and task.status == "done" else []
 
 
 def report_link(action) -> str | None:

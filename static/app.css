@@ -642,3 +642,8 @@ code.copy { user-select: all; word-break: break-all; }
 .report summary.has-thumb { padding-right: 108px; }
 .r-thumb { position: absolute; top: 20px; right: 24px; width: 66px; height: 88px; object-fit: cover; border-radius: 12px; border: 1.5px solid var(--line); background: var(--rail); }
 @media (max-width: 600px) { .report summary.has-thumb { padding-right: 82px; } .r-thumb { width: 48px; height: 64px; right: 18px; } }
+
+/* A booked trip's flights */
+.flight-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.flight { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(170px, 1.2fr) 1fr; gap: 10px; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 12px; font-size: var(--fs-sm); }
+@media (max-width: 600px) { .flight { grid-template-columns: 1fr; gap: 2px; } }

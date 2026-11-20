@@ -80,6 +80,7 @@ class ActionType(str, Enum):
     REPO = "repo"        # GitHub repos/tools worth evaluating
     RESEARCH = "research"  # news, a new AI product, a claim worth looking into
     PLACE = "place"      # a restaurant, bar, shop or spot to visit
+    TRAVEL = "travel"    # a flight itinerary or booking, a flight/travel deal, a trip to plan
     OTHER = "other"      # shared on purpose, but none of the above
 
 

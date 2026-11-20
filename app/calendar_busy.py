@@ -141,3 +141,39 @@ def ics(title: str, start: datetime, end: datetime, location: str = "", details:
         ev.add("description", details[:1500])
     cal.add_component(ev)
     return cal.to_ical()
+
+
+def ics_many(events: list[dict]) -> bytes:
+    """Several events in one .ics (e.g. every flight on a trip). Each: summary, start, end, location, details, uid."""
+    import icalendar
+
+    cal = icalendar.Calendar()
+    cal.add("prodid", "-//Sidequest//EN")
+    cal.add("version", "2.0")
+    for e in events:
+        ev = icalendar.Event()
+        ev.add("uid", e["uid"])
+        ev.add("summary", e["summary"][:200])
+        ev.add("dtstart", e["start"])
+        ev.add("dtend", e["end"])
+        ev.add("dtstamp", datetime.now(tz()))
+        if e.get("location"):
+            ev.add("location", e["location"][:300])
+        if e.get("details"):
+            ev.add("description", e["details"][:1500])
+        cal.add_component(ev)
+    return cal.to_ical()
+
+
+def parse_in(value: str, zone: str | None) -> datetime | None:
+    """A local time at a given IANA zone (a flight's departure airport), or in APP_TIMEZONE."""
+    try:
+        d = datetime.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+    if d.tzinfo:
+        return d
+    try:
+        return d.replace(tzinfo=ZoneInfo(zone)) if zone else d.replace(tzinfo=tz())
+    except Exception:  # noqa: BLE001 - an unknown zone name from the model
+        return d.replace(tzinfo=tz())

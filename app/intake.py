@@ -21,6 +21,7 @@ import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -304,12 +305,17 @@ def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
             _in_flight.discard(video_id)
 
 
+@contextmanager
 def _tier_for_shares():
-    """Gemini's half-price Flex tier for new shares, if turned on in Settings (results take minutes longer)."""
+    """Settings' cost switches for new shares: Gemini's half-price Flex tier (results take minutes
+    longer) and the cheaper Flash-Lite model."""
     from app import gemini_client
     from app.config import get_quest_settings
 
-    return gemini_client.tier("flex" if get_quest_settings()["flex_shares"] else "standard")
+    s = get_quest_settings()
+    lite = gemini_client.LITE_MODEL if s["economy"] else None
+    with gemini_client.tier("flex" if s["flex_shares"] else "standard"), gemini_client.models(lite, lite):
+        yield
 
 
 def mark_failed(video_id: int, text: str, status=None) -> None:

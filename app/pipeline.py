@@ -402,7 +402,7 @@ def _touch_action(session: Session, action: Action) -> None:
     session.refresh(action)
 
 
-_WEB_TYPES = {"place", "research", "job"}
+_WEB_TYPES = {"place", "research", "job", "travel"}
 
 
 def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[bool, bool]:

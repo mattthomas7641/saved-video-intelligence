@@ -57,6 +57,10 @@ FLEX_TIMEOUT_S = 900            # Flex targets 1-15 minutes; Google recommends c
 _tier: ContextVar[str] = ContextVar("gemini_tier", default="standard")
 
 
+# The cheap model: in the eval comparison (12 cases) about 10x cheaper than 3.8 Flash and
+# about one case in twelve worse on type and verdict. Background checks use it by default.
+LITE_MODEL = "gemini-3.5-flash-lite"
+
 # Per-step model overrides (the eval comparison runs the same cases on different models).
 _models: ContextVar[dict] = ContextVar("gemini_models", default={})
 

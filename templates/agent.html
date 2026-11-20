@@ -2,7 +2,7 @@
 {% from "_icons.html" import icon %}
 {% block title %}Quests · Sidequest{% endblock %}
 {% macro type_icon(t) -%}
-{{ icon({"repo": "code", "research": "news", "place": "utensils", "project": "wrench", "skill": "sparkles", "job": "briefcase"}.get(t, "grid")) }}
+{{ icon({"repo": "code", "research": "news", "place": "utensils", "travel": "plane", "project": "wrench", "skill": "sparkles", "job": "briefcase"}.get(t, "grid")) }}
 {%- endmacro %}
 {% macro next_step_tag(v) -%}
 {% if v == "worth_it" %}<span class="verdict v-yes">{{ icon("check") }} Do it</span>
@@ -56,6 +56,45 @@
     </div>
   </div>
   {% endif %}
+  {% for t in live if t.kind == "flights_calendar" %}{% set res = t.result|fromjson %}
+  <div class="step">
+    <span class="ci">{{ icon("plane") }}</span>
+    <div class="step-main">
+      {% if t.status == "done" %}
+      <p>Add each flight to Google Calendar, or all at once to Apple Calendar:</p>
+      <div class="slot-row">{% for e in res.events or [] %}<a class="btn" href="{{ e.google_url }}" target="_blank" rel="noopener">{{ e.label }}</a>{% endfor %}
+        <a class="btn btn-quiet" href="/tasks/{{ t.id }}/event.ics">All flights (.ics)</a></div>
+      {% else %}
+      <p>{{ t.title }}</p>
+      <form action="/tasks/{{ t.id }}/approve" method="post"><input type="hidden" name="next" value="{{ here }}#a{{ a.id }}"><button class="btn btn-primary" type="submit">{{ icon("calendar") }} Add them</button></form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% set reminders = live|selectattr("kind", "in", ["reminder", "flight_status"])|list %}
+  {% if reminders %}
+  <div class="step">
+    <span class="ci">{{ icon("clock") }}</span>
+    <div class="step-main">
+      {% for t in reminders %}
+      <p class="{{ 'faint' if t.status == 'done' else '' }}">{{ t.title }}: {% if t.status == "scheduled" %}<strong>{{ t.run_at|short_date }}</strong>{% elif t.status == "done" %}{{ "sent" if t.kind == "reminder" else ((t.result|fromjson).headline or "sent") }}{% else %}{{ t.status }}{% endif %}</p>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {% for t in live if t.kind == "fare_watch" %}{% set res = t.result|fromjson %}{% set hist = (t.payload|fromjson).history or [] %}
+  <div class="step">
+    <span class="ci">{{ icon("dollar") }}</span>
+    <div class="step-main">
+      {% if t.status == "scheduled" %}
+      <p>{{ t.title }}. Next check <strong>{{ t.run_at|short_date }}</strong>{% if hist and hist[-1].lowest %} · last seen ${{ "%.0f"|format(hist[-1].lowest) }}{% endif %}.</p>
+      <form action="/tasks/{{ t.id }}/cancel" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit">Stop watching</button></form>
+      {% elif t.status == "done" and res.hit %}<p><strong>Dropped to ${{ "%.0f"|format(res.lowest) }}</strong>: under your target. Book soon if you're going.</p>
+      {% elif t.status == "done" %}<p class="faint">Stopped watching close to the trip; the fare didn't drop below the target.</p>
+      {% elif t.status == "failed" %}<p class="why">{{ t.error }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
   {% for t in live if t.kind == "github_issue" %}{% set res = t.result|fromjson %}
   <div class="step">
     <span class="ci">{{ icon("code") }}</span>
@@ -203,19 +242,22 @@
         {% if v.thumbnail_path %}<img class="r-thumb" src="/media/thumb/{{ v.id }}" alt="" loading="lazy">{% endif %}
         <div class="r-meta">
           <span class="r-topic">{{ item.group }}</span>
-          <span class="r-type">{{ type_icon(a.action_type.value) }} {{ {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project", "skill": "Skill", "job": "Job"}.get(a.action_type.value, "Other") }}</span>
+          <span class="r-type">{{ type_icon(a.action_type.value) }} {{ {"repo": "Repos", "research": "Research", "place": "Place", "travel": "Travel", "project": "Project", "skill": "Skill", "job": "Job"}.get(a.action_type.value, "Other") }}</span>
           {{ next_step_tag(a.verdict) }}
           <span class="faint">{{ a.updated_at|short_date }}</span>
         </div>
         <h3>{{ r.headline|nocite }}</h3>
         <p class="r-tldr">{{ r.telegram_text|nocite }}</p>
-        {% if r.place %}<p class="r-key">{{ icon("home") }} {{ r.place.name }}{% if r.place.neighborhood or r.place.city %} · {{ r.place.neighborhood or "" }}{{ ", " if r.place.neighborhood and r.place.city }}{{ r.place.city or "" }}{% endif %}{% if r.place.best_times %} · {{ r.place.best_times }}{% endif %}</p>
+        {% if r.trip %}<p class="r-key">{{ icon("plane") }} {{ r.trip.segments|length }} flight{{ "s" if r.trip.segments|length != 1 }}{% if r.trip.destination_city %} to {{ r.trip.destination_city }}{% endif %} · departs {{ r.trip.segments[0].depart|replace("T", " ") }}</p>
+        {% elif r.fare_check %}<p class="r-key">{{ icon("dollar") }} {{ r.fare_check.origin }} → {{ r.fare_check.destination }}{% if r.fare_check.current_lowest %} from ${{ "%.0f"|format(r.fare_check.current_lowest) }}{% endif %}</p>
+        {% elif r.place %}<p class="r-key">{{ icon("home") }} {{ r.place.name }}{% if r.place.neighborhood or r.place.city %} · {{ r.place.neighborhood or "" }}{{ ", " if r.place.neighborhood and r.place.city }}{{ r.place.city or "" }}{% endif %}{% if r.place.best_times %} · {{ r.place.best_times }}{% endif %}</p>
         {% elif r.repos %}<p class="r-key">{{ icon("code") }} {{ r.repos|selectattr("fit", "equalto", "worth_it")|list|length }} of {{ r.repos|length }} repos worth a look</p>
         {% elif r.project_fit and r.project_fit[0].fit != "skip" %}<p class="r-key">{{ icon("wrench") }} Fits {{ r.project_fit[0].project }}: {{ r.project_fit[0].where }} {{ value_tag(r.project_fit[0].value) }}</p>
         {% elif r.new_project %}<p class="r-key">{{ icon("bulb") }} New project: {{ r.new_project.idea }} {{ value_tag(r.new_project.value) }}</p>
         {% elif r.ideas %}<p class="r-key">{{ icon("bulb") }} {{ r.ideas[0] }}</p>{% endif %}
         {% set ts = tasks.get(a.id, []) %}
-        {% if ts|selectattr("status", "equalto", "proposed")|list %}<p class="r-key r-next">{{ icon("check") }} Waiting on you: {{ "pick a time" if ts|selectattr("kind", "equalto", "calendar")|selectattr("status", "equalto", "proposed")|list else "approve a step" }}</p>
+        {% set waiting = ts|selectattr("status", "equalto", "proposed")|list %}
+        {% if waiting %}<p class="r-key r-next">{{ icon("check") }} Waiting on you: {{ {"calendar": "pick a time", "flights_calendar": "add your flights to your calendar"}.get(waiting[0].kind, "approve a step") }}</p>
         {% elif ts|selectattr("status", "equalto", "scheduled")|list %}<p class="r-key">{{ icon("clock") }} Checking back {{ (ts|selectattr("status", "equalto", "scheduled")|first).run_at|short_date }}</p>{% endif %}
         {{ activity_line(activity.get(a.id), v.tiktok_url.startswith("http")) }}
         <span class="r-more">Full report {{ icon("chev") }}</span>
@@ -223,6 +265,33 @@
 
       <div class="r-body">
         {{ next_steps(a, tasks.get(a.id, []), here) }}
+        {% if r.trip %}
+        <h4>Your trip{% if r.trip.destination_city %} to {{ r.trip.destination_city }}{% endif %}</h4>
+        <div class="flight-list">
+          {% for seg in r.trip.segments %}
+          <div class="flight">
+            <span class="fl-route"><strong>{{ seg.from }} → {{ seg.to }}</strong> {% if seg.flight %}<span class="faint">{{ seg.flight }}</span>{% endif %}</span>
+            <span>{{ seg.depart|replace("T", " ") }}{% if seg.arrive %} → {{ seg.arrive.split("T")[-1] }}{% endif %}</span>
+            <span class="faint">{% if seg.terminal %}Terminal {{ seg.terminal }}{% endif %}{% if seg.seat %} · Seat {{ seg.seat }}{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="faint">{% if r.trip.confirmation %}Confirmation <strong>{{ r.trip.confirmation }}</strong>{% endif %}{% if r.trip.hotel %} · {{ r.trip.hotel }}{% endif %}</p>
+        {% if saved_nearby.get(a.id) %}
+        <p>{{ icon("utensils") }} You saved {{ saved_nearby[a.id]|length }} place{{ "s" if saved_nearby[a.id]|length != 1 }} there:
+          {% for pl in saved_nearby[a.id] %}<a href="/#a{{ pl.action_id }}">{{ pl.name }}</a>{{ ", " if not loop.last }}{% endfor %}</p>
+        {% endif %}
+        {% endif %}
+        {% if r.fare_check %}{% set f = r.fare_check %}
+        <h4>Fare check: {{ f.origin }} → {{ f.destination }}</h4>
+        <dl class="facts">
+          {% if f.claimed_price %}<div><dt>Post said</dt><dd>${{ "%.0f"|format(f.claimed_price) }}</dd></div>{% endif %}
+          {% if f.current_lowest %}<div><dt>Lowest now</dt><dd>${{ "%.0f"|format(f.current_lowest) }}</dd></div>{% endif %}
+          {% if f.typical_range %}<div><dt>Typical</dt><dd>{{ f.typical_range }}</dd></div>{% endif %}
+          {% if f.outbound_date %}<div><dt>Dates</dt><dd>{{ f.outbound_date }}{% if f.return_date %} – {{ f.return_date }}{% endif %}</dd></div>{% endif %}
+        </dl>
+        <p>{{ f.verdict }}</p>
+        {% endif %}
         {% if r.place %}
         <dl class="facts">
           {% for k, label in [("address", "Address"), ("hours", "Hours"), ("best_times", "Best time"), ("price_range", "Price range"), ("price", "Price"), ("reservations", "Reservations"), ("availability", "Getting in"), ("status", "Status")] if r.place[k] %}

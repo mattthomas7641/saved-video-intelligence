@@ -240,7 +240,10 @@ def get_quest_settings() -> dict:
         "follow_ups": bool(s.get("follow_ups", True)),
         "flex_background": bool(s.get("flex_background", True)),
         "flex_shares": bool(s.get("flex_shares", False)),
+        "economy": bool(s.get("economy", False)),   # Flash-Lite for new shares: ~10x cheaper, a little less accurate
         "signing_key": s.get("signing_key", ""),   # signs approve buttons in notifications (app/quests.py)
+        "serpapi_key": s.get("serpapi_key", ""),   # live Google Flights fares (app/flights.py); 250 free a month
+        "home_airport": s.get("home_airport", ""), # e.g. PHL: where fare checks and deals start from
     }
 
 

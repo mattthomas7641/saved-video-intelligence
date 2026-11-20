@@ -82,7 +82,8 @@ def get_report(sidequest_id: int) -> dict:
                   "result": json.loads(t.result) if t.result else None}
                  for t in quests.for_actions(session, [action.id]).get(action.id, [])]
         return {**_brief(action, video, report), "report_markdown": report.get("report_markdown", ""),
-                "place": report.get("place"), "project_fit": report.get("project_fit", []),
+                "place": report.get("place"), "trip": report.get("trip"), "fare_check": report.get("fare_check"),
+                "project_fit": report.get("project_fit", []),
                 "new_project": report.get("new_project"), "links": report.get("links", []),
                 "related": report.get("related", []), "next_steps": steps,
                 "error": action.error_message}

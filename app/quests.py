@@ -28,6 +28,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import update
@@ -39,6 +40,7 @@ from app.models import Task
 log = logging.getLogger(__name__)
 
 FINAL = ("done", "failed", "declined", "cancelled")
+SCHEDULED_KINDS = ("follow_up", "reminder", "flight_status", "fare_watch")   # run on a timer, no approval
 MAX_ATTEMPTS = 3
 TICK_S = 60
 LATER_CHECK_DAYS = 30          # a story checked after a week gets one more look a month on
@@ -81,6 +83,13 @@ def plan(session: Session, action, report: dict, now: datetime | None = None) ->
                               payload=json.dumps({**issue, "repo": repo, "source": link})))
         else:
             log.info("No GitHub remote for project %r; not proposing an issue", issue["project"])
+    tasks += _trip_tasks(action.id, report.get("trip"), link, now)
+    fare = report.get("fare_check") or {}
+    if fare.get("watch_below") and fare.get("outbound_date") and get_quest_settings()["follow_ups"]:
+        tasks.append(Task(action_id=action.id, kind="fare_watch", status="scheduled",
+                          run_at=now + timedelta(days=FARE_WATCH_EVERY_DAYS),
+                          title=f"Watch {fare['origin']}→{fare['destination']} for under ${fare['watch_below']:.0f}",
+                          payload=json.dumps({**fare, "history": []})))
     follow = report.get("follow_up")
     if follow and get_quest_settings()["follow_ups"]:
         days = int(follow["after_days"])
@@ -98,6 +107,93 @@ def plan(session: Session, action, report: dict, now: datetime | None = None) ->
     for t in tasks:
         session.refresh(t)
     return tasks
+
+
+FARE_WATCH_EVERY_DAYS = 3
+CHECK_IN_HOURS = 24
+STATUS_HOURS = 3
+
+
+def _trip_tasks(action_id: int, trip: dict | None, link: str, now: datetime) -> list[Task]:
+    """A booked trip: one step to add every flight to your calendar (your tap), plus a check-in
+    reminder 24 hours before each flight and a status check 3 hours before (automatic: they
+    only read and notify)."""
+    from app import calendar_busy
+
+    if not trip:
+        return []
+    segments, tasks = [], []
+    for seg in trip.get("segments") or []:
+        dep = calendar_busy.parse_in(seg.get("depart", ""), seg.get("depart_tz"))
+        if dep is None:
+            continue
+        arr = calendar_busy.parse_in(seg.get("arrive", ""), seg.get("arrive_tz") or seg.get("depart_tz"))
+        segments.append({**seg, "_dep": dep, "_arr": arr if arr and arr > dep else dep + timedelta(hours=2)})
+    if not segments:
+        return []
+    conf = trip.get("confirmation") or ""
+    tasks.append(Task(action_id=action_id, kind="flights_calendar", status="proposed",
+                      title=f"Add {len(segments)} flight{'s' if len(segments) != 1 else ''} to your calendar",
+                      payload=json.dumps({"confirmation": conf, "hotel": trip.get("hotel", ""), "source": link,
+                                          "segments": [{**{k: v for k, v in s.items() if not k.startswith("_")},
+                                                        "start": s["_dep"].isoformat(), "end": s["_arr"].isoformat()}
+                                                       for s in segments]})))
+    utc_now = now
+    for s in segments:
+        name = f"{s.get('flight') or 'Flight'} {s['from']}→{s['to']}"
+        dep_utc = s["_dep"].astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        checkin = dep_utc - timedelta(hours=CHECK_IN_HOURS)
+        if checkin > utc_now:
+            tasks.append(Task(action_id=action_id, kind="reminder", status="scheduled", run_at=checkin,
+                              title=f"Check-in reminder: {name}",
+                              payload=json.dumps({"title": f"✈️ Check in now: {name}",
+                                                  "message": f"Departs {s['_dep']:%a %b %-d, %-I:%M %p} local."
+                                                             + (f" Confirmation {conf}." if conf else "")
+                                                             + (f" Terminal {s['terminal']}." if s.get("terminal") else "")})))
+        status_at = dep_utc - timedelta(hours=STATUS_HOURS)
+        if status_at > utc_now:
+            tasks.append(Task(action_id=action_id, kind="flight_status", status="scheduled", run_at=status_at,
+                              title=f"Status check: {name}",
+                              payload=json.dumps({"flight": s.get("flight", ""), "from": s["from"], "to": s["to"],
+                                                  "depart": s["_dep"].isoformat(), "name": name})))
+    return tasks
+
+
+def calendar_links(task: Task) -> list[tuple[str, str]]:
+    """(label, Google Calendar link) for each event a calendar step covers."""
+    from app import calendar_busy
+
+    p = json.loads(task.payload or "{}")
+    if task.kind == "calendar":
+        start, end = calendar_busy.parse_local(p["start"]), calendar_busy.parse_local(p["end"])
+        return [(task.title.split(" · ")[0], calendar_busy.google_url(p["summary"], start, end,
+                                                                        p.get("location", ""), p.get("details", "")))]
+    if task.kind == "flights_calendar":
+        out = []
+        for seg in p.get("segments") or []:
+            start, end = datetime.fromisoformat(seg["start"]), datetime.fromisoformat(seg["end"])
+            name = f"✈️ {seg.get('flight') or 'Flight'} {seg['from']}→{seg['to']}"
+            details = "\n".join(x for x in [f"Confirmation {p['confirmation']}" if p.get("confirmation") else "",
+                                            f"Terminal {seg['terminal']}" if seg.get("terminal") else "",
+                                            f"Seat {seg['seat']}" if seg.get("seat") else "",
+                                            f"From Sidequest: {p.get('source', '')}"] if x)
+            out.append((f"{name} · {start:%a %b %-d}", calendar_busy.google_url(name, start, end, seg["from"], details)))
+        return out
+    return []
+
+
+def calendar_ics(task: Task) -> bytes:
+    from app import calendar_busy
+
+    p = json.loads(task.payload or "{}")
+    if task.kind == "flights_calendar":
+        return calendar_busy.ics_many([
+            {"uid": f"task-{task.id}-{i}@sidequest", "summary": f"✈️ {seg.get('flight') or 'Flight'} {seg['from']}→{seg['to']}",
+             "start": datetime.fromisoformat(seg["start"]), "end": datetime.fromisoformat(seg["end"]),
+             "location": seg["from"], "details": f"Confirmation {p.get('confirmation', '')}".strip()}
+            for i, seg in enumerate(p.get("segments") or [])])
+    return calendar_busy.ics(p["summary"], calendar_busy.parse_local(p["start"]), calendar_busy.parse_local(p["end"]),
+                             p.get("location", ""), p.get("details", ""), uid=f"task-{task.id}@sidequest")
 
 
 def cancel_open(session: Session, action_id: int) -> int:
@@ -167,6 +263,13 @@ def approve(task_id: int, run_async: bool = True) -> tuple[str, str | None]:
                     session.add(other)
                 session.commit()
             return "Opening Google Calendar to add it.", url
+        if task.kind == "flights_calendar":
+            links = calendar_links(task)
+            if task.status == "proposed":
+                _set(task, "done", result={"events": [{"label": label, "google_url": url} for label, url in links]})
+                session.add(task)
+                session.commit()
+            return "Here are your flights: tap each to add it.", None
         if task.status not in ("proposed", "failed"):  # a failed issue can be approved again after a fix
             return f"Already {task.status}.", None
         _set(task, "running")
@@ -218,7 +321,8 @@ def _execute(task_id: int) -> None:
             if task is None or task.status != "running":
                 return
             kind = task.kind
-        {"github_issue": _open_issue, "follow_up": _follow_up}[kind](task_id)
+        {"github_issue": _open_issue, "follow_up": _follow_up, "reminder": _reminder,
+         "flight_status": _flight_status, "fare_watch": _fare_watch}[kind](task_id)
     except Exception as e:  # noqa: BLE001
         from app.netutil import user_message
 
@@ -234,7 +338,7 @@ def _fail_or_retry(task_id: int, error: str) -> None:
         if task is None:
             return
         task.attempts += 1
-        if task.kind == "follow_up" and task.attempts < MAX_ATTEMPTS:
+        if task.kind in ("follow_up", "fare_watch", "flight_status") and task.attempts < MAX_ATTEMPTS:
             task.status, task.run_at = "scheduled", datetime.utcnow() + timedelta(hours=task.attempts)
             task.error = error[:500]
         else:
@@ -292,7 +396,8 @@ def _follow_up(task_id: int, check=None) -> None:
         _finish(task_id, "failed", error="Follow-ups need a Gemini key (Settings).")
         return
     tier = "flex" if get_quest_settings()["flex_background"] else "standard"
-    with tracing.run("follow_up", action_id=action_id, provider="gemini"), gemini_client.tier(tier):
+    with (tracing.run("follow_up", action_id=action_id, provider="gemini"), gemini_client.tier(tier),
+          gemini_client.models(watch=gemini_client.LITE_MODEL)):
         out = (check or gemini_client.follow_up)(payload)
     _finish(task_id, "done", result=out)
     if out.get("changed"):
@@ -307,6 +412,120 @@ def _follow_up(task_id: int, check=None) -> None:
                              payload=json.dumps({**payload, "later": later[1:], "reported_on": f"{datetime.utcnow():%Y-%m-%d}",
                                                  "summary": out.get("summary") or payload.get("summary", "")})))
             session.commit()
+
+
+def _reminder(task_id: int) -> None:
+    """A scheduled heads-up (check in for a flight). Free: it only sends a message."""
+    from app.db import get_session
+
+    with get_session() as session:
+        p = json.loads(session.get(Task, task_id).payload)
+    _notify(p["title"], p.get("message", ""))
+    _finish(task_id, "done")
+
+
+def _over_cap() -> bool:
+    from app.config import get_agent_settings
+    from app.db import get_session
+
+    with get_session() as session:
+        return tracing.spend_today(session) >= get_agent_settings()["daily_cap_usd"]
+
+
+def _flight_status(task_id: int, check=None) -> None:
+    """Three hours before a flight: look up its status (delays, gate, cancellation) and send it."""
+    from app import gemini_client
+    from app.config import get_gemini_key, get_quest_settings
+    from app.db import get_session
+
+    with get_session() as session:
+        task = session.get(Task, task_id)
+        p, action_id = json.loads(task.payload), task.action_id
+    if _over_cap() or (check is None and not get_gemini_key()):
+        _finish(task_id, "failed", error="Skipped: the daily cap was used up or there's no Gemini key.")
+        return
+    query = {"headline": f"Flight {p['name']}", "reported_on": p["depart"][:10],
+             "summary": f"Scheduled to depart {p['from']} at {p['depart']} (local) for {p['to']}.",
+             "watch_for": f"today's status of flight {p.get('flight') or p['name']}: on time, delayed (by how long), "
+                          f"cancelled, departure gate and terminal"}
+    tier = "flex" if get_quest_settings()["flex_background"] else "standard"
+    with (tracing.run("follow_up", action_id=action_id, provider="gemini"), gemini_client.tier(tier),
+          gemini_client.models(watch=gemini_client.LITE_MODEL)):
+        out = (check or gemini_client.follow_up)(query)
+    _finish(task_id, "done", result=out)
+    _notify(f"✈️ {p['name']}: {out.get('headline') or 'status'}", out.get("summary", ""))
+
+
+def _fare_watch(task_id: int, search=None) -> None:
+    """Every few days until shortly before the trip: has the fare dropped below the target?
+    Uses live fares when a fare source is set up (one lookup), otherwise a web search."""
+    from app import flights, gemini_client
+    from app.config import get_gemini_key, get_quest_settings
+    from app.db import get_session
+
+    with get_session() as session:
+        task = session.get(Task, task_id)
+        p, action_id = json.loads(task.payload), task.action_id
+    target, route = float(p["watch_below"]), f"{p['origin']}→{p['destination']}"
+    if _over_cap():
+        with get_session() as session:
+            t = session.get(Task, task_id)
+            t.status, t.run_at = "scheduled", _tomorrow_morning()
+            session.add(t)
+            session.commit()
+        return
+    lowest = None
+    if search or flights.enabled():
+        found = (search or flights.search)(p["origin"], p["destination"], p["outbound_date"], p.get("return_date") or None)
+        lowest = found.get("lowest") if isinstance(found, dict) else None
+    elif get_gemini_key():
+        tier = "flex" if get_quest_settings()["flex_background"] else "standard"
+        with (tracing.run("follow_up", action_id=action_id, provider="gemini"), gemini_client.tier(tier),
+              gemini_client.models(watch=gemini_client.LITE_MODEL)):
+            out = gemini_client.follow_up({"headline": f"Fare watch {route}", "reported_on": f"{datetime.utcnow():%Y-%m-%d}",
+                                           "summary": p.get("verdict", ""),
+                                           "watch_for": f"a fare under ${target:.0f} for {route} on {p['outbound_date']}"
+                                                        + (f" returning {p['return_date']}" if p.get("return_date") else "")})
+        lowest = target if out.get("changed") else None
+    history = (p.get("history") or [])[-20:] + [{"date": f"{datetime.utcnow():%Y-%m-%d}", "lowest": lowest}]
+    if lowest is not None and lowest <= target:
+        _finish(task_id, "done", result={"hit": True, "lowest": lowest, "history": history})
+        _notify(f"💸 Fare drop: {route} now ${lowest:.0f}", f"Under your ${target:.0f} target for {p['outbound_date']}. "
+                "Fares move fast: book soon if you're going.")
+        return
+    try:
+        depart = datetime.fromisoformat(p["outbound_date"])
+    except ValueError:
+        depart = datetime.utcnow()
+    next_run = datetime.utcnow() + timedelta(days=FARE_WATCH_EVERY_DAYS)
+    with get_session() as session:
+        t = session.get(Task, task_id)
+        t.payload = json.dumps({**p, "history": history})
+        if next_run > depart - timedelta(days=7):   # too close to the trip to keep waiting
+            _set(t, "done", result={"hit": False, "lowest": lowest, "history": history})
+        else:
+            t.status, t.run_at, t.attempts = "scheduled", next_run, 0
+            t.updated_at = datetime.utcnow()
+        session.add(t)
+        session.commit()
+
+
+def saved_places_in(session: Session, city: str, exclude_action_id: int | None = None) -> list[dict]:
+    """Place reports you've saved in a city (for a trip there)."""
+    from app.agent import load_report
+    from app.models import Action, ActionType
+
+    city = (city or "").strip().lower()
+    if len(city) < 3:
+        return []
+    out = []
+    for a in session.exec(select(Action).where(Action.action_type == ActionType.PLACE)
+                          .where(Action.result.is_not(None))).all():
+        r = load_report(a.result) or {}
+        place = r.get("place") or {}
+        if a.id != exclude_action_id and city in f"{place.get('city', '')} {place.get('address', '')}".lower():
+            out.append({"action_id": a.id, "name": place.get("name") or r.get("headline", "")})
+    return out[:8]
 
 
 def _finish(task_id: int, status: str, result: dict | None = None, error: str | None = None) -> None:
@@ -383,7 +602,7 @@ def recover() -> int:
     with get_session() as session:
         rows = session.exec(select(Task).where(Task.status == "running")).all()
         for t in rows:
-            if t.kind == "follow_up":
+            if t.kind in SCHEDULED_KINDS:
                 t.status, t.run_at = "scheduled", datetime.utcnow()
             else:
                 t.status, t.error = "proposed", "Interrupted by a restart. Approve it again."

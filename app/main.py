@@ -296,10 +296,10 @@ def health():
 
 
 # ---------------- Sidequests (things you sent) ----------------
-AGENT_TYPES = ["repo", "research", "place", "project", "skill", "job", "other"]
+AGENT_TYPES = ["repo", "research", "place", "travel", "project", "skill", "job", "other"]
 
 
-TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "project": "Project",
+TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "travel": "Travel", "project": "Project",
                "skill": "Skill", "job": "Job", "other": "Other"}
 QUEST_TABS = [("todo", "To do"), ("fyi", "Nothing to do"), ("done", "Done"), ("skipped", "Not for me")]
 
@@ -369,6 +369,9 @@ def quests_page(request: Request, session: Session, tab: str, group: str):
         "tasks": quests.for_actions(session, [i["action"].id for i in reports]),
         "activity": tracing.activity(session, [i["action"].id for i in reports]),
         "needs_you": _needs_you(session, items),
+        "saved_nearby": {i["action"].id: quests.saved_places_in(session, (i["report"].get("trip") or {})
+                                                                 .get("destination_city", ""), i["action"].id)
+                         for i in reports if i["report"].get("trip")},
         "coming_up": quests.upcoming(session, 5),
     })
 
@@ -390,8 +393,9 @@ def _needs_you(session: Session, items: list[dict]) -> list[dict]:
             continue  # several slots for one place are one thing to do
         seen.add(key)
         headline = (item["report"] or {}).get("headline") or item["video"].summary or ""
+        label = {"calendar": "Pick a time", "flights_calendar": "Add your flights"}.get(t.kind, "Approve an issue")
         out.append({"action_id": t.action_id, "kind": t.kind, "failed": t.status == "failed",
-                    "label": "Pick a time" if t.kind == "calendar" else "Approve an issue", "headline": headline})
+                    "label": label, "headline": headline})
     return out[:6]
 
 
@@ -553,28 +557,27 @@ def task_cancel(task_id: int, next: str = Form("/")):
 
 @app.get("/tasks/{task_id}/event.ics")
 def task_ics(task_id: int, session: Session = Depends(get_db)):
-    """The calendar slot as an .ics file, for Apple Calendar."""
+    """A calendar step as an .ics file (one slot, or every flight on a trip), for Apple Calendar."""
     from fastapi.responses import Response
 
     from app.models import Task
 
     task = session.get(Task, task_id)
-    if task is None or task.kind != "calendar":
+    if task is None or task.kind not in ("calendar", "flights_calendar"):
         raise HTTPException(status_code=404)
-    p = json.loads(task.payload)
-    data = calendar_busy.ics(p["summary"], calendar_busy.parse_local(p["start"]), calendar_busy.parse_local(p["end"]),
-                             p.get("location", ""), p.get("details", ""), uid=f"task-{task.id}@sidequest")
-    return Response(data, media_type="text/calendar",
+    return Response(quests.calendar_ics(task), media_type="text/calendar",
                     headers={"Content-Disposition": f'attachment; filename="sidequest-{task.id}.ics"'})
 
 
 @app.post("/settings/quests")
 def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str | None = Form(None),
+                    serpapi_key: str | None = Form(None), home_airport: str | None = Form(None),
                     follow_ups: bool = Form(False), flex_background: bool = Form(False),
-                    flex_shares: bool = Form(False)):
+                    flex_shares: bool = Form(False), economy: bool = Form(False)):
     """Blank secret fields keep what's saved (they're never shown back); Remove clears them."""
     status = "quests_saved"
-    updates = {"follow_ups": follow_ups, "flex_background": flex_background, "flex_shares": flex_shares}
+    updates = {"follow_ups": follow_ups, "flex_background": flex_background, "flex_shares": flex_shares,
+               "economy": economy}
     url = (calendar_ics_url or "").strip()
     if url:
         try:
@@ -584,13 +587,17 @@ def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str
             status = "calendar_bad"
     if (github_token or "").strip():
         updates["github_token"] = github_token.strip()
+    if (serpapi_key or "").strip():
+        updates["serpapi_key"] = serpapi_key.strip()
+    if home_airport is not None:
+        updates["home_airport"] = re.sub(r"[^A-Za-z]", "", home_airport)[:3].upper()
     save_quest_settings(**updates)
     return RedirectResponse(f"/settings?key={status}#follow", status_code=303)
 
 
 @app.post("/settings/quests/clear")
 def settings_quests_clear(what: str = Form("")):
-    if what in ("calendar_ics_url", "github_token"):
+    if what in ("calendar_ics_url", "github_token", "serpapi_key"):
         save_quest_settings(**{what: ""})
     return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
 

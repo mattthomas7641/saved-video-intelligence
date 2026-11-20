@@ -24,6 +24,11 @@ links and screenshots cost less.
   calendar. A tool that fits a project comes with the GitHub issue to open there,
   opened only when you approve it. A story that's still developing gets checked
   again in a week or a month, and you hear about it only if something changed.
+- **Trips and flight deals.** Send a booking confirmation and each flight gets a
+  one-tap calendar event, a check-in reminder 24 hours before and a status check
+  on the day, alongside the places you've saved in that city. Send a "cheap
+  flights to Tokyo" post and it's checked against live fares; if it isn't a buy
+  yet, it watches the price and tells you when it drops.
 - **A to-do list that makes you follow through.** Each result arrives as a phone
   notification and stays on the To do list with its next step (try, build, buy,
   go or skip) until you mark it done or "not for me".
@@ -80,6 +85,20 @@ Share → Telegram bot (optional)           ─┴─> intake ─> research lane
 
 Grok and Claude can be switched in for research in Settings; they work from a
 Whisper transcript and OCR instead of watching the video.
+
+### Measured: model comparison
+
+The same 12 real cases from the eval set, run on two setups (`python -m app.evals table`).
+Expected answers are the agent's earlier reports, so the scores measure agreement
+with those, not ground truth; at 12 cases one case is about 8 points.
+
+| Setup | Type | Verdict | Verdict ±1 | Ignores CTAs | Projects found | $/case | Median time |
+|---|---|---|---|---|---|---|---|
+| Gemini 3.8 Flash, standard | 75% | 58% | 92% | 92% | 58% | $0.041 | 80 s |
+| Gemini 3.5 Flash-Lite, Flex | 67% | 50% | 83% | 100% | 58% | $0.004 | 46 s |
+
+Flash-Lite on Flex costs a tenth as much for roughly one case in twelve worse, so
+background checks use it by default and Settings offers it for new shares.
 
 ### Traces, memory, evals and MCP
 
@@ -139,8 +158,9 @@ Open `http://127.0.0.1:8787/settings`, then:
    elsewhere need their targets mounted too: list them in a git-ignored
    `docker-compose.override.yml`.
 4. **Follow-through** (optional): your calendar's secret iCal address, so
-   suggested times avoid busy ones, and a fine-grained GitHub token with
-   Issues read/write on your own repos, used only when you approve an issue.
+   suggested times avoid busy ones; a fine-grained GitHub token with Issues
+   read/write on your own repos, used only when you approve an issue; your home
+   airport and a free SerpApi key for live flight fares.
 
 If something else already uses port 8787, start it with `SIDEQUEST_PORT=8790 docker compose up -d`.
 
@@ -186,7 +206,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (329), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (339), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout
@@ -211,6 +231,7 @@ app/
   evals.py           Eval cases, scoring and runs (`python -m app.evals`)
   quests.py          Follow-through: durable tasks, approvals, the scheduler
   calendar_busy.py   Busy times from your calendar's iCal feed; calendar links and .ics
+  flights.py         Live Google Flights fares (via SerpApi) for deals and price watches
   mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
   otel.py            Optional OpenTelemetry export of run traces
   download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)

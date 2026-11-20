@@ -123,13 +123,23 @@
         <p class="hint" style="margin-top:4px">A <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> limited to your own repos, with <strong>Issues: read and write</strong> only. Used only when you approve an issue.</p></div>
       <input class="field" type="password" name="github_token" autocomplete="off" aria-label="GitHub token" placeholder="{{ 'Paste a new token to replace it' if quest_settings.github_token else 'github_pat_…' }}">
     </div>
+    <div class="key-row">
+      <div><strong>Flights</strong> {% if quest_settings.serpapi_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Live fares on</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
+        <p class="hint" style="margin-top:4px">Your home airport, so deals and fare checks start from you. For live Google Flights prices, add a free <a href="https://serpapi.com/users/sign_up" target="_blank" rel="noopener">SerpApi</a> key (250 lookups a month); without one the agent uses Google Search.</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="field" name="home_airport" maxlength="3" style="width:90px;text-transform:uppercase" aria-label="Home airport" placeholder="PHL" value="{{ quest_settings.home_airport }}">
+        <input class="field" type="password" name="serpapi_key" autocomplete="off" aria-label="SerpApi key" style="flex:1;min-width:200px" placeholder="{{ 'Paste a new key to replace it' if quest_settings.serpapi_key else 'SerpApi key (optional)' }}">
+      </div>
+    </div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="follow_ups" value="true" {{ "checked" if quest_settings.follow_ups }}> Check back on developing stories, launches and price drops (about $0.01 a check; you're told only when something changed)</label>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_background" value="true" {{ "checked" if quest_settings.flex_background }}> Half price for background work (follow-ups, evals): Gemini Flex, slower but nobody's waiting</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="economy" value="true" {{ "checked" if quest_settings.economy }}> Cheaper model for new shares (Gemini Flash-Lite: about $0.004 instead of $0.04 an item; measured a little less accurate)</label>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_shares" value="true" {{ "checked" if quest_settings.flex_shares }}> Half price for new shares too (results take up to 15 minutes instead of 1–2)</label>
     <button class="btn btn-primary" type="submit" style="width:fit-content">Save</button>
   </form>
   <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
     {% if quest_settings.calendar_ics_url %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="calendar_ics_url"><button class="btn btn-quiet" type="submit">Disconnect calendar</button></form>{% endif %}
+    {% if quest_settings.serpapi_key %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="serpapi_key"><button class="btn btn-quiet" type="submit">Remove SerpApi key</button></form>{% endif %}
     {% if quest_settings.github_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="github_token"><button class="btn btn-quiet" type="submit">Remove GitHub token</button></form>{% endif %}
   </div>
   {% if key_status == "quests_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
