@@ -28,7 +28,7 @@ class RoleGenAI:
         with self.lock:
             self.requests.append(params)
         system = params.get("system_instruction", "")
-        if "Cover all of these yourself" in system:
+        if "Do the whole job yourself" in system:
             return _ix("Single agent plan: $109 flight https://kiwi.com/x, hotel in Wynwood, visit Little Havana.")
         if "Briefs:" in str(params.get("input", "")):
             return _ix("**Plan**: fly Frontier $109 https://kiwi.com/x, stay in Wynwood hotel $180/night, eat at Versailles.")
@@ -72,13 +72,14 @@ def test_single_mode_is_one_agent_with_every_tool(session):
 
 
 def test_a_failing_specialist_leaves_a_gap_not_a_crash(session, monkeypatch):
-    real = trip_planner._run_agent
+    from app import team
+    real = team.run_agent
 
-    def flaky(client, system, text, tools, run_tool, label):
+    def flaky(client, system, text, tools, run_tool, label, steps=6):
         if label == "stay":
             raise RuntimeError("boom")
-        return real(client, system, text, tools, run_tool, label)
-    monkeypatch.setattr(trip_planner, "_run_agent", flaky)
+        return real(client, system, text, tools, run_tool, label, steps)
+    monkeypatch.setattr(team, "run_agent", flaky)
     p = trip_planner.plan("Miami", client=RoleGenAI())
     assert p.briefs["stay"] == "(this specialist couldn't finish)" and p.text
 
@@ -176,3 +177,71 @@ def test_notion_save_and_search():
     assert notion.search_notes("packing", http=http)["pages"][0]["title"] == "Packing list"
     missing = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
     assert "share it" in notion.save_note("x", "y", http=missing)["error"]
+
+
+# ---------------- the general team (app/team.py) ----------------
+
+class PlannerGenAI(RoleGenAI):
+    def __init__(self, plan_json):
+        super().__init__()
+        self.plan_json = plan_json
+
+    def _create(self, **params):
+        if "Split the request" in params.get("system_instruction", ""):
+            with self.lock:
+                self.requests.append(params)
+            return _ix(self.plan_json)
+        if "Your part:" in params.get("system_instruction", ""):
+            with self.lock:
+                self.requests.append(params)
+            job = params["system_instruction"].split("Your part: ")[1].split("\n")[0]
+            return _ix(f"brief: {job}")
+        if "Briefs:" in str(params.get("input", "")):
+            with self.lock:
+                self.requests.append(params)
+            return _ix("Merged: get the **ThinkPad** https://x.test")
+        return super()._create(**params)
+
+
+def test_team_plans_runs_in_parallel_and_merges(session):
+    from app import team
+    plan = json.dumps({"team": True, "subtasks": [
+        {"role": "laptops", "job": "Compare 3 coding laptops under $1,200", "tools": ["web"]},
+        {"role": "reviews", "job": "Find reliability reviews", "tools": ["web", "bogus"]},
+        {"role": "reviews", "job": "Check what I saved about laptops", "tools": ["my_stuff"]}]})
+    client = PlannerGenAI(plan)
+    r = team.run_team("best laptop for coding under 1200?", client=client)
+    assert r.mode == "team" and list(r.briefs) == ["laptops", "reviews", "reviews 2"]
+    assert r.subtasks[1]["tools"] == ["web"]                      # unknown groups dropped
+    assert "ThinkPad" in r.text
+    specialist = [q for q in client.requests if "Check what I saved" in q.get("system_instruction", "")][0]
+    names = {t.get("name") or t.get("type") for t in specialist["tools"]}
+    assert names == {"search_my_stuff", "list_todo"}              # only its group's tools, no web
+
+
+def test_planner_says_no_team_runs_one_agent(session):
+    from app import team
+    client = PlannerGenAI(json.dumps({"team": False}))
+    r = team.run_team("what time is it in Tokyo?", client=client)
+    assert r.mode == "single" and r.subtasks == []
+    assert team.plan_subtasks(PlannerGenAI("not json"), "x", "")[0] == []
+    one = json.dumps({"team": True, "subtasks": [{"role": "a", "job": "j", "tools": ["web"]}]})
+    assert team.plan_subtasks(PlannerGenAI(one), "x", "")[0] == []   # a team of one isn't a team
+
+
+def test_specialists_can_only_read():
+    from app import team
+    ran = []
+    guarded = team.read_only(lambda name, args: ran.append(name) or {"ok": True})
+    assert "error" in guarded("remind_me", {"when": "x", "text": "y"})
+    assert "error" in guarded("todoist_add_task", {"content": "x"})
+    assert "error" in guarded("propose_calendar_event", {})
+    assert guarded("search_my_stuff", {"query": "x"}) == {"ok": True} and ran == ["search_my_stuff"]
+
+
+def test_team_up_tool_from_the_assistant(monkeypatch):
+    from app import team
+    monkeypatch.setattr(team, "run_team", lambda request: team.Result(f"answer for {request}", "team",
+                                                                       subtasks=[{"role": "a"}, {"role": "b"}]))
+    out = assistant._run_tool("team_up", {"request": "compare gyms"}, [])
+    assert out["answer"] == "answer for compare gyms" and out["team"] == ["a", "b"]

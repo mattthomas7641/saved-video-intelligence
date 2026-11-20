@@ -202,6 +202,18 @@ standard tier when Google sheds the request; new shares use it only if you opt
 in. Per-step model overrides let the eval set measure a cheaper model before
 it's switched on.
 
+#### One assistant, and teams only when the work splits
+Messages go to one general agent with many tools, the same shape as the large
+open-source assistants, rather than a tree of intent-specific bots. For a
+request with independent parts it can call `team_up`: a cheap planner model
+splits the work into 2-5 subtasks with tool groups, the specialists run in
+parallel threads (recording into one trace), and a coordinator merges their
+briefs. The planner can answer "no team", so simple requests never pay for
+one. Specialists get read-only tools, and that allowlist is enforced where
+tools execute, not in the prompt, so text from a web page can't make one act.
+Whether the team is worth it is measured, not assumed: the trip preset runs
+against a single agent with every tool on the same requests (`app/trip_eval.py`).
+
 #### Separate `Action` table, not columns on `Video`
 `Video` is the stable library table; the research workflow changes shape often.
 Keeping it separate means that churn never touches the library's history.

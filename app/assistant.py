@@ -73,6 +73,11 @@ _TOOLS = [
         "where to stay, what to do), merged into one plan with links and a total. Use for 'plan a trip / weekend "
         "/ vacation' requests; pass everything known (where, when, budget, who, flexibility). About 3-6 cents.",
         {"request": {"type": "string"}}, ["request"]),
+    _fn("team_up", "Put a team of specialist agents on a request with several independent parts, working in "
+        "parallel, then merge their findings: comparing products or options, planning an event or a week, "
+        "researching a decision from several angles. Pass the whole request with everything known. Don't use it "
+        "for simple questions or single lookups. About 2-6 cents.",
+        {"request": {"type": "string"}}, ["request"]),
     _fn("research_in_depth", "Hand something to the full research pipeline (a link, a product, a place, a repo): "
         "it gets a complete report on the home page and in Telegram in a few minutes. Costs a few cents.",
         {"link_or_text": _S, "note": _S}, ["link_or_text"]),
@@ -299,6 +304,11 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
         if name == "notion_search_notes":
             from app import notion
             return notion.search_notes(str(args.get("query", "")))
+        if name == "team_up":
+            from app import team
+            result = team.run_team(str(args.get("request", "")))
+            return {"answer": result.text, "team": [s["role"] for s in result.subtasks] or ["single agent"],
+                    "note": "Send this answer to the user as it is (light edits only)."}
         if name == "plan_trip":
             from app import trip_planner
             result = trip_planner.plan(str(args.get("request", "")))

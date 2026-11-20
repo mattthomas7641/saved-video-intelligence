@@ -31,6 +31,14 @@ links and screenshots cost less.
   watches. "Cheapest flight to Miami on the 20th, and what can I do with 142k
   Chase points?" costs about a cent. It never books, buys or sends on its own:
   you get the link or an approve button.
+- **Teams of agents when a request splits.** "Compare three laptops for coding
+  under $1,200", "plan a birthday dinner for six next Saturday", "plan a
+  weekend in Montreal, I have Chase points": a planner splits the request into
+  2–5 independent parts, a specialist agent takes each one with only the
+  read-only tools it needs, they run in parallel, and a coordinator merges the
+  results. Simple questions stay with one agent. Trips are a fixed team
+  (flights, points, stay, things to do), measured against a single agent with
+  `python -m app.trip_eval`.
 - **Trips and flight deals.** Send a booking confirmation and each flight gets a
   one-tap calendar event, a check-in reminder 24 hours before and a status check
   on the day, alongside the places you've saved in that city. Send a "cheap
@@ -213,7 +221,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (351), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (366), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout
@@ -240,6 +248,9 @@ app/
   calendar_busy.py   Busy times from your calendar's iCal feed; calendar links and .ics
   flights.py         Live Google Flights fares (via SerpApi) for deals and price watches
   assistant.py       The "ask anything" chat agent (Telegram), its tools and profile
+  team.py            Multi-agent: planner -> parallel read-only specialists -> coordinator
+  trip_planner.py    The trip team preset;  trip_eval.py: team vs single agent, measured
+  todoist.py, notion.py   Your tasks and notes, as assistant tools
   mcp_client.py      Allowlisted outside MCP servers (Kiwi.com flights, seats.aero awards)
   mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
   otel.py            Optional OpenTelemetry export of run traces
