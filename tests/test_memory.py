@@ -143,7 +143,8 @@ def test_related_survives_report_normalising_and_renders(session):
     a.result = json.dumps({**raw, "headline": "New thing"})
     session.add(a)
     session.commit()
-    assert "Related things you sent" in TestClient(app).get("/").text
+    page = TestClient(app).get(f"/q/{a.id}").text
+    assert "Sent before" in page and 'href="/q/7"' in page
 
 
 

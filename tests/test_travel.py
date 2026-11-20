@@ -153,6 +153,8 @@ def test_trip_report_page_and_saved_places(session):
     session.commit()
     a = _travel(session, {"trip": TRIP})
     quests.plan(session, a, json.loads(a.result))
-    page = TestClient(app).get("/").text
+    client = TestClient(app)
+    assert "Add your flights to the calendar" in client.get("/").text
+    page = client.get(f"/q/{a.id}").text
     assert "Your trip to Austin" in page and "QX7Z2P" in page and "Veracruz" in page
-    assert "Add your flights" in page and "PHL → AUS" in page
+    assert "PHL → AUS" in page and "Add 2 flights" in page

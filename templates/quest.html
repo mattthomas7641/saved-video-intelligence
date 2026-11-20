@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_quest.html" import qnum, marker, verdict, value_tag, activity_line, next_steps %}
+{% set a = i.action %}{% set v = i.video %}
+{% set back = "/q/" ~ a.id %}
+{% block title %}Q-{{ "%03d"|format(a.id) }} · {{ i.title|truncate(60) }}{% endblock %}
+{% block content %}
+<article class="qpage">
+  <header class="qhead">
+    <p class="crumbs"><a href="/log">{{ icon("back") }}Log</a><span class="sep" aria-hidden="true">·</span>{{ marker(i.state) }}{{ qnum(a) }}</p>
+    <h1 style="view-transition-name: q{{ a.id }}">{{ i.title|nocite }}</h1>
+    <p class="did-line">{{ type_labels.get(i.type, "Other") }}{% if i.report %}<span class="sep" aria-hidden="true">·</span>{{ verdict(a.verdict) }}{% endif %}<span class="sep" aria-hidden="true">·</span>sent {{ a.created_at|short_date }}{% if i.state == "done" %}<span class="sep" aria-hidden="true">·</span><span class="tag">Done</span>{% elif i.state == "skipped" %}<span class="sep" aria-hidden="true">·</span><span class="tag">Not for me</span>{% endif %}</p>
+    {% if r.telegram_text %}<div class="lede prose">{{ r.telegram_text|markdown }}</div>{% endif %}
+    {% if i.state == "stuck" %}<p class="note is-bad">{{ icon("alert") }}{{ i.why|plain_error }}</p>{% endif %}
+    {% if activity %}<p class="did-line">{{ icon("sparkles") }}{{ activity_line(activity, v.tiktok_url.startswith("http")) }}<span class="sep" aria-hidden="true">·</span><a href="/runs/{{ a.id }}">trace</a></p>{% endif %}
+    <div class="acts">
+      {% if i.state in ("open", "nothing") %}
+      <form action="/agent/{{ a.id }}/done" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("check") }}Done</button></form>
+      <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain" type="submit">Not for me</button></form>
+      {% elif i.state in ("done", "skipped") %}
+      <form action="/agent/{{ a.id }}/reopen" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain" type="submit">{{ icon("back") }}Back to open</button></form>
+      {% endif %}
+      <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain" type="submit">{{ icon("refresh") }}{{ "Retry" if i.state == "stuck" else "Re-run" }}</button></form>
+      {% if i.report %}<form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="deep" value="true"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain" type="submit" onclick="return confirm('Research this again with a fuller web search? About 3–6¢.')">{{ icon("search") }}Research deeper</button></form>{% endif %}
+      {% if v.tiktok_url.startswith("http") %}<a class="btn btn-plain" href="{{ v.tiktok_url }}" target="_blank" rel="noopener">{{ icon("external") }}Original</a>
+      {% elif v.tiktok_url.startswith("image:") %}<a class="btn btn-plain" href="/media/thumb/{{ v.id }}" target="_blank" rel="noopener">{{ icon("external") }}Your screenshot</a>{% endif %}
+    </div>
+  </header>
+
+  <div class="qbody">
+    <div class="qmain">
+      {{ next_steps(a, tasks, back) }}
+
+      {% if r.trip %}
+      <section><h2>Your trip{% if r.trip.destination_city %} to {{ r.trip.destination_city }}{% endif %}</h2>
+        <ol class="flights">{% for seg in r.trip.segments %}
+          <li><b>{{ seg.from }} → {{ seg.to }}</b><span>{{ seg.flight or "" }}</span><span class="num">{{ seg.depart|replace("T", " ") }}{% if seg.arrive %} → {{ seg.arrive.split("T")[-1] }}{% endif %}</span><span class="dim">{% if seg.terminal %}Terminal {{ seg.terminal }}{% endif %}{% if seg.seat %} · Seat {{ seg.seat }}{% endif %}</span></li>
+        {% endfor %}</ol>
+        <p class="fine">{% if r.trip.confirmation %}Confirmation <b>{{ r.trip.confirmation }}</b>{% endif %}{% if r.trip.hotel %} · {{ r.trip.hotel }}{% endif %}</p>
+        {% if saved_nearby %}<p>You saved {{ saved_nearby|length }} place{{ "s" if saved_nearby|length != 1 }} there: {% for pl in saved_nearby %}<a href="/q/{{ pl.action_id }}">{{ pl.name }}</a>{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
+      </section>
+      {% endif %}
+
+      {% if r.fare_check %}{% set f = r.fare_check %}
+      <section><h2>Fare check: {{ f.origin }} → {{ f.destination }}</h2>
+        <dl class="facts">
+          {% if f.claimed_price %}<div><dt>Post said</dt><dd>${{ "%.0f"|format(f.claimed_price) }}</dd></div>{% endif %}
+          {% if f.current_lowest %}<div><dt>Lowest now</dt><dd>${{ "%.0f"|format(f.current_lowest) }}</dd></div>{% endif %}
+          {% if f.typical_range %}<div><dt>Typical</dt><dd>{{ f.typical_range }}</dd></div>{% endif %}
+          {% if f.outbound_date %}<div><dt>Dates</dt><dd>{{ f.outbound_date }}{% if f.return_date %} – {{ f.return_date }}{% endif %}</dd></div>{% endif %}
+        </dl>
+        <p>{{ f.verdict }}</p>
+      </section>
+      {% endif %}
+
+      {% if r.project_fit or r.new_project or r.new_project_idea %}
+      <section><h2>Fits your projects</h2>
+        <ul class="fits">
+          {% for f in r.project_fit %}
+          <li><div class="fit-head"><b>{{ f.project }}</b>{% if project_status.get(f.project) %}<span class="tag">{{ project_status[f.project] }}</span>{% endif %}{{ verdict(f.fit) }}{% if f.effort %}<span class="dim" title="S an afternoon, M a few days, L a week or more">Effort {{ f.effort }}</span>{% endif %}{{ value_tag(f.value) }}</div>
+            {% if f.where %}<p><span class="dim">Where</span> {{ f.where }}</p>{% endif %}
+            {% if f.architecture_impact %}<p><span class="dim">Changes</span> {{ f.architecture_impact }}</p>{% endif %}
+            {% if f.value_reason %}<p><span class="dim">Worth</span> {{ f.value_reason }}</p>{% endif %}</li>
+          {% endfor %}
+          {% if r.new_project %}<li><div class="fit-head"><b>New project to test it</b>{% if r.new_project.effort %}<span class="dim">Effort {{ r.new_project.effort }}</span>{% endif %}{{ value_tag(r.new_project.value) }}</div><p>{{ r.new_project.idea }}</p></li>
+          {% elif r.new_project_idea %}<li><div class="fit-head"><b>New project idea</b></div><p>{{ r.new_project_idea }}</p></li>{% endif %}
+        </ul>
+      </section>
+      {% endif %}
+
+      {% if r.repos %}
+      <section><h2>Repos checked</h2>
+        <table class="table"><thead><tr><th>Repo</th><th>Fit</th><th class="num">Stars</th><th>Last push</th></tr></thead><tbody>
+        {% for repo in r.repos %}<tr><td>{% if repo.url and repo.url.startswith("http") %}<a href="{{ repo.url }}" target="_blank" rel="noopener">{{ repo.name }}</a>{% else %}{{ repo.name }}{% endif %}{% if repo.what_it_does %}<span class="dim block">{{ repo.what_it_does }}</span>{% endif %}</td><td>{{ verdict(repo.fit) }}</td><td class="num">{{ "{:,}".format(repo.stars) if repo.stars is number else "—" }}</td><td class="num">{{ repo.last_push or "—" }}</td></tr>{% endfor %}
+        </tbody></table>
+      </section>
+      {% endif %}
+
+      {% if r.report_markdown %}<section class="prose">{{ r.report_markdown|markdown }}</section>{% endif %}
+
+      {% if r.ideas %}<section><h2>Ideas for you</h2><ul class="bullets">{% for idea in r.ideas %}<li>{{ idea }}</li>{% endfor %}</ul></section>{% endif %}
+    </div>
+
+    <aside class="qside">
+      {% if r.place %}
+      <section class="facts-box"><h2>{{ r.place.name or "The place" }}</h2>
+        <dl class="facts">
+          {% for k, label in [("address", "Address"), ("hours", "Hours"), ("best_times", "Best time"), ("price_range", "Price range"), ("price", "Price"), ("reservations", "Reservations"), ("availability", "Getting in"), ("status", "Status")] if r.place[k] %}
+          <div><dt>{{ label }}</dt><dd>{{ r.place[k] }}</dd></div>
+          {% endfor %}
+          {% if r.place.reservation_url and r.place.reservation_url.startswith("http") %}<div><dt>Book</dt><dd><a href="{{ r.place.reservation_url }}" target="_blank" rel="noopener">Booking page</a></dd></div>{% endif %}
+        </dl>
+        {% if r.place.menu %}<h3>On the menu</h3><ul class="menu">{% for m in r.place.menu if m.item %}<li><span>{{ m.item }}</span><span class="num">{{ m.price or "" }}</span></li>{% endfor %}</ul>{% endif %}
+      </section>
+      {% endif %}
+      {% if r.related %}<section><h2>Sent before</h2><ul class="links">{% for rel in r.related %}<li><a href="/q/{{ rel.action_id }}">{{ rel.headline|nocite }}</a> <span class="dim">{{ rel.date }}</span></li>{% endfor %}</ul></section>{% endif %}
+      {% if r.links %}<section><h2>Sources</h2><ul class="links">{% for l in r.links %}<li><a href="{{ l.url if l.url.startswith('http') else '#' }}" target="_blank" rel="noopener">{{ l.title }}</a></li>{% endfor %}</ul></section>{% endif %}
+      {% if v.user_note %}<section><h2>Your note</h2><p>“{{ v.user_note }}”</p></section>{% endif %}
+    </aside>
+  </div>
+</article>
+{% endblock %}

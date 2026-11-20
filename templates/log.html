@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_quest.html" import row %}
+{% block title %}Log · Sidequest{% endblock %}
+{% block content %}
+<header class="sec-head">
+  <h1>Log</h1>
+  <form class="search" action="/log" method="get" role="search">
+    <input type="hidden" name="view" value="{{ view }}">
+    {% if type %}<input type="hidden" name="type" value="{{ type }}">{% endif %}
+    <label class="sr" for="q">Search everything you sent</label>
+    <span class="search-box">{{ icon("search") }}<input id="q" class="field" type="search" name="q" value="{{ q }}" placeholder="Search everything you sent" autocomplete="off"></span>
+  </form>
+</header>
+
+<nav class="views" aria-label="Status">
+  {% for key, label in views %}
+  <a href="/log?view={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}" {% if view == key %}aria-current="page"{% endif %}>{{ label }} <b>{{ view_counts[key] }}</b></a>
+  {% endfor %}
+</nav>
+{% if types|length > 1 or type %}
+<nav class="types" aria-label="Type">
+  <a href="/log?view={{ view }}{% if q %}&q={{ q|urlencode }}{% endif %}" {% if not type %}aria-current="true"{% endif %}>All types</a>
+  {% for t in types %}<a href="/log?view={{ view }}&type={{ t }}{% if q %}&q={{ q|urlencode }}{% endif %}" {% if type == t %}aria-current="true"{% endif %}>{{ type_labels.get(t, t) }}</a>{% endfor %}
+</nav>
+{% endif %}
+
+{% if items %}
+<ol class="rows rows-full">{% for i in items %}{{ row(i, activity.get(i.action.id), type_labels) }}{% endfor %}</ol>
+{% elif q %}
+<p class="empty">Nothing {{ "here" if view != "all" else "" }} mentions “{{ q }}”. {% if view != "all" %}<a href="/log?view=all&q={{ q|urlencode }}">Search all of it</a>.{% endif %}</p>
+{% else %}
+<p class="empty">{% if view == "open" %}No open quests. Everything you've sent is done, set aside, or had nothing to act on.{% elif view == "nothing" %}Things the agent looked into and found nothing to act on land here.{% elif view == "done" %}Mark a quest Done when you've acted on it.{% elif view == "skipped" %}“Not for me” items land here.{% else %}Nothing sent yet. Share anything to the Telegram bot.{% endif %}</p>
+{% endif %}
+{% endblock %}

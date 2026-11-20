@@ -206,8 +206,8 @@ smoke test on every push and pull request.
 
 ```
 app/
-  main.py            FastAPI routes: home (sidequests), archive, video page, settings,
-                     run traces, evals, health
+  main.py            Actions (approve, done, re-run), settings, traces, evals, health
+  web.py             The pages: Tracked (home), Log (search), a page per quest, Ledger
   config.py, db.py, models.py, schemas.py   Settings, database session, tables, schemas
   security.py        Host/cross-site guard and security headers
   intake.py          Shared intake + research lane (both doorways)
@@ -233,7 +233,6 @@ app/
   mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
   otel.py            Optional OpenTelemetry export of run traces
   download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)
-  services/dashboard_query.py          The archive's filters and stats
 alembic/             Schema migrations
 templates/, static/  Jinja2 pages and CSS (no build step)
 tests/               pytest suite

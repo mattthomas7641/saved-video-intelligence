@@ -120,36 +120,36 @@ def test_format_result_escapes_html(session, transcribed):
     assert "&lt;script&gt;" in tb.format_result(action, transcribed)
 
 
-def test_home_renders_reports_by_topic_and_tab(session, transcribed, stub_analysis, monkeypatch):
+def test_report_moves_through_the_log_views(session, transcribed, stub_analysis, monkeypatch):
     monkeypatch.setattr(agent, "run", lambda *a, **k: _findings())
     action = pipeline.process_shared_video(session, transcribed)
     client = TestClient(app)
-    page = client.get("/").text
+    assert "Go on a weekday" in client.get("/").text                     # new in the log, on the home page
+    page = client.get(f"/q/{action.id}").text
     assert "Go on a weekday before 6pm" in page and "Dalessandro" in page and "<strong>Order</strong>" in page
-    assert "Food &amp; Home" in page  # Recipe / Cooking files under the Food & Home topic
-    assert "Go on a weekday" in client.get("/?group=home").text
-    assert "Go on a weekday" not in client.get("/?group=tech").text
-    assert "Go on a weekday" not in client.get("/?tab=done").text
+    assert "Go on a weekday" in client.get("/log").text
+    assert "Go on a weekday" not in client.get("/log?view=done").text
     client.post(f"/agent/{action.id}/done", data={"next": "/"})
-    assert "Go on a weekday" in client.get("/?tab=done").text and "Go on a weekday" not in client.get("/").text
+    assert "Go on a weekday" in client.get("/log?view=done").text and "Go on a weekday" not in client.get("/log").text
     client.post(f"/agent/{action.id}/dismiss", data={"next": "/"})
-    assert "Go on a weekday" in client.get("/?tab=skipped").text
+    assert "Go on a weekday" in client.get("/log?view=skipped").text
     client.post(f"/agent/{action.id}/reopen", data={"next": "/"})
-    assert "Go on a weekday" in client.get("/").text
-    assert "Go on a weekday" in client.get("/agent").text  # old address still works
+    assert "Go on a weekday" in client.get("/log").text
+    assert "Go on a weekday" in client.get("/log?type=place").text or "Go on a weekday" in client.get("/log?type=other").text
 
 
 def test_agent_page_markdown_cannot_inject_html(session, transcribed, stub_analysis, monkeypatch):
     evil = _findings()
     evil.report_markdown = '<img src=x onerror=alert(1)> [click](javascript:alert(1))'
     monkeypatch.setattr(agent, "run", lambda *a, **k: evil)
-    pipeline.process_shared_video(session, transcribed)
-    page = TestClient(app).get("/agent").text
+    action = pipeline.process_shared_video(session, transcribed)
+    page = TestClient(app).get(f"/q/{action.id}").text
     assert "<img src=x" not in page and "javascript:alert" not in page
 
 
-def test_agent_page_empty_state():
-    assert "No sidequests yet" in TestClient(app).get("/").text
+def test_home_empty_state():
+    page = TestClient(app).get("/").text
+    assert "Nothing waiting on you" in page and "Reports appear here" in page
 
 
 def test_settings_page_shows_pairing_code():
@@ -166,8 +166,8 @@ def test_agent_page_shows_project_fit_and_deeper_button(session, transcribed, st
                       "architecture_impact": "Replaces the fixed-window batcher", "effort": "S"}]
     f.new_project_idea = "A Philly food map"
     monkeypatch.setattr(agent, "run", lambda *a, **k: f)
-    pipeline.process_shared_video(session, transcribed)
-    page = TestClient(app).get("/agent").text
+    action = pipeline.process_shared_video(session, transcribed)
+    page = TestClient(app).get(f"/q/{action.id}").text
     assert "Fits your projects" in page and "Replaces the fixed-window batcher" in page
     assert "A Philly food map" in page and "Research deeper" in page
 

@@ -277,7 +277,7 @@ def report_link(action) -> str | None:
     """Dashboard link for a report, if PUBLIC_BASE_URL is reachable from a phone."""
     if re.search(r"//(127\.0\.0\.1|localhost)", PUBLIC_BASE_URL):
         return None
-    return f"{PUBLIC_BASE_URL}/agent#a{action.id}"
+    return f"{PUBLIC_BASE_URL}/q/{action.id}"
 
 
 def _links_line(action, video) -> str:

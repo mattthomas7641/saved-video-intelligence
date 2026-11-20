@@ -23,6 +23,7 @@ ignore = [
 # FastAPI's Depends()/Body()/File() in argument defaults is the framework's
 # own idiom, not the mutable-default-argument bug B008 exists to catch.
 "app/main.py" = ["B008"]
+"app/web.py" = ["B008"]
 # Deliberate: SCANNER_DATA_DIR must be set before any app.* import, so these
 # imports can't move to the top of the file.
 "tests/conftest.py" = ["E402"]

@@ -1,46 +1,54 @@
 {% extends "base.html" %}
+{% set nav = "settings" %}
 {% from "_icons.html" import icon %}
 {% block title %}Settings · Sidequest{% endblock %}
 {% block content %}
-<header class="page-head"><h1>Settings</h1></header>
+<header class="sec-head"><h1>Settings</h1></header>
+<nav class="jump" aria-label="Settings sections"><a href="#telegram">Telegram</a><a href="#research">Research agent</a><a href="#follow">Follow-through</a><a href="#projects">Your projects</a><a href="#mcp">Use from Claude</a><a href="#send">iOS Shortcut</a><a href="#claude">Claude key</a></nav>
 
-<section class="plain-card" id="send">
-  <h2>Send to Sidequest</h2>
+
+
+<section class="plain-card" id="telegram">
+  <details {% if telegram.bot_token or key_status.startswith("tg_") %}open{% endif %}>
+  <summary class="settings-summary"><h2 style="display:inline">Telegram</h2> <span class="hint" style="margin:0">where you send things and ask questions</span></summary>
   <p style="margin-bottom:12px">
-    {% if ntfy.inbox_topic %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Set up</span>
+    {% if telegram.bot_token and telegram.chat_id %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected{% if telegram.bot_username %} to @{{ telegram.bot_username }}{% endif %}</span>
+    {% elif telegram.bot_token %}<span class="tag-warn">{{ icon("alert") }} Waiting for pairing</span>
     {% else %}<span class="tag-warn">{{ icon("alert") }} Not set up</span>{% endif %}
   </p>
-  <p style="margin-bottom:10px">From TikTok, Instagram, YouTube, Safari, Photos or a fresh screenshot: <strong>Share → Send to Sidequest</strong>. Videos, links, screenshots and text all work. They go through a private relay (ntfy.sh, free), this app picks them up, and the result comes back as a phone notification. Nothing on this computer is exposed to the internet.</p>
-  {% if not ntfy.inbox_topic %}
-  <form action="/settings/ntfy" method="post"><button class="btn btn-primary" type="submit">Create my private channel</button></form>
-  {% else %}
-  <ol class="steps">
-    <li>On your iPhone, install the free <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">ntfy</a> app, tap <strong>+</strong> and subscribe to:
-      <code class="copy">{{ ntfy.results_topic }}</code></li>
-    <li>Open <strong>Shortcuts</strong> → <strong>+</strong> → name it <strong>Send to Sidequest</strong>. Tap ⓘ, turn on <strong>Show in Share Sheet</strong>, and set it to receive <strong>URLs, Text and Images</strong>.</li>
-    <li>Add <strong>If</strong>: <em>Shortcut Input</em> <strong>is</strong> <em>Image</em> (tap the input to pick its type).</li>
-    <li>Inside the <strong>If</strong>, for screenshots and photos:
-      <ul>
-        <li><strong>Convert Image</strong> Shortcut Input to <strong>JPEG</strong></li>
-        <li><strong>Get Contents of URL</strong>: URL <code class="copy">{{ ntfy.server }}/{{ ntfy.inbox_topic }}</code>, Method <strong>PUT</strong>, Request Body <strong>File</strong> = Converted Image</li>
-        <li>Add two headers: <code>Filename</code> = <code>shot.jpg</code>, and <code>Message</code> = <code class="copy">{"v":1,"token":"{{ ntfy.token }}"}</code></li>
-      </ul></li>
-    <li>In <strong>Otherwise</strong>, for links and text:
-      <ul>
-        <li><strong>Get Contents of URL</strong>: same URL, Method <strong>POST</strong>, Request Body <strong>JSON</strong> with three fields:</li>
-        <li><code>v</code> (Number) = <code>1</code>, <code>token</code> (Text) = <code class="copy">{{ ntfy.token }}</code>, <code>url</code> (Text) = <em>Shortcut Input</em></li>
-      </ul></li>
-    <li>After <strong>End If</strong>, optionally add <strong>Show Notification</strong> “Sent to agent”. The first time you share from TikTok or Instagram, tap <strong>More</strong> → <strong>Edit Actions</strong> and add Send to Sidequest to Favorites so it sits at the top.</li>
+  <p style="margin-bottom:10px">Share anything to your own Telegram bot (a TikTok, a link, a screenshot) or just ask it something. Short answers come back in the chat; full reports, approvals and what's coming up are on the <a href="/">Tracked</a> page.</p>
+
+  {% if not telegram.bot_token %}
+  <ol style="margin-bottom:14px">
+    <li>In Telegram, message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, send <code>/newbot</code> and pick any name.</li>
+    <li>Paste the token it gives you below.</li>
   </ol>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-    <form action="/settings/ntfy/test" method="post"><button class="btn btn-primary" type="submit">Send a test notification</button></form>
-    <form action="/settings/ntfy" method="post" onsubmit="return confirm('This creates new channel names and a new token. You will need to update the Shortcut and the ntfy subscription.')">
-      <button class="btn" type="submit">{{ icon("refresh") }} New channel</button></form>
-  </div>
-  {% if key_status == "ntfy_sent" %}<p style="margin-top:10px;color:var(--family)">Sent. It should appear in the ntfy app within a few seconds.</p>{% endif %}
-  {% if key_status == "ntfy_failed" %}<p style="margin-top:10px;color:var(--flag)">Couldn't reach ntfy.sh. Check this computer's internet connection.</p>{% endif %}
-  <p class="hint">Privacy: links and result summaries pass through ntfy.sh. Anyone who knew a channel name could read it, which is why the names are long and random; incoming links also need the token.</p>
   {% endif %}
+  <form action="/settings/telegram" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input class="field" style="flex:1;min-width:240px" type="password" name="token" autocomplete="off" aria-label="Telegram bot token"
+           placeholder="{{ 'Paste a new token to replace it' if telegram.bot_token else 'Bot token from @BotFather' }}" required>
+    <button class="btn btn-primary" type="submit">Save token</button>
+  </form>
+  {% if key_status == "tg_invalid" %}<p style="margin-top:10px;color:var(--flag)">Telegram didn't accept that token. Copy it again from @BotFather.</p>{% endif %}
+  {% if key_status == "tg_saved" %}<p style="margin-top:10px;color:var(--family)">Token saved.</p>{% endif %}
+
+  {% if telegram.bot_token and not telegram.chat_id %}
+  {% if telegram.pairing_code %}
+  <div class="notice" style="margin:14px 0 0">{{ icon("key") }}<span>
+    Open {% if telegram.bot_username %}<a href="https://t.me/{{ telegram.bot_username }}" target="_blank" rel="noopener">@{{ telegram.bot_username }}</a>{% else %}your bot{% endif %}
+    and send <code>/start {{ telegram.pairing_code }}</code> within 10 minutes. Only that chat will be able to use it. Refresh this page after.
+  </span></div>
+  {% else %}
+  <form action="/settings/telegram/pair" method="post" style="margin-top:14px"><button class="btn" type="submit">{{ icon("key") }} Get a pairing code</button></form>
+  {% endif %}
+  {% endif %}
+  {% if telegram.chat_id %}
+  <p style="margin-top:14px">From TikTok: <strong>Share → Telegram → {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}your bot{% endif %}</strong>. Anything you type with the link becomes a note the agent reads, like “useful for my OS project?”. In the chat, <code>/status</code>, <code>/pause</code> and <code>/resume</code> also work.</p>
+  <form action="/settings/telegram/pair" method="post" style="margin-top:12px" onsubmit="return confirm('This disconnects the current chat until you pair again.')">
+    <button class="btn" type="submit">{{ icon("refresh") }} Pair a different chat</button>
+  </form>
+  {% endif %}
+  </details>
 </section>
 
 <section class="plain-card" id="research">
@@ -133,22 +141,6 @@
   {% if key_status == "calendar_bad" %}<p style="color:var(--flag);margin-top:8px">Couldn't read that calendar address. Copy the secret address in iCal format again; the rest was saved.</p>{% endif %}
 </section>
 
-<section class="plain-card" id="mcp">
-  <h2>Use it from Claude (MCP)</h2>
-  <p style="margin-bottom:12px">Sidequest is an MCP server, so Claude Code, Claude Desktop or any MCP client can search what you've sent, read reports, see what's coming up, and send new things in. Nothing it exposes can approve an action for you.</p>
-  <div class="key-row">
-    <div><strong>On this Mac</strong> <span class="hint" style="margin:0">nothing exposed: runs inside the container over stdio</span>
-      <p class="hint" style="margin-top:4px">Run this once in Terminal, from the Sidequest folder:</p>
-      <pre class="code-block">claude mcp add -s user sidequest -- docker compose -f "$PWD/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
-  </div>
-  <div class="key-row">
-    <div><strong>Over the network</strong> {% if has_mcp_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Token created</span>{% endif %}
-      <p class="hint" style="margin-top:4px">For a client that needs a URL (e.g. over Tailscale): <code>/mcp/</code> on this app, with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
-      {% if mcp_token %}<p class="hint">Your token (shown once; copy it now): <code style="user-select:all">{{ mcp_token }}</code></p>{% endif %}</div>
-    <form action="/settings/mcp" method="post"><button class="btn" type="submit" {% if has_mcp_token %}onclick="return confirm('Make a new token? The old one stops working.')"{% endif %}>{{ "New token" if has_mcp_token else "Create a token" }}</button></form>
-  </div>
-</section>
-
 <section class="plain-card" id="projects">
   <h2>Your projects</h2>
   <p style="margin-bottom:12px">The agent judges every video against these: whether it's worth adding, where it plugs in, and what it does to the architecture. Found in your Projects folder; secrets, data and .env files are never read.</p>
@@ -179,47 +171,59 @@
   {% if key_status == "projects_rescanned" %}<p style="color:var(--family);margin-top:8px">Rescanned.</p>{% endif %}
 </section>
 
-<section class="plain-card" id="telegram">
-  <details {% if telegram.bot_token or key_status.startswith("tg_") %}open{% endif %}>
-  <summary class="settings-summary"><h2 style="display:inline">Telegram</h2> <span class="hint" style="margin:0">optional second doorway</span></summary>
+<section class="plain-card" id="mcp">
+  <h2>Use it from Claude (MCP)</h2>
+  <p style="margin-bottom:12px">Sidequest is an MCP server, so Claude Code, Claude Desktop or any MCP client can search what you've sent, read reports, see what's coming up, and send new things in. Nothing it exposes can approve an action for you.</p>
+  <div class="key-row">
+    <div><strong>On this Mac</strong> <span class="hint" style="margin:0">nothing exposed: runs inside the container over stdio</span>
+      <p class="hint" style="margin-top:4px">Run this once in Terminal, from the Sidequest folder:</p>
+      <pre class="code-block">claude mcp add -s user sidequest -- docker compose -f "$PWD/docker-compose.yml" exec -T app python -m app.mcp_server</pre></div>
+  </div>
+  <div class="key-row">
+    <div><strong>Over the network</strong> {% if has_mcp_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Token created</span>{% endif %}
+      <p class="hint" style="margin-top:4px">For a client that needs a URL (e.g. over Tailscale): <code>/mcp/</code> on this app, with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+      {% if mcp_token %}<p class="hint">Your token (shown once; copy it now): <code style="user-select:all">{{ mcp_token }}</code></p>{% endif %}</div>
+    <form action="/settings/mcp" method="post"><button class="btn" type="submit" {% if has_mcp_token %}onclick="return confirm('Make a new token? The old one stops working.')"{% endif %}>{{ "New token" if has_mcp_token else "Create a token" }}</button></form>
+  </div>
+</section>
+
+<section class="plain-card" id="send">
+  <h2>iOS Shortcut <span class="dim">(optional, if you don't use Telegram)</span></h2>
   <p style="margin-bottom:12px">
-    {% if telegram.bot_token and telegram.chat_id %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected{% if telegram.bot_username %} to @{{ telegram.bot_username }}{% endif %}</span>
-    {% elif telegram.bot_token %}<span class="tag-warn">{{ icon("alert") }} Waiting for pairing</span>
+    {% if ntfy.inbox_topic %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Set up</span>
     {% else %}<span class="tag-warn">{{ icon("alert") }} Not set up</span>{% endif %}
   </p>
-  <p style="margin-bottom:10px">Share a TikTok to your own Telegram bot and the research agent looks into it. You get a short reply in the chat and the full report on the <a href="/agent">Agent</a> page.</p>
-
-  {% if not telegram.bot_token %}
-  <ol style="margin-bottom:14px">
-    <li>In Telegram, message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, send <code>/newbot</code> and pick any name.</li>
-    <li>Paste the token it gives you below.</li>
-  </ol>
-  {% endif %}
-  <form action="/settings/telegram" method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <input class="field" style="flex:1;min-width:240px" type="password" name="token" autocomplete="off" aria-label="Telegram bot token"
-           placeholder="{{ 'Paste a new token to replace it' if telegram.bot_token else 'Bot token from @BotFather' }}" required>
-    <button class="btn btn-primary" type="submit">Save token</button>
-  </form>
-  {% if key_status == "tg_invalid" %}<p style="margin-top:10px;color:var(--flag)">Telegram didn't accept that token. Copy it again from @BotFather.</p>{% endif %}
-  {% if key_status == "tg_saved" %}<p style="margin-top:10px;color:var(--family)">Token saved.</p>{% endif %}
-
-  {% if telegram.bot_token and not telegram.chat_id %}
-  {% if telegram.pairing_code %}
-  <div class="notice" style="margin:14px 0 0">{{ icon("key") }}<span>
-    Open {% if telegram.bot_username %}<a href="https://t.me/{{ telegram.bot_username }}" target="_blank" rel="noopener">@{{ telegram.bot_username }}</a>{% else %}your bot{% endif %}
-    and send <code>/start {{ telegram.pairing_code }}</code> within 10 minutes. Only that chat will be able to use it. Refresh this page after.
-  </span></div>
+  <p style="margin-bottom:10px">From TikTok, Instagram, YouTube, Safari, Photos or a fresh screenshot: <strong>Share → Send to Sidequest</strong>. Videos, links, screenshots and text all work. They go through a private relay (ntfy.sh, free), this app picks them up, and the result comes back as a phone notification. Nothing on this computer is exposed to the internet.</p>
+  {% if not ntfy.inbox_topic %}
+  <form action="/settings/ntfy" method="post"><button class="btn btn-primary" type="submit">Create my private channel</button></form>
   {% else %}
-  <form action="/settings/telegram/pair" method="post" style="margin-top:14px"><button class="btn" type="submit">{{ icon("key") }} Get a pairing code</button></form>
+  <ol class="steps">
+    <li>On your iPhone, install the free <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">ntfy</a> app, tap <strong>+</strong> and subscribe to:
+      <code class="copy">{{ ntfy.results_topic }}</code></li>
+    <li>Open <strong>Shortcuts</strong> → <strong>+</strong> → name it <strong>Send to Sidequest</strong>. Tap ⓘ, turn on <strong>Show in Share Sheet</strong>, and set it to receive <strong>URLs, Text and Images</strong>.</li>
+    <li>Add <strong>If</strong>: <em>Shortcut Input</em> <strong>is</strong> <em>Image</em> (tap the input to pick its type).</li>
+    <li>Inside the <strong>If</strong>, for screenshots and photos:
+      <ul>
+        <li><strong>Convert Image</strong> Shortcut Input to <strong>JPEG</strong></li>
+        <li><strong>Get Contents of URL</strong>: URL <code class="copy">{{ ntfy.server }}/{{ ntfy.inbox_topic }}</code>, Method <strong>PUT</strong>, Request Body <strong>File</strong> = Converted Image</li>
+        <li>Add two headers: <code>Filename</code> = <code>shot.jpg</code>, and <code>Message</code> = <code class="copy">{"v":1,"token":"{{ ntfy.token }}"}</code></li>
+      </ul></li>
+    <li>In <strong>Otherwise</strong>, for links and text:
+      <ul>
+        <li><strong>Get Contents of URL</strong>: same URL, Method <strong>POST</strong>, Request Body <strong>JSON</strong> with three fields:</li>
+        <li><code>v</code> (Number) = <code>1</code>, <code>token</code> (Text) = <code class="copy">{{ ntfy.token }}</code>, <code>url</code> (Text) = <em>Shortcut Input</em></li>
+      </ul></li>
+    <li>After <strong>End If</strong>, optionally add <strong>Show Notification</strong> “Sent to agent”. The first time you share from TikTok or Instagram, tap <strong>More</strong> → <strong>Edit Actions</strong> and add Send to Sidequest to Favorites so it sits at the top.</li>
+  </ol>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+    <form action="/settings/ntfy/test" method="post"><button class="btn btn-primary" type="submit">Send a test notification</button></form>
+    <form action="/settings/ntfy" method="post" onsubmit="return confirm('This creates new channel names and a new token. You will need to update the Shortcut and the ntfy subscription.')">
+      <button class="btn" type="submit">{{ icon("refresh") }} New channel</button></form>
+  </div>
+  {% if key_status == "ntfy_sent" %}<p style="margin-top:10px;color:var(--family)">Sent. It should appear in the ntfy app within a few seconds.</p>{% endif %}
+  {% if key_status == "ntfy_failed" %}<p style="margin-top:10px;color:var(--flag)">Couldn't reach ntfy.sh. Check this computer's internet connection.</p>{% endif %}
+  <p class="hint">Privacy: links and result summaries pass through ntfy.sh. Anyone who knew a channel name could read it, which is why the names are long and random; incoming links also need the token.</p>
   {% endif %}
-  {% endif %}
-  {% if telegram.chat_id %}
-  <p style="margin-top:14px">From TikTok: <strong>Share → Telegram → {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}your bot{% endif %}</strong>. Anything you type with the link becomes a note the agent reads, like “useful for my OS project?”. In the chat, <code>/status</code>, <code>/pause</code> and <code>/resume</code> also work.</p>
-  <form action="/settings/telegram/pair" method="post" style="margin-top:12px" onsubmit="return confirm('This disconnects the current chat until you pair again.')">
-    <button class="btn" type="submit">{{ icon("refresh") }} Pair a different chat</button>
-  </form>
-  {% endif %}
-  </details>
 </section>
 
 <section class="plain-card" id="claude">

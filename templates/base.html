@@ -4,30 +4,36 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}Sidequest{% endblock %}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <meta name="theme-color" content="#EEEEEA">
+  <meta name="theme-color" content="#EEF0EA">
   <meta name="apple-mobile-web-app-title" content="Sidequest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}">
 </head>
-<body {% block bodyattrs %}{% endblock %}>
-{% block body %}
-  <header class="topbar">
-    <a href="/" class="brand">{{ logo() }}<span>Sidequest</span></a>
-    <nav>
-      <a class="btn btn-quiet" href="/">{{ icon("inbox") }} Quests</a>
-      <a class="btn btn-quiet" href="/dashboard">{{ icon("library") }} Archive</a>
-      <a class="btn btn-quiet" href="/evals">{{ icon("check") }} Evals</a>
-      <a class="btn btn-quiet" href="/settings">{{ icon("settings") }} Settings</a>
-    </nav>
-  </header>
-  <main class="plain-main">{% block content %}{% endblock %}</main>
-{% endblock %}
+<body>
+{% set nav = nav|default("") %}
+{% set counts = counts|default({}) %}
+<header class="bar">
+  <a class="mark" href="/" aria-label="Sidequest, home">{{ logo(26) }}<span>Sidequest</span></a>
+  <nav class="tabs" aria-label="Sections">
+    <a href="/" {% if nav == "tracked" %}aria-current="page"{% endif %}>{{ icon("diamond") }}<span>Tracked</span>{% if counts.tracked %}<b class="count is-hot">{{ counts.tracked }}</b>{% endif %}</a>
+    <a href="/log" {% if nav == "log" %}aria-current="page"{% endif %}>{{ icon("list") }}<span>Log</span>{% if counts.log %}<b class="count">{{ counts.log }}</b>{% endif %}</a>
+    <a href="/ledger" {% if nav == "ledger" %}aria-current="page"{% endif %}>{{ icon("bars") }}<span>Ledger</span></a>
+    <a href="/settings" {% if nav == "settings" %}aria-current="page"{% endif %}>{{ icon("settings") }}<span>Settings</span></a>
+  </nav>
+  {% if spent_today is defined and cap %}
+  <a class="meter" href="/ledger" title="Spent today against the daily cap">
+    <span class="meter-n">${{ "%.2f"|format(spent_today) }}</span><span class="meter-of">of ${{ "%.0f"|format(cap) }} today</span>
+    <span class="meter-track"><span style="width:{{ [100, spent_today / cap * 100]|min }}%"></span></span>
+  </a>
+  {% endif %}
+</header>
+<main class="page {% block pageclass %}{% endblock %}">{% block content %}{% endblock %}</main>
 </body>
 </html>
