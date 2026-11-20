@@ -44,8 +44,6 @@ class Settings(BaseSettings):
     agent_provider: str = Field(default="gemini", alias="AGENT_PROVIDER")
     agent_model_gemini: str = Field(default="gemini-3.8-flash", alias="AGENT_MODEL_GEMINI")
     analysis_model_gemini: str = Field(default="gemini-3.8-flash", alias="ANALYSIS_MODEL_GEMINI")
-    agent_model_xai: str = Field(default="grok-4.3", alias="AGENT_MODEL_XAI")
-    analysis_model_xai: str = Field(default="grok-4.3", alias="ANALYSIS_MODEL_XAI")
     projects_dir: str = Field(default="", alias="PROJECTS_DIR")
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
     public_base_url: str = Field(default="http://127.0.0.1:8790", alias="PUBLIC_BASE_URL")
@@ -181,7 +179,7 @@ def new_pairing_code() -> str:
 def get_agent_settings() -> dict:
     """'About me' is injected into every research prompt so 'useful for me'
     means something; the daily cap bounds what the research agent spends.
-    `provider` picks who watches and researches: "gemini" (default), "xai" (Grok) or "anthropic"."""
+    `provider` picks who watches and researches: "gemini" (default) or "anthropic" (Claude)."""
     s = _load_secrets().get("AGENT", {})
     provider = s.get("provider") or settings.agent_provider.strip() or "gemini"
     return {
@@ -199,13 +197,6 @@ def save_agent_settings(**updates) -> dict:
     return current
 
 
-def get_xai_key() -> str:
-    return _load_secrets().get("XAI_API_KEY", "").strip() or os.environ.get("XAI_API_KEY", "").strip()
-
-
-def save_xai_key(key: str) -> None:
-    _save_secret("XAI_API_KEY", key.strip())
-
 
 def get_gemini_key() -> str:
     return _load_secrets().get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -215,7 +206,7 @@ def save_gemini_key(key: str) -> None:
     _save_secret("GEMINI_API_KEY", key.strip())
 
 
-PROVIDERS = ("gemini", "xai", "anthropic")
+PROVIDERS = ("gemini", "anthropic")
 
 
 def get_mcp_token() -> str:
@@ -265,11 +256,7 @@ def get_quest_settings() -> dict:
         "flex_shares": bool(s.get("flex_shares", False)),
         "economy": bool(s.get("economy", False)),   # Flash-Lite for new shares: ~10x cheaper, a little less accurate
         "signing_key": s.get("signing_key", ""),   # signs approve buttons in notifications (app/quests.py)
-        "serpapi_key": s.get("serpapi_key", ""),   # live Google Flights fares (app/flights.py); 250 free a month
         "home_airport": s.get("home_airport", ""), # e.g. PHL: where fare checks and deals start from
-        "todoist_token": s.get("todoist_token", ""),   # your Todoist tasks (app/todoist.py)
-        "notion_token": s.get("notion_token", ""),     # notes in Notion (app/notion.py)
-        "notion_page": s.get("notion_page", ""),       # the Notion page notes are saved under
     }
 
 
@@ -331,8 +318,6 @@ ANTHROPIC_API_KEY = get_api_key()  # kept for older imports; prefer get_api_key(
 # sense as the fields in Settings.
 ANALYSIS_MODEL = settings.analysis_model.strip()
 AGENT_MODEL = settings.agent_model.strip()
-AGENT_MODEL_XAI = settings.agent_model_xai.strip()
-ANALYSIS_MODEL_XAI = settings.analysis_model_xai.strip()
 AGENT_MODEL_GEMINI = settings.agent_model_gemini.strip()
 ANALYSIS_MODEL_GEMINI = settings.analysis_model_gemini.strip()
 PROJECTS_DIR = Path(settings.projects_dir.strip()).expanduser() if settings.projects_dir.strip() else Path.home() / "Projects"

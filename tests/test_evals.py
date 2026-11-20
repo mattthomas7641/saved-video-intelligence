@@ -151,7 +151,7 @@ def test_comparison_table_and_config_label():
 
     assert ev.config_label("gemini", {"watch_model": "gemini-3.5-flash-lite", "research_model": "gemini-3.5-flash-lite",
                                       "tier": "flex"}) == "gemini-3.5-flash-lite / flex"
-    assert ev.config_label("xai", None) == "xai"
+    assert ev.config_label("anthropic", None) == "anthropic"
     runs = [{"config": "lite / flex", "cases": 21, "accuracy": {m: 0.9 for m in ev.METRICS},
              "cost_per_case": 0.008, "latency_p50": 140.0},
             {"config": "flash / standard", "cases": 21, "accuracy": {m: 1.0 for m in ev.METRICS},

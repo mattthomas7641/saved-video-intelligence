@@ -5,7 +5,8 @@ tools to the assistant by itself, and everything here is search-only (read). An
 MCP server that could send, book or pay would have to go through the approval
 dispatcher like every other side-effecting action, so none is listed yet.
 
-- Kiwi.com (official, free, no key): flight search; results carry booking links.
+- Kiwi.com (official, free, no key): flight search with booking links, used by
+  app/flights.py, which gives the model a compact USD summary instead of raw results.
 - seats.aero (official, free without an account for cached award space up to
   60 days out, personal use allowed): award seats, and which airline and hotel
   programs each card currency (e.g. Chase Ultimate Rewards, "chaseus") transfers to.
@@ -22,7 +23,8 @@ import anyio
 log = logging.getLogger(__name__)
 
 SERVERS = {
-    "kiwi": {"url": "https://mcp.kiwi.com", "tools": {"search-flight"},
+    # Used through app/flights.py (a compact USD summary), not offered to the model raw.
+    "kiwi": {"url": "https://mcp.kiwi.com", "tools": {"search-flight"}, "expose": False,
              "defaults": {"search-flight": {"currency": "USD"}},   # Kiwi prices in EUR unless asked
              "about": "Kiwi.com flight search (cash fares in USD, with booking links)"},
     "seats": {"url": "https://seats.aero/mcp",
@@ -83,6 +85,8 @@ def tools(lister=None) -> list[dict]:
         return _cache["tools"]
     out = []
     for key, server in SERVERS.items():
+        if not server.get("expose", True):
+            continue
         try:
             listed = lister(server["url"]) if lister else anyio.run(_list, server["url"])
         except Exception as e:  # noqa: BLE001 - one server down mustn't take the assistant down
@@ -120,10 +124,13 @@ def _leaf(e: BaseException) -> BaseException:
     return e
 
 
-def call(name: str, args: dict, caller=None) -> dict:
-    """Run an allowlisted tool. Returns {"result": text} or {"error": ...}."""
+def call(name: str, args: dict, caller=None, internal: bool = False) -> dict:
+    """Run an allowlisted tool. Returns {"result": text} or {"error": ...}. Tools on servers
+    not exposed to the model can only be called from our own code (`internal`)."""
     server, _, tool = name.partition(SEP)
     conf = SERVERS.get(server)
+    if conf and not conf.get("expose", True) and not internal:
+        return {"error": f"{name} isn't an allowed tool."}
     real = next((t for t in (conf or {}).get("tools", ()) if t.replace("-", "_") == tool), None)
     if conf is None or real is None:
         return {"error": f"{name} isn't an allowed tool."}

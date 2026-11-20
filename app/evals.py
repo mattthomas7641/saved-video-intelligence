@@ -186,8 +186,6 @@ def run_case(case: dict, session: Session, budget_usd: float, provider: str = "g
               gemini_client.tier(config.get("tier") or "standard")):
             if provider == "gemini":
                 from app.gemini_client import analyze_video
-            elif provider == "xai":
-                from app.xai_client import analyze_video
             else:
                 from app.analyze import analyze_video
             analysis = analyze_video(video)
@@ -344,7 +342,7 @@ def main(argv=None) -> None:
     r.add_argument("--max-usd", type=float, default=2.0)
     r.add_argument("--limit", type=int)
     r.add_argument("--reviewed-only", action="store_true")
-    r.add_argument("--provider", default="gemini", choices=["gemini", "xai", "anthropic"])
+    r.add_argument("--provider", default="gemini", choices=["gemini", "anthropic"])
     r.add_argument("--watch-model", help="Gemini model for the first pass (default: configured)")
     r.add_argument("--research-model", help="Gemini model for research (default: configured)")
     r.add_argument("--tier", choices=["standard", "flex"], default="standard")

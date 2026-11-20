@@ -458,35 +458,15 @@ def _flight_status(task_id: int, check=None) -> None:
 
 def _fare_watch(task_id: int, search=None) -> None:
     """Every few days until shortly before the trip: has the fare dropped below the target?
-    Uses live fares when a fare source is set up (one lookup), otherwise a web search."""
-    from app import flights, gemini_client
-    from app.config import get_gemini_key, get_quest_settings
+    One free Kiwi.com lookup per check."""
+    from app import flights
     from app.db import get_session
 
     with get_session() as session:
-        task = session.get(Task, task_id)
-        p, action_id = json.loads(task.payload), task.action_id
+        p = json.loads(session.get(Task, task_id).payload)
     target, route = float(p["watch_below"]), f"{p['origin']}→{p['destination']}"
-    if _over_cap():
-        with get_session() as session:
-            t = session.get(Task, task_id)
-            t.status, t.run_at = "scheduled", _tomorrow_morning()
-            session.add(t)
-            session.commit()
-        return
-    lowest = None
-    if search or flights.enabled():
-        found = (search or flights.search)(p["origin"], p["destination"], p["outbound_date"], p.get("return_date") or None)
-        lowest = found.get("lowest") if isinstance(found, dict) else None
-    elif get_gemini_key():
-        tier = "flex" if get_quest_settings()["flex_background"] else "standard"
-        with (tracing.run("follow_up", action_id=action_id, provider="gemini"), gemini_client.tier(tier),
-              gemini_client.models(watch=gemini_client.LITE_MODEL)):
-            out = gemini_client.follow_up({"headline": f"Fare watch {route}", "reported_on": f"{datetime.utcnow():%Y-%m-%d}",
-                                           "summary": p.get("verdict", ""),
-                                           "watch_for": f"a fare under ${target:.0f} for {route} on {p['outbound_date']}"
-                                                        + (f" returning {p['return_date']}" if p.get("return_date") else "")})
-        lowest = target if out.get("changed") else None
+    found = (search or flights.search)(p["origin"], p["destination"], p["outbound_date"], p.get("return_date") or None)
+    lowest = found.get("lowest") if isinstance(found, dict) else None
     history = (p.get("history") or [])[-20:] + [{"date": f"{datetime.utcnow():%Y-%m-%d}", "lowest": lowest}]
     if lowest is not None and lowest <= target:
         _finish(task_id, "done", result={"hit": True, "lowest": lowest, "history": history})

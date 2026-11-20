@@ -146,7 +146,7 @@ def apply_analysis(session: Session, video: Video, analysis: analyze_mod.Analysi
         has_promo_code=video.has_promo_code, has_dated_offer=video.has_dated_offer)
     video.input_tokens = analysis.input_tokens
     video.output_tokens = analysis.output_tokens
-    own_cost = getattr(analysis, "cost_usd", None)  # set by analyzers with their own pricing (Gemini, Grok)
+    own_cost = getattr(analysis, "cost_usd", None)  # set by analyzers with their own pricing (Gemini)
     video.cost_usd = own_cost if own_cost is not None else analyze_mod.cost_usd(
         analysis.input_tokens, analysis.output_tokens, batch=batch)
     video.batch_id = None
@@ -234,9 +234,6 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     if provider == "gemini":
         from app import gemini_client
         analyzer = gemini_client.analyze_video  # watches the video file itself: no Whisper/OCR
-    elif provider == "xai":
-        from app import xai_client
-        analyzer = xai_client.analyze_video  # shared videos never need Anthropic credit
 
     existing = session.exec(select(Action).where(Action.video_id == video.id)).first()
     if (not (deep or force) and existing and existing.result
@@ -435,13 +432,12 @@ _WEB_TYPES = {"place", "research", "job", "travel"}
 
 
 def research_plan(provider: str, action_type: str, deep: bool = False) -> tuple[bool, bool]:
-    """(web search allowed, X search allowed). Gemini's grounded search is free up to
-    5,000 requests a month, so it's always on there and the model decides when to use
-    it; on paid-per-search providers it's on only for types that need current facts."""
+    """(web search allowed, X search allowed: always False now). Gemini's grounded search is
+    free up to 5,000 requests a month, so it's always on there and the model decides when
+    to use it; on Claude (paid per search) it's on only for types that need current facts."""
     if provider == "gemini":
         return True, False
-    web = deep or action_type in _WEB_TYPES
-    return web, provider == "xai" and action_type == "research" and deep
+    return deep or action_type in _WEB_TYPES, False
 
 
 def transcribe_existing(session: Session, video: Video) -> None:

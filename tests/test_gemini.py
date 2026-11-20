@@ -130,9 +130,9 @@ def test_missing_key_is_fatal():
 
 def test_research_plan():
     assert pipeline.research_plan("gemini", "repo") == (True, False)      # free search: always allowed
-    assert pipeline.research_plan("xai", "repo") == (False, False)        # paid search: only where needed
-    assert pipeline.research_plan("xai", "place") == (True, False)
-    assert pipeline.research_plan("xai", "research", deep=True) == (True, True)
+    assert pipeline.research_plan("anthropic", "repo") == (False, False)  # paid search: only where needed
+    assert pipeline.research_plan("anthropic", "place") == (True, False)
+    assert pipeline.research_plan("anthropic", "repo", deep=True) == (True, False)
 
 
 def test_gemini_lane_downloads_without_whisper_and_deletes_the_file(monkeypatch, session, tmp_path):

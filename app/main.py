@@ -24,7 +24,6 @@ from app import (
     quests,
     telegram_bot,
     tracing,
-    xai_client,
 )
 from app.config import (
     BASE_DIR,
@@ -39,7 +38,6 @@ from app.config import (
     get_project_overrides,
     get_quest_settings,
     get_telegram_settings,
-    get_xai_key,
     group_of,
     new_mcp_token,
     new_ntfy_setup,
@@ -51,7 +49,6 @@ from app.config import (
     save_project_override,
     save_quest_settings,
     save_telegram_settings,
-    save_xai_key,
 )
 from app.db import get_db, init_db
 from app.models import Action, ActionStatus, Status, Video
@@ -401,7 +398,7 @@ def _needs_you(session: Session, items: list[dict]) -> list[dict]:
 
 def _has_research_key() -> bool:
     provider = get_agent_settings()["provider"]
-    return bool({"gemini": get_gemini_key, "xai": get_xai_key}.get(provider, get_api_key)())
+    return bool(get_gemini_key() if provider == "gemini" else get_api_key())
 
 
 def _set_status(session: Session, action_id: int, status: ActionStatus) -> None:
@@ -571,9 +568,7 @@ def task_ics(task_id: int, session: Session = Depends(get_db)):
 
 @app.post("/settings/quests")
 def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str | None = Form(None),
-                    serpapi_key: str | None = Form(None), home_airport: str | None = Form(None),
-                    todoist_token: str | None = Form(None), notion_token: str | None = Form(None),
-                    notion_page: str | None = Form(None),
+                    home_airport: str | None = Form(None),
                     follow_ups: bool = Form(False), flex_background: bool = Form(False),
                     flex_shares: bool = Form(False), economy: bool = Form(False)):
     """Blank secret fields keep what's saved (they're never shown back); Remove clears them."""
@@ -589,18 +584,6 @@ def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str
             status = "calendar_bad"
     if (github_token or "").strip():
         updates["github_token"] = github_token.strip()
-    if (serpapi_key or "").strip():
-        updates["serpapi_key"] = serpapi_key.strip()
-    if (todoist_token or "").strip():
-        updates["todoist_token"] = todoist_token.strip()
-    if (notion_token or "").strip():
-        updates["notion_token"] = notion_token.strip()
-    if (notion_page or "").strip():
-        from app import notion
-        if notion.page_id(notion_page):
-            updates["notion_page"] = notion_page.strip()
-        else:
-            status = "notion_page_bad"
     if home_airport is not None:
         updates["home_airport"] = re.sub(r"[^A-Za-z]", "", home_airport)[:3].upper()
     save_quest_settings(**updates)
@@ -609,7 +592,7 @@ def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str
 
 @app.post("/settings/quests/clear")
 def settings_quests_clear(what: str = Form("")):
-    if what in ("calendar_ics_url", "github_token", "serpapi_key", "todoist_token", "notion_token"):
+    if what in ("calendar_ics_url", "github_token"):
         save_quest_settings(**{what: ""})
     return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
 
@@ -645,17 +628,8 @@ def settings_agent(about_me: str = Form(""), daily_cap_usd: str = Form(""), plan
     cap = _optional_money(daily_cap_usd)
     save_agent_settings(about_me=about_me.strip(), daily_cap_usd=cap,
                         planned_ideas=planned_ideas.strip() if planned_ideas is not None else None,
-                        provider=provider if provider in ("gemini", "xai", "anthropic") else None)
+                        provider=provider if provider in ("gemini", "anthropic") else None)
     return RedirectResponse("/settings?key=agent_saved#research", status_code=303)
-
-
-@app.post("/settings/xai")
-def settings_xai(key: str = Form("")):
-    key = key.strip()
-    if not key or not xai_client.check_key(key):
-        return RedirectResponse("/settings?key=xai_invalid#research", status_code=303)
-    save_xai_key(key)
-    return RedirectResponse("/settings?key=xai_saved#research", status_code=303)
 
 
 @app.post("/settings/gemini")
@@ -742,7 +716,6 @@ def settings_page(request: Request, key: str = ""):
         "quest_settings": get_quest_settings(),
         "mcp_token": get_mcp_token() if key == "mcp_new" else "",
         "has_mcp_token": bool(get_mcp_token()),
-        "has_xai_key": bool(get_xai_key()),
         "has_gemini_key": bool(get_gemini_key()),
         "ntfy": get_ntfy_settings(),
         "projects": _projects_for_settings(),

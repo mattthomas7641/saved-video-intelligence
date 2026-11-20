@@ -106,8 +106,8 @@ together, so it reads code, menus and prices on screen with no Whisper/OCR step
 requests a month on paid Gemini 3 models, and Google Maps grounding covers
 places. The video is watched once: that call saves a transcript and on-screen
 text, and the research loop (Interactions API, chained server-side by
-`previous_interaction_id`) works from that text. Grok and Claude remain
-switchable providers behind the same prompts and tools (`app/agent.py`).
+`previous_interaction_id`) works from that text. Claude remains a switchable
+provider behind the same prompts and tools (`app/agent.py`).
 
 #### Only tech content touches your projects
 Every project in `~/Projects` gets a short card (purpose, stack, architecture,
@@ -220,7 +220,7 @@ Keeping it separate means that churn never touches the library's history.
 
 ## Testing
 
-No test calls a real service: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
+No test calls a real service: Gemini, Claude, Telegram, ntfy, Kiwi, seats.aero and GitHub are
 faked with `httpx.MockTransport` or small fake SDK clients, so the suite runs
 free and offline. Beyond the logic, it covers the security boundaries (foreign
 Host, cross-site posts, private-address fetches, image stripping, secret

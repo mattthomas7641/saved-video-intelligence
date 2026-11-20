@@ -1,88 +1,67 @@
-"""Live flight fares, so a "cheap flights to Tokyo" video or a fare you're waiting on
-is checked against real prices instead of the creator's say-so.
+"""Live flight fares, so a "cheap flights to Tokyo" post, a trip question or a fare you're
+waiting on is checked against real prices instead of the creator's say-so.
 
-Google has no public Flights API; SerpApi reads Google Flights results (free plan:
-250 searches a month, enough for checking deals and a few price watches). Without a
-key, the agent falls back to Google Search, which finds fares less reliably.
+Google has no public Flights API. Kiwi.com runs an official MCP server (free, no key)
+whose results carry prices and booking links, so this calls it through the MCP client
+(app/mcp_client.py) and returns a compact summary: the cheapest options, in USD.
 """
-import logging
+import json
 import re
+from datetime import datetime
 
-import httpx
-
-log = logging.getLogger(__name__)
-
-URL = "https://serpapi.com/search.json"
 _IATA = re.compile(r"^[A-Z]{3}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def enabled() -> bool:
-    from app.config import get_quest_settings
-
-    return bool(get_quest_settings()["serpapi_key"])
+    return True   # Kiwi.com needs no key
 
 
-def search(origin: str, destination: str, outbound_date: str, return_date: str | None = None,
-           http: httpx.Client | None = None) -> dict:
-    """The cheapest options and Google's price insight for one route and date. Returns
-    {"error": ...} instead of raising, so the agent can recover (e.g. fix an airport code)."""
-    from app.config import get_quest_settings
+def search(origin: str, destination: str, outbound_date: str, return_date: str | None = None, caller=None) -> dict:
+    """The cheapest options for one route and date. Returns {"error": ...} instead of raising,
+    so the agent can recover (e.g. fix an airport code)."""
+    from app import mcp_client
 
     origin, destination = origin.strip().upper(), destination.strip().upper()
     if not (_IATA.match(origin) and _IATA.match(destination)):
         return {"error": "Use 3-letter airport codes, e.g. PHL and NRT (or a city code like NYC)."}
     if not _DATE.match(outbound_date or "") or (return_date and not _DATE.match(return_date)):
         return {"error": "Dates must be YYYY-MM-DD."}
-    key = get_quest_settings()["serpapi_key"]
-    if not key:
-        return {"error": "No flight price source set up; use web search instead."}
-    params = {"engine": "google_flights", "departure_id": origin, "arrival_id": destination,
-              "outbound_date": outbound_date, "currency": "USD", "hl": "en", "api_key": key,
-              "type": "1" if return_date else "2"}
+    args = {"flyFrom": origin, "flyTo": destination, "departureDate": _kiwi_date(outbound_date),
+            "currency": "USD", "sort": "price"}
     if return_date:
-        params["return_date"] = return_date
-    client = http or httpx.Client(timeout=40)
+        args["returnDate"] = _kiwi_date(return_date)
+    out = mcp_client.call("kiwi__search_flight", args, caller=caller, internal=True)
+    if "error" in out:
+        return {"error": "Flight search failed; use web search instead."}
     try:
-        r = client.get(URL, params=params)
-        if r.status_code in (401, 403):
-            return {"error": "The flight price key was rejected; use web search instead."}
-        if r.status_code == 429:
-            return {"error": "This month's flight price lookups are used up; use web search instead."}
-        r.raise_for_status()
-        data = r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        log.warning("Flight search failed: %s", type(e).__name__)  # the URL holds the key: never log it
-        return {"error": "Flight price lookup failed; use web search instead."}
-    finally:
-        if http is None:
-            client.close()
+        data = json.loads(out["result"])
+    except ValueError:
+        return {"error": "Flight search returned something unreadable; use web search instead."}
     return summarise(data, origin, destination, outbound_date, return_date)
+
+
+def _kiwi_date(iso: str) -> str:
+    return datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m/%Y")
 
 
 def summarise(data: dict, origin: str, destination: str, outbound: str, ret: str | None) -> dict:
     options = []
-    for o in (data.get("best_flights") or []) + (data.get("other_flights") or []):
-        legs = o.get("flights") or []
-        if not legs or not isinstance(o.get("price"), int | float):
+    for it in data.get("itineraries") or []:
+        if not isinstance(it.get("price"), int | float):
             continue
+        legs = [leg for leg in (it.get("outbound"), it.get("inbound")) if isinstance(leg, dict)]
+        segs = [s for leg in legs for s in leg.get("segments") or []]
         options.append({
-            "price": o["price"],
-            "airlines": sorted({leg.get("airline", "") for leg in legs if leg.get("airline")}),
-            "stops": max(len(legs) - 1, 0),
-            "depart": (legs[0].get("departure_airport") or {}).get("time"),
-            "arrive": (legs[-1].get("arrival_airport") or {}).get("time"),
-            "minutes": o.get("total_duration"),
-            "flights": [leg.get("flight_number") for leg in legs if leg.get("flight_number")],
+            "price": it["price"],
+            "airlines": sorted({s.get("carrierName", "") for s in segs if s.get("carrierName")}),
+            "stops": sum(int(leg.get("stops") or 0) for leg in legs),
+            "depart": legs[0].get("departureTime") if legs else None,
+            "arrive": legs[0].get("arrivalTime") if legs else None,
+            "flights": [s.get("flightNumber") for s in segs if s.get("flightNumber")],
+            "booking_url": it.get("bookingUrl"),
         })
     options.sort(key=lambda x: x["price"])
-    insight = data.get("price_insights") or {}
-    typical = insight.get("typical_price_range") or []
-    return {
-        "route": f"{origin}-{destination}", "outbound_date": outbound, "return_date": ret,
-        "round_trip": bool(ret), "lowest": options[0]["price"] if options else insight.get("lowest_price"),
-        "price_level": insight.get("price_level"),
-        "typical_range": typical if len(typical) == 2 else None,
-        "options": options[:4],
-        "google_flights": (data.get("search_metadata") or {}).get("google_flights_url"),
-    }
+    return {"route": f"{origin}-{destination}", "outbound_date": outbound, "return_date": ret,
+            "round_trip": bool(ret), "currency": data.get("currency") or "USD",
+            "lowest": options[0]["price"] if options else None, "options": options[:4]}

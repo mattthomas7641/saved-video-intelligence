@@ -85,26 +85,26 @@ def test_cap_reached_answers_without_calling_gemini(session, monkeypatch):
 def test_mcp_tools_are_allowlisted_and_schemas_cleaned(monkeypatch):
     monkeypatch.undo()   # use the real mcp_client.tools here (the autouse fixture stubs it)
     mcp_client._cache.update(at=0.0, tools=[])
-    listed = [SimpleNamespace(name="search-flight", description="Search flights",
+    listed = [SimpleNamespace(name="get_flights", description="Award flights",
                               input_schema={"type": "object", "title": "x", "additionalProperties": False,
                                             "properties": {"flyFrom": {"type": "string", "title": "F"},
                                                            "adults": {"type": ["integer", "null"], "default": 1},
                                                            "cabin": {"enum": [None, "M", "C"], "type": ["string", "null"]}},
                                             "required": ["flyFrom", "nope"]}),
-              SimpleNamespace(name="feedback-to-devs", description="d", input_schema={"type": "object"})]
+              SimpleNamespace(name="search_help_docs", description="d", input_schema={"type": "object"})]
     reloaded = mcp_client
     try:
-        tools = reloaded.tools(lister=lambda url: listed if "kiwi" in url else [])
-        assert [t["name"] for t in tools] == ["kiwi__search_flight"]     # feedback tool not allowlisted
+        tools = reloaded.tools(lister=lambda url: listed if "seats" in url else [])
+        assert [t["name"] for t in tools] == ["seats__get_flights"]   # help-docs tool not allowlisted; Kiwi not raw
         params = tools[0]["parameters"]
         assert params["properties"]["adults"] == {"type": "integer"}
         assert params["properties"]["cabin"]["enum"] == ["M", "C"]
         assert params["required"] == ["flyFrom"] and "additionalProperties" not in params
         seen = {}
-        out = reloaded.call("kiwi__search_flight", {"flyFrom": "PHL"},
+        out = reloaded.call("kiwi__search_flight", {"flyFrom": "PHL"}, internal=True,
                             caller=lambda url, tool, args: seen.update(url=url, tool=tool) or "3 flights, $412 cheapest")
         assert seen == {"url": "https://mcp.kiwi.com", "tool": "search-flight"} and "412" in out["result"]
-        assert "error" in reloaded.call("kiwi__feedback_to_devs", {"text": "x"})
+        assert "error" in reloaded.call("kiwi__feedback_to_devs", {"text": "x"}, internal=True)
         assert "error" in reloaded.call("evil__send_money", {})
     finally:
         reloaded._cache.update(at=0.0, tools=[])
@@ -138,7 +138,8 @@ def test_mcp_call_adds_defaults_and_retries(monkeypatch):
             raise BaseExceptionGroup("tg", [ConnectionError("dropped")])
         return "ok"
 
-    out = mcp_client.call("kiwi__search_flight", {"flyFrom": "PHL"}, caller=flaky)
+    out = mcp_client.call("kiwi__search_flight", {"flyFrom": "PHL"}, caller=flaky, internal=True)
     assert out == {"result": "ok"} and calls[1]["currency"] == "USD" and len(calls) == 2
-    out = mcp_client.call("kiwi__search_flight", {"currency": "EUR"}, caller=lambda u, t, a: a["currency"])
+    out = mcp_client.call("kiwi__search_flight", {"currency": "EUR"}, caller=lambda u, t, a: a["currency"],
+                          internal=True)
     assert out == {"result": "EUR"}   # an explicit choice wins

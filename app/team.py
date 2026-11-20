@@ -10,10 +10,9 @@ small team built for that request. A request that doesn't split runs as one
 agent instead (the planner says so), so a team is never paid for when it isn't
 needed. Trips are a fixed preset of the same machinery (app/trip_planner.py).
 
-Specialists can only read: search, maps, fares, award seats, your saved items,
-your tasks and notes. The allowlist is enforced where tools run, not in the
+Specialists can only read: search, maps, fares, award seats, your saved items. The allowlist is enforced where tools run, not in the
 prompt, so nothing a web page says can make a specialist act. Anything that
-acts (calendar, reminders, Todoist writes) stays with the assistant and your tap.
+acts (calendar, reminders) stays with the assistant and your tap.
 """
 import contextvars
 import json
@@ -34,12 +33,10 @@ BRIEF_CHARS = 2500
 # Read-only tool groups a specialist can be given. "web" is Google Search + Maps (built in).
 GROUPS = {
     "web": [],
-    "flights": ["kiwi__search_flight", "flight_prices"],
+    "flights": ["flight_prices"],
     "points": ["seats__list_transfer_program_mileage_programs", "seats__get_flights", "seats__get_flight_details",
                "seats__search_airports"],
     "my_stuff": ["search_my_stuff", "list_todo"],
-    "tasks": ["todoist_list_tasks"],
-    "notes": ["notion_search_notes"],
 }
 READ_ONLY = {name for names in GROUPS.values() for name in names}
 
@@ -50,7 +47,7 @@ COORDINATOR = """You are coordinating a team's work for one person. Merge the sp
 _PLANNER = """Split the request into independent parts that specialists can research AT THE SAME TIME, or say it doesn't need a team. Reply with JSON only:
 {"team": true, "subtasks": [{"role": "short name", "job": "what to find out, specifically", "tools": ["web", ...]}]}
 or {"team": false}
-Rules: 2-5 subtasks; each must be doable without the others' results; give each only the tool groups it needs. Tool groups: web (Google Search and Maps: anything current), flights (cash fares), points (award seats and card transfer partners), my_stuff (things the user saved and their to-dos), tasks (their Todoist), notes (their Notion). Use "team": false for simple questions, single lookups, or anything that's one step after another."""
+Rules: 2-5 subtasks; each must be doable without the others' results; give each only the tool groups it needs. Tool groups: web (Google Search and Maps: anything current), flights (cash fares), points (award seats and card transfer partners), my_stuff (things the user saved and their to-dos). Use "team": false for simple questions, single lookups, or anything that's one step after another."""
 
 
 @dataclass
@@ -68,7 +65,7 @@ def tool_decls(groups: list[str]) -> list[dict]:
     that are actually available right now."""
     from app import agent, assistant, flights, mcp_client
 
-    pool = {t["name"]: t for t in assistant._TOOLS + assistant._TODOIST_TOOLS + assistant._NOTION_TOOLS}
+    pool = {t["name"]: t for t in assistant._TOOLS}
     if flights.enabled():
         t = agent._FLIGHTS_TOOL
         pool[t["name"]] = {"type": "function", "name": t["name"], "description": t["description"],

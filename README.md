@@ -254,7 +254,7 @@ app/
   telegram_bot.py    Optional Telegram doorway
   pipeline.py        One shared item: download -> watch -> research -> result
   gemini_client.py   Gemini: watch + research loop (default provider)
-  xai_client.py      Grok provider;  agent.py: shared prompts, tools, Claude loop
+  agent.py           Shared prompts, tools, report schema, and the Claude loop
   projects.py        Your projects: scan, cards, secret-safe file reader
   prefetch.py        Free GitHub/page lookups (public addresses only)
   analyze.py         The first-pass analysis schema (topic, summary, type)
@@ -263,11 +263,10 @@ app/
   evals.py           Eval cases, scoring and runs (`python -m app.evals`)
   quests.py          Follow-through: durable tasks, approvals, the scheduler
   calendar_busy.py   Busy times from your calendar's iCal feed; calendar links and .ics
-  flights.py         Live Google Flights fares (via SerpApi) for deals and price watches
+  flights.py         Live fares via Kiwi.com's MCP server, for trips, deals and price watches
   assistant.py       The "ask anything" chat agent (Telegram), its tools and profile
   team.py            Multi-agent: planner -> parallel read-only specialists -> coordinator
   trip_planner.py    The trip team preset;  trip_eval.py: team vs single agent, measured
-  todoist.py, notion.py   Your tasks and notes, as assistant tools
   mcp_client.py      Allowlisted outside MCP servers (Kiwi.com flights, seats.aero awards)
   mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
   otel.py            Optional OpenTelemetry export of run traces

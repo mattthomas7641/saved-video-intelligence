@@ -3,10 +3,7 @@ status check), fare watches and the live fare lookup. GitHub/SerpApi/Gemini are 
 import json
 from datetime import datetime, timedelta
 
-import httpx
-
 from app import agent, flights, quests
-from app.config import save_quest_settings
 from app.models import Action, ActionStatus, ActionType, Status, Task, Video
 
 
@@ -105,35 +102,39 @@ def test_fare_watch_reschedules_then_notifies_on_drop(session, monkeypatch):
     assert [h["lowest"] for h in json.loads(row.result)["history"]] == [850, 640]
 
 
-def test_flight_search_summarises_and_never_leaks_the_key():
-    save_quest_settings(serpapi_key="serp-secret")
+def test_flight_search_goes_through_kiwi_and_summarises():
     seen = {}
+    kiwi = {"currency": "USD", "itineraries": [
+        {"price": 702.0, "bookingUrl": "https://kiwi.com/u/a",
+         "outbound": {"stops": 0, "departureTime": "2027-03-02T11:00:00", "arrivalTime": "2027-03-03T15:00:00",
+                      "segments": [{"carrierName": "ANA", "flightNumber": "NH11"}]}, "inbound": None},
+        {"price": 655.0, "bookingUrl": "https://kiwi.com/u/b",
+         "outbound": {"stops": 1, "segments": [{"carrierName": "United", "flightNumber": "UA1"},
+                                                {"carrierName": "ANA", "flightNumber": "NH2"}]},
+         "inbound": {"stops": 0, "segments": [{"carrierName": "ANA", "flightNumber": "NH3"}]}},
+        {"priceFormatted": "no price"}]}
 
-    def handler(request):
-        seen["params"] = dict(request.url.params)
-        return httpx.Response(200, json={
-            "best_flights": [{"price": 702, "total_duration": 840, "flights": [
-                {"airline": "ANA", "flight_number": "NH 11", "departure_airport": {"time": "2027-03-02 11:00"},
-                 "arrival_airport": {"time": "2027-03-03 15:00"}}]}],
-            "other_flights": [{"price": 655, "flights": [{"airline": "United", "flight_number": "UA 1"},
-                                                         {"airline": "ANA", "flight_number": "NH 2"}]}],
-            "price_insights": {"lowest_price": 655, "price_level": "low", "typical_price_range": [800, 1100]}})
+    def caller(url, tool, args):
+        seen.update(url=url, tool=tool, args=args)
+        return json.dumps(kiwi)
 
-    out = flights.search("phl", "nrt", "2027-03-02", "2027-03-12",
-                         http=httpx.Client(transport=httpx.MockTransport(handler)))
-    assert out["lowest"] == 655 and out["price_level"] == "low" and out["typical_range"] == [800, 1100]
-    assert out["options"][0]["stops"] == 1 and out["round_trip"]
-    assert seen["params"]["engine"] == "google_flights" and seen["params"]["type"] == "1"
-    assert "serp-secret" not in json.dumps(out)
-    assert "error" in flights.search("Philly", "NRT", "2027-03-02")
-    failing = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429)))
-    assert "used up" in flights.search("PHL", "NRT", "2027-03-02", http=failing)["error"]
+    out = flights.search("phl", "nrt", "2027-03-02", "2027-03-12", caller=caller)
+    assert seen["tool"] == "search-flight" and seen["args"]["departureDate"] == "02/03/2027"
+    assert seen["args"]["returnDate"] == "12/03/2027" and seen["args"]["currency"] == "USD"
+    assert out["lowest"] == 655 and out["options"][0]["stops"] == 1 and out["round_trip"]
+    assert out["options"][0]["booking_url"] == "https://kiwi.com/u/b" and out["options"][0]["airlines"] == ["ANA", "United"]
+    assert "error" in flights.search("Philly", "NRT", "2027-03-02", caller=caller)
+    assert "error" in flights.search("PHL", "NRT", "2027-03-02",
+                                     caller=lambda *a: (_ for _ in ()).throw(ConnectionError("x")))
 
 
-def test_flight_tool_offered_only_with_a_key_and_not_for_tech():
+def test_kiwi_is_not_offered_to_the_model_raw():
+    from app import mcp_client
+    assert "error" in mcp_client.call("kiwi__search_flight", {"flyFrom": "PHL"}, caller=lambda *a: "{}")
+
+
+def test_flight_tool_offered_for_everyday_content_not_tech():
     names = lambda tools: [t["name"] for t in tools]  # noqa: E731
-    assert "flight_prices" not in names(agent.client_tools(False))
-    save_quest_settings(serpapi_key="k")
     assert "flight_prices" in names(agent.client_tools(False))
     assert "flight_prices" not in names(agent.client_tools(True))
 

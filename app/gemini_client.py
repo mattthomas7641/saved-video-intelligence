@@ -266,7 +266,7 @@ def analyze_video(video, client=None) -> AnalysisResult:
 # ---------------- project cards ----------------
 
 def project_card(name: str, material: str, client=None) -> tuple[str, float]:
-    from app.xai_client import _CARD_PROMPT
+    from app.projects import CARD_PROMPT as _CARD_PROMPT
 
     client = client or _client()
     model = _model("watch")

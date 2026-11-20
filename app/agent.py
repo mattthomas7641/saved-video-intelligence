@@ -5,7 +5,7 @@ This module holds the provider-neutral core - the prompt and playbooks, the
 tool schemas, the client-side tools, and the `Findings` the dashboard and
 notifications render - plus the Claude loop. The Gemini loop (the default:
 it watches the video itself, and its search is free up to 5,000 a month) lives in
-app/gemini_client.py, and a Grok loop in app/xai_client.py; both share all of it.
+app/gemini_client.py and shares all of it.
 
 Client-side tools: `github_repo` (live repo facts from the GitHub API, so a
 "10 repos you need" video gets checked against reality rather than the
@@ -756,10 +756,6 @@ def run(video, action_type: str, brief: str | None, budget_usd: float, on_progre
         from app import gemini_client
         return gemini_client.research(video, action_type, brief, budget_usd, on_progress=on_progress, client=client,
                                       web=web, x_search=x_search, context=context, tech=tech)
-    if provider == "xai":
-        from app import xai_client
-        return xai_client.research(video, action_type, brief, budget_usd, on_progress=on_progress, client=client,
-                                   web=web, x_search=x_search, context=context, tech=tech)
     return _run_anthropic(video, action_type, brief, budget_usd, on_progress, client, web, context, tech)
 
 

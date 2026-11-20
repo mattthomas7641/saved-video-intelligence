@@ -126,7 +126,7 @@ class Project(SQLModel, table=True):
     status: str = "active"            # detected: active | planned
     content_hash: str | None = None   # hash of the scanned files; the card is rebuilt only when it changes
     card: str | None = None           # ~200-word summary: purpose, stack, architecture, next steps
-    card_source: str | None = None    # "grok" or "readme" (no xAI key yet)
+    card_source: str | None = None    # "gemini" or "readme" (no key yet)
     cost_usd: float | None = None
     scanned_at: datetime = Field(default_factory=datetime.utcnow)
     card_updated_at: datetime | None = None

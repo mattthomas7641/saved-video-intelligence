@@ -88,11 +88,10 @@ _PROMPT = """You are Sidequest, one person's personal assistant, reached over Te
 How to work:
 - Use your tools instead of guessing: Google Search and Maps for anything current (hours, prices, news, availability), flight_prices for fares, search_my_stuff for anything they saved or sent before, list_todo for their open items.
 - Do the work, then answer. For a plan, give the plan; for a choice, recommend one and say why; for flights, give the best 2-3 options with prices and a link to finish on Google Flights or the airline.
-- Tasks and notes: if Todoist is connected, "remind me to…/add to my list" without a specific time goes to Todoist (with a due date if they gave one); remind_me is for a timed ping in Telegram. Save notes they want to keep to Notion when connected.
-- Never spend money, book, buy, send messages or change anything outside Sidequest yourself (adding to their own Todoist or Notion is fine). Propose it: calendar events with propose_calendar_event (they tap to add), fare and price watches, reminders. To book a flight, give them the exact option and the link to book it.
+- Never spend money, book, buy, send messages or change anything outside Sidequest yourself. Propose it: calendar events with propose_calendar_event (they tap to add), fare and price watches, reminders. To book a flight, give them the exact option and the link to book it.
 - Money, points and credit cards: give options and the math (cents per point, cash price vs points), not financial advice. Never ask for passwords or card numbers.
 - If something deserves a full write-up (a link they paste, a product, a repo), use research_in_depth.
-- Flights: search cash fares with kiwi__search_flight (its results carry booking links) or flight_prices; compare a few dates if they're flexible; show the best 2-3 with price, stops, times and the booking link. Booking itself happens on the link: say so plainly.
+- Flights: search cash fares with flight_prices (each option has a booking link); compare a few dates if they're flexible; show the best 2-3 with price, stops, times and the booking link. Booking itself happens on the link: say so plainly.
 - Points and miles: use the balances in "Profile". Find which programs a card transfers to with seats__list_transfer_program_mileage_programs (Chase Ultimate Rewards is "chaseus") and award space with seats__get_flights (cached, up to ~60 days out). Compare against the cash fare and give cents per point = (cash price − award taxes) ÷ points; above ~1.5¢ is usually good for Chase points, and the Chase Travel portal is the fallback to compare. Warn that transfers are one-way and instant: confirm the award seat on the airline's site before transferring. If you don't know their balance, ask and save it with update_profile.
 - Reply for a phone: under 1,200 characters unless they asked for detail, short lines, **bold** for key facts, no tables, no headers."""
 
@@ -110,33 +109,13 @@ def _context() -> str:
             + ("\nProfile: " + "; ".join(f"{k}: {v}" for k, v in profile.items()) if profile else ""))
 
 
-_TODOIST_TOOLS = [
-    _fn("todoist_add_task", "Add a task to the user's Todoist (their own to-do app). Runs right away.",
-        {"content": _S, "description": _S, "due_string": {"type": "string", "description": "Natural language, "
-         "e.g. 'tomorrow 5pm', 'every friday'"}, "priority": {"type": "integer", "description": "1 normal - 4 urgent"}},
-        ["content"]),
-    _fn("todoist_list_tasks", "The user's Todoist tasks matching a Todoist filter (default 'today | overdue'; "
-        "e.g. '7 days', '#Work', 'p1').", {"query": _S}, []),
-    _fn("todoist_complete_task", "Mark a Todoist task done (by id from todoist_list_tasks).", {"task_id": _S},
-        ["task_id"]),
-]
-_NOTION_TOOLS = [
-    _fn("notion_save_note", "Save a note to the user's Notion (a new page under their notes page): ideas, packing "
-        "lists, research they want to keep. Runs right away.", {"title": _S, "text": _S}, ["title", "text"]),
-    _fn("notion_search_notes", "Search the user's Notion pages (only those shared with Sidequest).",
-        {"query": _S}, ["query"]),
-]
-
-
 def _tools() -> list[dict]:
-    from app import agent, flights, mcp_client, notion, todoist
+    from app import agent, flights, mcp_client
 
     builtins = [{"type": "google_search"}, {"type": "google_maps"}]
     extra = [agent._FLIGHTS_TOOL] if flights.enabled() else []
-    return (builtins + _TOOLS + (_TODOIST_TOOLS if todoist.enabled() else [])
-            + (_NOTION_TOOLS if notion.enabled() else [])
-            + [{"type": "function", "name": t["name"], "description": t["description"],
-                "parameters": t["input_schema"]} for t in extra] + mcp_client.tools())
+    return (builtins + _TOOLS + [{"type": "function", "name": t["name"], "description": t["description"],
+                                  "parameters": t["input_schema"]} for t in extra] + mcp_client.tools())
 
 
 def ask(chat: str, text: str, client=None, run_tool=None) -> Reply:
@@ -289,21 +268,6 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
         from app import mcp_client
         if mcp_client.handles(name):
             return mcp_client.call(name, args)
-        if name.startswith("todoist_"):
-            from app import todoist
-            if name == "todoist_add_task":
-                return todoist.add_task(str(args.get("content", "")), str(args.get("description", "")),
-                                        str(args.get("due_string", "")), int(args.get("priority") or 1))
-            if name == "todoist_list_tasks":
-                return todoist.list_tasks(str(args.get("query") or "today | overdue"))
-            if name == "todoist_complete_task":
-                return todoist.complete_task(str(args.get("task_id", "")))
-        if name == "notion_save_note":
-            from app import notion
-            return notion.save_note(str(args.get("title", "")), str(args.get("text", "")))
-        if name == "notion_search_notes":
-            from app import notion
-            return notion.search_notes(str(args.get("query", "")))
         if name == "team_up":
             from app import team
             result = team.run_team(str(args.get("request", "")))

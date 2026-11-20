@@ -3,12 +3,11 @@ import json
 import threading
 from types import SimpleNamespace
 
-import httpx
 import pytest
 from sqlmodel import select
 
-from app import assistant, mcp_client, notion, todoist, trip_eval, trip_planner
-from app.config import save_profile_fact, save_quest_settings
+from app import assistant, mcp_client, trip_eval, trip_planner
+from app.config import save_profile_fact
 from app.models import Run
 
 
@@ -112,71 +111,6 @@ def test_trip_eval_stops_at_the_cap(tmp_path, monkeypatch):
 def test_plan_trip_tool_from_the_assistant(monkeypatch):
     monkeypatch.setattr(trip_planner, "plan", lambda request, mode="parallel": trip_planner.Plan(f"plan for {request}", mode))
     assert assistant._run_tool("plan_trip", {"request": "Miami"}, [])["plan"] == "plan for Miami"
-
-
-# ---------------- Todoist ----------------
-
-def test_todoist_add_list_complete():
-    save_quest_settings(todoist_token="tok")
-    seen = []
-
-    def handler(r):
-        seen.append((r.method, r.url.path, dict(r.url.params), r.headers.get("authorization"),
-                     json.loads(r.content) if r.content else None))
-        if r.url.path.endswith("/tasks"):
-            return httpx.Response(200, json={"id": "88", "content": "Passport photos", "due": {"string": "Fri"}})
-        if r.url.path.endswith("/filter"):
-            return httpx.Response(200, json={"results": [{"id": "88", "content": "Passport photos", "priority": 1}],
-                                             "next_cursor": None})
-        return httpx.Response(204)
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    added = todoist.add_task("Passport photos", due_string="friday", priority=9, http=http)
-    assert added["id"] == "88" and added["url"].endswith("/88")
-    assert seen[0][1] == "/api/v1/tasks" and seen[0][3] == "Bearer tok" and seen[0][4]["priority"] == 4
-    assert todoist.list_tasks(http=http)["tasks"][0]["content"] == "Passport photos"
-    assert seen[1][2]["query"] == "today | overdue"
-    assert todoist.complete_task("88", http=http)["ok"] and seen[2][1] == "/api/v1/tasks/88/close"
-    bad = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401)))
-    assert "rejected" in todoist.add_task("x", http=bad)["error"]
-
-
-def test_todoist_and_notion_tools_only_when_connected():
-    names = lambda: {t.get("name") for t in assistant._tools()}  # noqa: E731
-    assert "todoist_add_task" not in names() and "notion_save_note" not in names()
-    save_quest_settings(todoist_token="t", notion_token="n", notion_page="https://www.notion.so/Notes-" + "a" * 32)
-    assert {"todoist_add_task", "notion_save_note", "notion_search_notes"} <= names()
-
-
-# ---------------- Notion ----------------
-
-def test_notion_page_ids():
-    assert notion.page_id("https://www.notion.so/ws/Cafe-Notes-" + "1a2b3c4d" * 4 + "?pvs=4") == \
-        "1a2b3c4d-1a2b-3c4d-1a2b-3c4d1a2b3c4d"
-    assert notion.page_id("https://example.com/nope") == ""
-
-
-def test_notion_save_and_search():
-    save_quest_settings(notion_token="secret_x", notion_page="https://www.notion.so/Notes-" + "b" * 32)
-    seen = []
-
-    def handler(r):
-        seen.append((r.url.path, r.headers.get("notion-version"), json.loads(r.content)))
-        if r.url.path == "/v1/pages":
-            return httpx.Response(200, json={"url": "https://www.notion.so/Packing-list-c"})
-        return httpx.Response(200, json={"results": [{"url": "u", "last_edited_time": "2026-11-20T10:00:00Z",
-                                                      "properties": {"title": {"type": "title",
-                                                                               "title": [{"plain_text": "Packing list"}]}}}]})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    out = notion.save_note("Packing list", "Passport\n\nCharger", http=http)
-    assert out["url"].endswith("Packing-list-c")
-    path, version, body = seen[0]
-    assert version == notion.VERSION and body["parent"]["page_id"] == "b" * 8 + "-" + "b" * 4 + "-" + "b" * 4 + "-" + "b" * 4 + "-" + "b" * 12
-    assert len(body["children"]) == 2
-    assert notion.search_notes("packing", http=http)["pages"][0]["title"] == "Packing list"
-    missing = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
-    assert "share it" in notion.save_note("x", "y", http=missing)["error"]
 
 
 # ---------------- the general team (app/team.py) ----------------

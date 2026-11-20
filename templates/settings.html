@@ -57,14 +57,6 @@
     {% if key_status == "gemini_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
   </div>
 
-  <details class="key-row" {% if has_xai_key or key_status.startswith("xai") %}open{% endif %}>
-    <summary class="settings-summary"><strong>xAI API key</strong> <span class="hint" style="margin:0">optional: only if you switch research to Grok</span></summary>
-    <form action="/settings/xai" method="post" class="inline-form" style="margin-top:8px">
-      <input class="field" type="password" name="key" autocomplete="off" aria-label="xAI API key" placeholder="{{ 'Paste a new key to replace it' if has_xai_key else 'xai-…' }}" required>
-      <button class="btn btn-primary" type="submit">Save</button></form>
-    {% if key_status == "xai_invalid" %}<p style="color:var(--flag)">xAI didn't accept that key.</p>{% endif %}
-    {% if key_status == "xai_saved" %}<p style="color:var(--family)">Saved.</p>{% endif %}
-  </details>
 
   <form action="/settings/agent" method="post" style="display:grid;gap:10px;margin-top:16px">
     <label for="about_me"><strong>About me</strong> <span class="hint" style="margin:0">read every time it decides what's “useful for you”</span></label>
@@ -75,7 +67,6 @@
       <label>Research with
         <select class="field" name="provider" style="width:auto;padding:8px 14px">
           <option value="gemini" {{ "selected" if agent_settings.provider == "gemini" }}>Gemini (watches the video)</option>
-          <option value="xai" {{ "selected" if agent_settings.provider == "xai" }}>Grok</option>
           <option value="anthropic" {{ "selected" if agent_settings.provider == "anthropic" }}>Claude</option>
         </select></label>
       <label>Daily cap $<input class="field num" type="number" name="daily_cap_usd" min="0" step="0.5" value="{{ '%.2f'|format(agent_settings.daily_cap_usd) }}"></label>
@@ -124,25 +115,9 @@
       <input class="field" type="password" name="github_token" autocomplete="off" aria-label="GitHub token" placeholder="{{ 'Paste a new token to replace it' if quest_settings.github_token else 'github_pat_…' }}">
     </div>
     <div class="key-row">
-      <div><strong>Flights</strong> {% if quest_settings.serpapi_key %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Live fares on</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
-        <p class="hint" style="margin-top:4px">Your home airport, so deals and fare checks start from you. For live Google Flights prices, add a free <a href="https://serpapi.com/users/sign_up" target="_blank" rel="noopener">SerpApi</a> key (250 lookups a month); without one the agent uses Google Search.</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input class="field" name="home_airport" maxlength="3" style="width:90px;text-transform:uppercase" aria-label="Home airport" placeholder="PHL" value="{{ quest_settings.home_airport }}">
-        <input class="field" type="password" name="serpapi_key" autocomplete="off" aria-label="SerpApi key" style="flex:1;min-width:200px" placeholder="{{ 'Paste a new key to replace it' if quest_settings.serpapi_key else 'SerpApi key (optional)' }}">
-      </div>
-    </div>
-    <div class="key-row">
-      <div><strong>Todoist</strong> {% if quest_settings.todoist_token %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
-        <p class="hint" style="margin-top:4px">So the assistant can add, list and complete your tasks ("add get passport photos, due Friday"). Todoist → Settings → Integrations → Developer → API token.</p></div>
-      <input class="field" type="password" name="todoist_token" autocomplete="off" aria-label="Todoist API token" placeholder="{{ 'Paste a new token to replace it' if quest_settings.todoist_token else 'Todoist API token' }}">
-    </div>
-    <div class="key-row">
-      <div><strong>Notion notes</strong> {% if quest_settings.notion_token and quest_settings.notion_page %}<span class="tag-info" style="background:var(--family-soft);color:var(--family)">{{ icon("check") }} Connected</span>{% else %}<span class="hint" style="margin:0">optional</span>{% endif %}
-        <p class="hint" style="margin-top:4px">So it can save notes ("save this packing list") and search them. Make an integration at <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">notion.so/my-integrations</a>, paste its secret, then pick a page for notes and share it with the integration (··· → Connections) and paste its link.</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input class="field" type="password" name="notion_token" autocomplete="off" aria-label="Notion integration secret" style="flex:1;min-width:200px" placeholder="{{ 'Paste a new secret to replace it' if quest_settings.notion_token else 'Notion integration secret' }}">
-        <input class="field" name="notion_page" aria-label="Notion notes page link" style="flex:1;min-width:200px" placeholder="Notes page link" value="{{ quest_settings.notion_page }}">
-      </div>
+      <div><strong>Home airport</strong>
+        <p class="hint" style="margin-top:4px">Where flight searches, deals and fare watches start from. Fares come from Kiwi.com (free, no key).</p></div>
+      <input class="field" name="home_airport" maxlength="3" style="width:90px;text-transform:uppercase" aria-label="Home airport" placeholder="PHL" value="{{ quest_settings.home_airport }}">
     </div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="follow_ups" value="true" {{ "checked" if quest_settings.follow_ups }}> Check back on developing stories, launches and price drops (about $0.01 a check; you're told only when something changed)</label>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink-2)"><input class="check" type="checkbox" name="flex_background" value="true" {{ "checked" if quest_settings.flex_background }}> Half price for background work (follow-ups, evals): Gemini Flex, slower but nobody's waiting</label>
@@ -152,13 +127,9 @@
   </form>
   <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
     {% if quest_settings.calendar_ics_url %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="calendar_ics_url"><button class="btn btn-quiet" type="submit">Disconnect calendar</button></form>{% endif %}
-    {% if quest_settings.todoist_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="todoist_token"><button class="btn btn-quiet" type="submit">Disconnect Todoist</button></form>{% endif %}
-    {% if quest_settings.notion_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="notion_token"><button class="btn btn-quiet" type="submit">Disconnect Notion</button></form>{% endif %}
-    {% if quest_settings.serpapi_key %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="serpapi_key"><button class="btn btn-quiet" type="submit">Remove SerpApi key</button></form>{% endif %}
     {% if quest_settings.github_token %}<form action="/settings/quests/clear" method="post"><input type="hidden" name="what" value="github_token"><button class="btn btn-quiet" type="submit">Remove GitHub token</button></form>{% endif %}
   </div>
   {% if key_status == "quests_saved" %}<p style="color:var(--family);margin-top:8px">Saved.</p>{% endif %}
-  {% if key_status == "notion_page_bad" %}<p style="color:var(--flag);margin-top:8px">That doesn't look like a Notion page link; the rest was saved.</p>{% endif %}
   {% if key_status == "calendar_bad" %}<p style="color:var(--flag);margin-top:8px">Couldn't read that calendar address. Copy the secret address in iCal format again; the rest was saved.</p>{% endif %}
 </section>
 
