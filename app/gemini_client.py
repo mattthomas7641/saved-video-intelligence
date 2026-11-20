@@ -57,6 +57,24 @@ FLEX_TIMEOUT_S = 900            # Flex targets 1-15 minutes; Google recommends c
 _tier: ContextVar[str] = ContextVar("gemini_tier", default="standard")
 
 
+# Per-step model overrides (the eval comparison runs the same cases on different models).
+_models: ContextVar[dict] = ContextVar("gemini_models", default={})
+
+
+@contextmanager
+def models(watch: str | None = None, research: str | None = None):
+    token = _models.set({k: v for k, v in {"watch": watch, "research": research}.items() if v})
+    try:
+        yield
+    finally:
+        _models.reset(token)
+
+
+def _model(step: str) -> str:
+    """The model for a step: an override if one is set, else the configured default."""
+    return _models.get().get(step) or (AGENT_MODEL_GEMINI if step == "research" else ANALYSIS_MODEL_GEMINI)
+
+
 @contextmanager
 def tier(name: str):
     token = _tier.set(name if name in ("standard", "flex") else "standard")
@@ -215,7 +233,7 @@ def can_watch(video) -> bool:
 def analyze_video(video, client=None) -> AnalysisResult:
     """Watch once, fill record_analysis, and keep what was heard and seen on the Video."""
     client = client or _client()
-    model = ANALYSIS_MODEL_GEMINI
+    model = _model("watch")
     prompt = build_params(video)["messages"][0]["content"]
     media = _media(video)
     if media:
@@ -247,7 +265,7 @@ def project_card(name: str, material: str, client=None) -> tuple[str, float]:
     from app.xai_client import _CARD_PROMPT
 
     client = client or _client()
-    model = ANALYSIS_MODEL_GEMINI
+    model = _model("watch")
     interaction = _create(client, model=model, system_instruction=_CARD_PROMPT,
                           input=f"Project: {name}\n\n{material[:24000]}",
                           generation_config={"thinking_level": "low"})
@@ -280,7 +298,7 @@ def research(video, action_type: str, brief: str | None, budget_usd: float, on_p
 
 
 def _research(video, action_type, brief, budget_usd, on_progress, client, web, context, tech) -> agent.Findings:
-    model = AGENT_MODEL_GEMINI
+    model = _model("research")
     builtins = [{"type": "google_search"}] + ([{"type": "google_maps"}] if action_type == "place" else [])
     tools = [*(builtins if web else []), *[_fn(t) for t in agent.client_tools(tech)]]
     system = agent.system_prompt(tech) + (
@@ -357,7 +375,7 @@ def follow_up(payload: dict, client=None) -> dict:
     """One check-back: search for news since the report, return record_update's fields
     (`changed`, `headline`, `summary`, `keep_watching`, `links`) plus `cost_usd`."""
     client = client or _client()
-    model = ANALYSIS_MODEL_GEMINI
+    model = _model("watch")
     text = (f"Today's date: {time.strftime('%Y-%m-%d')}\n"
             f"Report date: {payload.get('reported_on', 'unknown')}\n"
             f"What it was about: {payload.get('headline', '')}\n"

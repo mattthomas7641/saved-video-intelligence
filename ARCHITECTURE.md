@@ -26,6 +26,12 @@ flowchart LR
     R2 --> F
     F --> H[home page<br/>To do / Nothing to do / Done / Not for me]
     F --> N[phone notification<br/>ntfy or Telegram]
+    F --> Q[(Task rows<br/>app/quests.py)]
+    Q -->|proposed: your tap| A1[calendar slot<br/>GitHub issue]
+    Q -->|scheduled| S1[scheduler<br/>check back later<br/>Flex tier]
+    S1 -->|only if changed| N
+    M[MCP clients<br/>Claude Code etc.] <-->|stdio or /mcp/| X[app/mcp_server.py]
+    X --> F
 ```
 
 The archive (`/dashboard`) is the older, read-only library: ~450 TikTok saves
@@ -35,6 +41,16 @@ analyzed with Claude Haiku before Sidequest existed.
 
 ```mermaid
 erDiagram
+    ACTION ||--o{ TASK : "follow-through"
+    TASK {
+        int id PK
+        int action_id FK
+        string kind "calendar | github_issue | follow_up"
+        string status "proposed | scheduled | running | done | failed | declined | cancelled"
+        datetime run_at "when a scheduled check runs"
+        string payload "JSON: what to do"
+        string result "JSON: link, issue URL, the update found"
+    }
     VIDEO ||--o| ACTION : "researched as"
     VIDEO {
         int id PK
@@ -151,6 +167,40 @@ hand where it was wrong), so they test the traffic that matters rather than
 invented examples. They hold personal content, so they live in `data/evals/`
 (git-ignored), not in the repo. Runs are manual, capped per run, and recorded as
 `eval` runs that count in the ledger but not against the daily cap.
+
+#### Follow-through is durable state, not a framework
+After a report, the agent can propose actions and schedule check-backs. The
+current agent frameworks (LangGraph, Google ADK, the vendor SDKs) and durable
+execution engines (Temporal, DBOS, Restate) all offer this, but each adds a
+runtime to learn and operate for what is, here, a small state machine. A `Task`
+row is the checkpoint: `proposed -> running -> done` waits for your approval,
+`scheduled -> running -> done` waits for a time. One scheduler thread claims due
+tasks with a conditional `UPDATE ... WHERE status = 'scheduled'`, so a task never
+runs twice; at startup anything left `running` goes back (a check-back is retried,
+an approved issue returns to "proposed", so nothing is done twice without you
+seeing it). The agent loop itself stays a plain, provider-neutral tool loop.
+
+#### Approval is the boundary for anything outward-facing
+Reading is autonomous; acting isn't. Calendar slots are links to Google
+Calendar's own "add event" page (or an .ics), so nothing is written to your
+calendar by the app at all; the calendar feed it reads is an iCal URL, read-only
+by construction, and only busy times reach the model. Issues are opened with a
+token you scope, only after a tap. Notification buttons are signed per task, so
+a forwarded notification can't approve anything else.
+
+#### MCP in both directions of trust
+Sidequest is an MCP server, so other agents can use what it knows. Over stdio
+(`docker compose exec`) nothing listens on the network; over HTTP the endpoint
+sits behind a bearer token and the app's Host checks. The tools are read-only
+except `send_to_sidequest`, which goes through the same private inbox as the
+Shortcut, and none can approve follow-through.
+
+#### Cheaper where nobody is waiting
+Gemini's Flex tier is half price but answers in minutes and is best effort.
+Background work (check-backs, evals) uses it by default and falls back to the
+standard tier when Google sheds the request; new shares use it only if you opt
+in. Per-step model overrides let the eval set measure a cheaper model before
+it's switched on.
 
 #### Separate `Action` table, not columns on `Video`
 `Video` is the stable library table; the research workflow changes shape often.

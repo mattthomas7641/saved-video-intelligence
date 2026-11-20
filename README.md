@@ -19,9 +19,16 @@ links and screenshots cost less.
 - **Everything else, too.** AI news is traced to its source. A food video becomes
   an address, hours and the best day to go. Products get real prices and red
   flags such as paid promotions.
+- **It follows through, with your OK.** A food spot comes back with the menu and
+  prices, how to book, and 2–3 times you're free; one tap puts it in your
+  calendar. A tool that fits a project comes with the GitHub issue to open there,
+  opened only when you approve it. A story that's still developing gets checked
+  again in a week or a month, and you hear about it only if something changed.
 - **A to-do list that makes you follow through.** Each result arrives as a phone
   notification and stays on the To do list with its next step (try, build, buy,
   go or skip) until you mark it done or "not for me".
+- **Usable from other agents.** Sidequest is an MCP server: Claude Code or any MCP
+  client can search what you've sent, read reports and send new things in.
 - **The archive.** About 450 older TikTok saves analyzed before Sidequest stay
   browsable under **Archive**.
 
@@ -63,11 +70,18 @@ Share → Telegram bot (optional)           ─┴─> intake ─> research lane
    red flags, alternatives, and the next step. It never touches your projects.
 5. **Act on it.** The home page sorts results by topic into **To do**, **Nothing
    to do** (looked into, nothing to act on), **Done** and **Not for me**.
+6. **Follow-through** (`app/quests.py`). A report can propose next steps, each a
+   durable task: calendar slots (they avoid your busy times if you connect a
+   calendar's secret iCal address, read-only, and only busy *times* reach the
+   model), a GitHub issue for the project it fits, or a scheduled check-back.
+   Anything that changes something outside Sidequest waits for your tap, on the
+   report or on the notification itself. Check-backs only read the web, cost
+   about a cent, and run on Gemini's half-price Flex tier.
 
 Grok and Claude can be switched in for research in Settings; they work from a
 Whisper transcript and OCR instead of watching the video.
 
-### Traces, memory and evals
+### Traces, memory, evals and MCP
 
 - **Every paid call is traced.** Each attempt (watching, research, project
   cards) is one row in a run ledger: its model calls, tool calls and searches in
@@ -85,7 +99,22 @@ Whisper transcript and OCR instead of watching the video.
   current prompts and models and scores type, verdict, project matches, ignored
   calls to action and report format, so a prompt or model change shows up as a
   number. Runs are manual, capped (an estimated $0.03–0.05 a case) and kept off the
-  daily cap; cases live only on your machine.
+  daily cap; cases live only on your machine. `python -m app.evals run
+  --watch-model … --research-model … --tier flex` runs the same cases on another
+  setup, and `python -m app.evals table` compares every run side by side.
+- **Standard traces.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` and every run is also
+  exported as OpenTelemetry spans (GenAI semantic conventions: `invoke_agent`,
+  `chat`, `execute_tool`), so it opens in Langfuse, Phoenix or Jaeger.
+- **MCP server** (`app/mcp_server.py`). Tools: `list_sidequests`, `get_report`,
+  `search_sidequests`, `upcoming`, `send_to_sidequest`. Locally it runs inside
+  the container over stdio, so nothing is exposed:
+
+  ```bash
+  claude mcp add sidequest -- docker compose -f "$PWD/docker-compose.yml" exec -T app python -m app.mcp_server
+  ```
+
+  Over the network it's at `/mcp/` behind a bearer token from Settings. No tool
+  can approve follow-through; that stays with you.
 
 ## Setup
 
@@ -109,6 +138,11 @@ Open `http://127.0.0.1:8787/settings`, then:
    Mark each one active, planned or ignored. Project folders that are symlinks to
    elsewhere need their targets mounted too: list them in a git-ignored
    `docker-compose.override.yml`.
+4. **Follow-through** (optional): your calendar's secret iCal address, so
+   suggested times avoid busy ones, and a fine-grained GitHub token with
+   Issues read/write on your own repos, used only when you approve an issue.
+
+If something else already uses port 8787, start it with `SIDEQUEST_PORT=8790 docker compose up -d`.
 
 To use it from your phone, put the Mac and phone on one
 [Tailscale](https://tailscale.com) network, run `tailscale serve --bg 8787`, and
@@ -129,8 +163,12 @@ using it. Things that could still reach it are handled explicitly:
   reads go through a deny-list (no `.env`, `secrets/`, `data/`, keys, binaries,
   symlink escapes) and have credential-shaped strings scrubbed.
 - **The relay**: ntfy topic names are long and random, every inbound message needs
-  a secret token, and "Research deeper" buttons carry a per-action signature, not
-  the token. Telegram answers one paired chat; pairing codes expire in 10 minutes.
+  a secret token, and notification buttons ("Research deeper", "Open the issue",
+  a calendar slot) carry a signature for that one action, not the token.
+- **Acting on your behalf**: nothing outside Sidequest changes without your tap.
+  The GitHub token is yours to scope (Issues only); the calendar is read-only by
+  construction (an iCal feed) and event titles never leave the app; MCP tools
+  can't approve anything. Telegram answers one paired chat; pairing codes expire in 10 minutes.
 - **Secrets** live in `data/secrets.json` (0600, atomic writes, never overwritten
   if unreadable) and never appear in logs or error messages.
 - **Dependencies** are pinned; `pip-audit` reports no known vulnerabilities.
@@ -148,7 +186,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (295), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (328), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout
@@ -171,6 +209,10 @@ app/
   tracing.py         Run traces and the cost ledger behind the daily cap
   memory.py          Embeddings + recall of related past reports
   evals.py           Eval cases, scoring and runs (`python -m app.evals`)
+  quests.py          Follow-through: durable tasks, approvals, the scheduler
+  calendar_busy.py   Busy times from your calendar's iCal feed; calendar links and .ics
+  mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
+  otel.py            Optional OpenTelemetry export of run traces
   download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)
   services/dashboard_query.py          The archive's filters and stats
 alembic/             Schema migrations
