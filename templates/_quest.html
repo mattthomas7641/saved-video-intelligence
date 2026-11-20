@@ -1,0 +1,106 @@
+{% from "_icons.html" import icon %}
+
+{% macro qnum(a) -%}<span class="qnum">Q-{{ "%03d"|format(a.id) }}</span>{%- endmacro %}
+
+{# The state marker: a diamond, like the logo's. Filled orange = waiting on you; blue outline = scheduled;
+   ink outline = open; moss = done; hatched = nothing to do; red = stuck. #}
+{% macro marker(state) -%}<span class="dia dia-{{ state }}" aria-hidden="true"></span>{%- endmacro %}
+
+{% macro verdict(v) -%}
+{% if v == "worth_it" %}<span class="vd vd-yes">Do it</span>
+{% elif v == "maybe" %}<span class="vd vd-maybe">Optional</span>
+{% elif v == "skip" %}<span class="vd vd-skip">Nothing to do</span>{% endif %}
+{%- endmacro %}
+
+{% macro value_tag(v) -%}
+{% if v == "personal_and_resume" %}<span class="tag">Personal use + resume</span>
+{% elif v == "fun" %}<span class="tag">Fun / personal use</span>
+{% elif v == "weak_resume" %}<span class="tag">Weak resume line</span>
+{% elif v == "not_worth_it" %}<span class="tag">Not worth it</span>{% endif %}
+{%- endmacro %}
+
+{% macro activity_line(act, watched_video) -%}
+{% if act %}
+{% set bits = [] %}
+{% if act.watched and watched_video %}{% set _ = bits.append("watched the video") %}{% endif %}
+{% if act.searches %}{% set _ = bits.append(act.searches ~ " search" ~ ("es" if act.searches != 1 else "")) %}{% endif %}
+{% if act.repos %}{% set _ = bits.append(act.repos ~ " repo" ~ ("s" if act.repos != 1 else "") ~ " checked") %}{% endif %}
+{% if act.files %}{% set _ = bits.append(act.files ~ " file" ~ ("s" if act.files != 1 else "") ~ " read in " ~ act.projects|join(", ")) %}{% endif %}
+{% if act.seconds %}{% set _ = bits.append(act.seconds ~ "s") %}{% endif %}
+{% if act.cost %}{% set _ = bits.append("$%.2f"|format(act.cost) if act.cost >= 0.005 else "<1¢") %}{% endif %}
+{% if bits %}<span class="did">{{ bits|join(" · ") }}</span>{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{# One line in the log: marker, number, title, and what it is / what happened, dense. #}
+{% macro row(i, act, type_labels) -%}
+{% set a = i.action %}{% set v = i.video %}
+<li class="row row-{{ i.state }}">
+  <a class="row-hit" href="/q/{{ a.id }}">
+    {{ marker(i.state) }}
+    {{ qnum(a) }}
+    <span class="row-main">
+      <span class="row-title" style="view-transition-name: q{{ a.id }}">{{ i.title|nocite }}</span>
+      <span class="row-meta">{{ type_labels.get(i.type, "Other") }}{% if i.report %} · {{ verdict(a.verdict) }}{% endif %}{% if act %} · {{ activity_line(act, v.tiktok_url.startswith("http")) }}{% endif %}</span>
+    </span>
+    <span class="row-date">{{ a.updated_at|short_date }}</span>
+  </a>
+</li>
+{%- endmacro %}
+
+{# The objective controls for a tracked quest: act in place. #}
+{% macro objectives(tasks, back) -%}
+{% set cal = tasks|selectattr("kind", "equalto", "calendar")|list %}
+{% if cal %}
+<div class="acts">
+  {% for t in cal %}
+  <form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("calendar") }}{{ t.title.split(" · ")[0] }}</button></form>
+  {% endfor %}
+</div>
+
+<p class="fine">Opens Google Calendar with it filled in. Apple Calendar: {% for t in cal %}<a href="/tasks/{{ t.id }}/event.ics">{{ t.title.split(" · ")[0] }}</a>{{ ", " if not loop.last }}{% endfor %}.</p>
+{% endif %}
+{% for t in tasks if t.kind == "flights_calendar" %}
+<div class="acts"><form action="/tasks/{{ t.id }}/approve" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("plane") }}{{ t.title }}</button></form></div>
+{% endfor %}
+{% for t in tasks if t.kind == "github_issue" %}
+<p class="obj-detail">{{ t.title }}</p>
+{% if t.error %}<p class="fine is-bad">{{ t.error }}</p>{% endif %}
+<div class="acts">
+  <form action="/tasks/{{ t.id }}/approve" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit">{{ icon("code") }}Open the issue</button></form>
+  <form action="/tasks/{{ t.id }}/decline" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain" type="submit">No thanks</button></form>
+</div>
+{% endfor %}
+{%- endmacro %}
+
+{# Everything the agent proposed or scheduled for one quest, in every state. #}
+{% macro next_steps(a, ts, back) -%}
+{% set live = ts|rejectattr("status", "in", ["declined", "cancelled"])|list %}
+{% if live %}
+<section class="nsteps" aria-label="Next steps">
+  <h2>Next steps</h2>
+  {% set waiting = live|selectattr("status", "in", ["proposed", "failed"])|rejectattr("kind", "in", ["follow_up", "reminder", "flight_status", "fare_watch"])|list %}
+  {% if waiting %}<div class="step step-wait">{{ marker("wait") }}<div>{{ objectives(waiting, back) }}</div></div>{% endif %}
+  {% for t in live if t.kind == "calendar" and t.status == "done" %}{% if loop.first %}<div class="step">{{ marker("done") }}<p>Picked <b>{{ t.title.split(" · ")[0] }}</b>. <a href="/tasks/{{ t.id }}/event.ics">Apple Calendar (.ics)</a></p></div>{% endif %}{% endfor %}
+  {% for t in live if t.kind == "flights_calendar" and t.status == "done" %}{% set res = t.result|fromjson %}
+  <div class="step">{{ marker("done") }}<div><p>Add each flight:</p><div class="acts">{% for e in res.events or [] %}<a class="btn btn-plain" href="{{ e.google_url }}" target="_blank" rel="noopener">{{ e.label }}</a>{% endfor %}<a class="btn btn-plain" href="/tasks/{{ t.id }}/event.ics">All flights (.ics)</a></div></div></div>
+  {% endfor %}
+  {% for t in live if t.kind == "github_issue" and t.status in ("done", "running") %}{% set res = t.result|fromjson %}
+  <div class="step">{{ marker("done") }}<p>{% if t.status == "done" %}Opened: <a href="{{ res.url }}" target="_blank" rel="noopener">{{ t.title }}</a>{% else %}Opening: {{ t.title }}…{% endif %}</p></div>
+  {% endfor %}
+  {% for t in live if t.kind in ("follow_up", "reminder", "flight_status", "fare_watch") %}{% set res = t.result|fromjson %}{% set p = t.payload|fromjson %}
+  <div class="step">{{ marker("way" if t.status == "scheduled" else ("stuck" if t.status == "failed" else "done")) }}
+    <div>
+      {% if t.status == "scheduled" %}
+      <p><b>{{ t.run_at|short_date }}</b> · {{ p.watch_for or t.title }}{% if t.kind == "fare_watch" and (p.history or []) and p.history[-1].lowest %} · last seen ${{ "%.0f"|format(p.history[-1].lowest) }}{% endif %}</p>
+      {% if t.kind in ("follow_up", "fare_watch") %}<form action="/tasks/{{ t.id }}/cancel" method="post"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-plain btn-sm" type="submit">Stop</button></form>{% endif %}
+      {% elif t.status == "done" and res.changed %}<p><b>Update {{ t.updated_at|short_date }}:</b> {{ res.headline }}{% if res.summary %}. {{ res.summary|nocite }}{% endif %}</p>
+      {% elif t.status == "done" and t.kind == "fare_watch" %}<p>{% if res.hit %}<b>Dropped to ${{ "%.0f"|format(res.lowest) }}</b>, under the target.{% else %}Stopped watching near the trip; no drop below target.{% endif %}</p>
+      {% elif t.status == "done" %}<p class="dim">{{ t.title }}: done {{ t.updated_at|short_date }}{% if res.headline %} ({{ res.headline }}){% endif %}.</p>
+      {% elif t.status == "failed" %}<p class="is-bad">{{ t.title }}: {{ t.error }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{%- endmacro %}

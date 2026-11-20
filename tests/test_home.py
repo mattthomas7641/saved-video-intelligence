@@ -1,4 +1,4 @@
-"""The Sidequest home page: verdict-aware tabs, report clean-up, the status poll, dates."""
+"""The Sidequest pages: the log's verdict-aware views, report clean-up, the status poll, dates."""
 import json
 from datetime import datetime, timedelta
 
@@ -24,7 +24,7 @@ def test_nothing_to_do_items_leave_the_to_do_list(session):
     _item(session, "worth_it", headline="DoThisOne")
     _item(session, "skip", headline="NothingHere")
     client = TestClient(app)
-    todo, fyi = client.get("/").text, client.get("/?tab=fyi").text
+    todo, fyi = client.get("/log").text, client.get("/log?view=nothing").text
     assert "DoThisOne" in todo and "NothingHere" not in todo
     assert "NothingHere" in fyi and "DoThisOne" not in fyi
 
@@ -62,13 +62,25 @@ def test_dates_are_local_and_friendly():
 
 
 def test_research_deeper_asks_before_spending(session):
-    _item(session, "worth_it", headline="Spendy")
-    assert "confirm('Research this again" in TestClient(app).get("/").text
+    a = _item(session, "worth_it", headline="Spendy")
+    assert "confirm('Research this again" in TestClient(app).get(f"/q/{a.id}").text
 
 
-def test_update_notice_starts_hidden_and_fyi_items_can_be_closed(session):
-    _item(session, "skip", headline="Quiet")
-    _item(session, None, status=ActionStatus.IN_PROGRESS, headline="Busy")
-    page = TestClient(app).get("/?tab=fyi").text
-    assert 'id="updates" hidden' in page
-    assert "/done" in page and "Not for me" in page and "Back to To do" not in page
+def test_nothing_to_do_quests_can_be_closed_and_reopened(session):
+    a = _item(session, "skip", headline="Quiet")
+    client = TestClient(app)
+    page = client.get(f"/q/{a.id}").text
+    assert "/done" in page and "Not for me" in page and "Back to open" not in page
+    client.post(f"/agent/{a.id}/done", data={"next": f"/q/{a.id}"})
+    assert "Back to open" in client.get(f"/q/{a.id}").text
+
+
+def test_quest_pages_and_old_links(session):
+    a = _item(session, "worth_it", headline="Findable")
+    client = TestClient(app)
+    assert client.get("/agent", follow_redirects=False).headers["location"] == "/"
+    assert client.get("/q/99999").status_code == 404
+    assert f"Q-{a.id:03d}" in client.get("/log").text
+    assert "Findable" in client.get("/log?q=findable").text and "Findable" not in client.get("/log?q=zebra").text
+    assert client.get("/dashboard").status_code == 404           # the archive is gone
+    assert "Ledger" in client.get("/ledger").text

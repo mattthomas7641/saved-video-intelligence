@@ -289,9 +289,11 @@ def test_report_shows_next_steps_and_routes_work(session):
     a = _action(session, {**PLACE, "follow_up": {"after_days": 7, "watch_for": "new menu"}})
     tasks = quests.plan(session, a, json.loads(a.result))
     client = TestClient(app)
-    page = client.get("/").text
-    assert "Pick a time to go" in page and "Checking back" in page and "new menu" in page
-    assert "Waiting on you: pick a time" in page
+    home = client.get("/").text
+    assert "1 waiting on you" in home and "Pick a time" in home          # tracked, acted on in place
+    assert "Waypoints" in home and "new menu" in home and "Check back" in home
+    quest = client.get(f"/q/{a.id}").text
+    assert "Next steps" in quest and "new menu" in quest and f"/tasks/{tasks[0].id}/approve" in quest
     ics = client.get(f"/tasks/{tasks[0].id}/event.ics")
     assert ics.status_code == 200 and ics.headers["content-type"].startswith("text/calendar")
     r = client.post(f"/tasks/{tasks[0].id}/approve", data={"next": "/"}, follow_redirects=False)
@@ -330,9 +332,10 @@ def test_activity_line_and_waiting_on_you(session):
     session.commit()
     act = tracing.activity(session, [a.id])[a.id]
     assert act["searches"] == 3 and act["repos"] == 1 and act["files"] == 1 and act["projects"] == ["gw"]
-    page = TestClient(app).get("/").text
-    assert "Waiting on you" in page and "1 waiting on you" in page
-    assert "3 web searches" in page and "read 1 file in gw" in page
+    client = TestClient(app)
+    assert "1 waiting on you" in client.get("/").text
+    page = client.get(f"/q/{a.id}").text
+    assert "3 searches" in page and "1 file read in gw" in page
     assert _plain_error("Research failed: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF") == \
         "The connection dropped while researching. Tap Retry."
     assert _plain_error("Research agent is paused in Settings.") == "Research agent is paused in Settings."

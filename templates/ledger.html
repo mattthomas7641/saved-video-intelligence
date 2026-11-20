@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Ledger · Sidequest{% endblock %}
+{% block content %}
+<header class="sec-head">
+  <h1>Ledger</h1>
+  <p class="lede">Every paid call is a run with its trace. <b>${{ "%.2f"|format(month) }}</b> in the last 30 days; <b>${{ "%.2f"|format(spent_today) }}</b> of the ${{ "%.2f"|format(cap) }} cap today. <a href="/settings#research">Change the cap</a>.</p>
+</header>
+
+<div class="ledger">
+  <section aria-labelledby="days-h">
+    <h2 id="days-h" class="sec-label">{{ icon("bars") }}Last 14 days</h2>
+    {% if days %}
+    <ol class="days">
+      {% for day, dollars, runs in days %}
+      <li><span class="num">{{ day }}</span><span class="day-bar"><span style="width:{{ (dollars / max_day * 100)|round(1) }}%"></span></span><span class="num">${{ "%.2f"|format(dollars) }}</span><span class="dim num">{{ runs }} run{{ "" if runs == 1 else "s" }}</span></li>
+      {% endfor %}
+    </ol>
+    {% else %}<p class="fine">No spending yet.</p>{% endif %}
+  </section>
+
+  <section aria-labelledby="runs-h">
+    <h2 id="runs-h" class="sec-label">{{ icon("list") }}Recent runs</h2>
+    <table class="table">
+      <thead><tr><th>When</th><th>What</th><th>Model</th><th class="num">Time</th><th class="num">Cost</th><th></th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+      <tr{% if r.status != "ok" %} class="is-bad"{% endif %}>
+        <td class="num">{{ r.started_at|short_date }}</td>
+        <td>{{ r.kind|replace("_", " ") }}{% if r.status != "ok" %} · failed{% endif %}</td>
+        <td class="dim">{{ (r.model or "—")|truncate(28, True, "…") }}</td>
+        <td class="num">{{ "%.0fs"|format((r.duration_ms or 0) / 1000) }}</td>
+        <td class="num">${{ "%.3f"|format(r.cost_usd or 0) }}</td>
+        <td>{% if r.action_id %}<a href="/runs/{{ r.action_id }}">Q-{{ "%03d"|format(r.action_id) }}</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="evals-h">
+    <h2 id="evals-h" class="sec-label">{{ icon("check") }}Evals</h2>
+    {% if eval_runs %}
+    <table class="table">
+      <thead><tr><th>Run</th><th>Setup</th><th class="num">Cases</th><th class="num">Type</th><th class="num">Verdict ±1</th><th class="num">$/case</th></tr></thead>
+      <tbody>{% for e in eval_runs %}<tr><td class="num">{{ e.at[:10] }}</td><td>{{ e.config or e.provider }}</td><td class="num">{{ e.cases }}</td><td class="num">{{ "%.0f"|format((e.accuracy.type or 0) * 100) }}%</td><td class="num">{{ "%.0f"|format((e.accuracy.verdict_within_one or 0) * 100) }}%</td><td class="num">${{ "%.3f"|format(e.cost_per_case or 0) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p class="fine">No eval runs yet.</p>{% endif %}
+    <p><a class="btn btn-plain" href="/evals">{{ icon("check") }}Cases and runs</a></p>
+  </section>
+</div>
+{% endblock %}

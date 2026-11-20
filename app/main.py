@@ -24,10 +24,10 @@ from app import (
     quests,
     telegram_bot,
     tracing,
+    web,
 )
 from app.config import (
     BASE_DIR,
-    GROUPS,
     SecretsUnreadable,
     get_action_settings,
     get_agent_settings,
@@ -51,12 +51,11 @@ from app.config import (
     save_telegram_settings,
 )
 from app.db import get_db, init_db
-from app.models import Action, ActionStatus, Status, Video
+from app.models import Action, ActionStatus, Video
 from app.schemas import (
     HealthResponse,
 )
 from app.security import GuardMiddleware
-from app.services import dashboard_query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per Telegram/ntfy poll is noise
@@ -72,7 +71,9 @@ async def _lifespan(_app):
 app = FastAPI(title="Sidequest", lifespan=_lifespan)
 app.add_middleware(GuardMiddleware)  # no login: refuse other hosts and cross-site writes (app/security.py)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-app.mount("/mcp", _mcp_http)  # Sidequest as an MCP server (app/mcp_server.py), behind a bearer token
+app.mount("/mcp", _mcp_http)
+# Sidequest as an MCP server (app/mcp_server.py), behind a bearer token
+app.include_router(web.router)   # Tracked, Log, quest pages, Ledger (app/web.py)
 LOCAL_TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/New_York"))
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -218,67 +219,6 @@ if not os.environ.get("SVI_DISABLE_TELEGRAM"):  # no background work in tests
     projects.start_rescans()
 
 
-@app.get("/")
-def root(request: Request, session: Session = Depends(get_db), tab: str = "todo", group: str = ""):
-    """Home: the things you sent, sorted into topic groups, each ready to act on."""
-    return quests_page(request, session, tab, group)
-
-
-@app.get("/dashboard")
-def dashboard(request: Request, session: Session = Depends(get_db), tab: str = "processed", group: str = "",
-              category: str = "", theme: str = "", q: str = "", sort: str = "score", show: str = "",
-              page: int = 1):
-    """The Archive: the older TikTok saves analyzed before Sidequest, read-only."""
-    context = dashboard_query.build_dashboard_context(
-        session, tab=tab, group=group, category=category, theme=theme, q=q, sort=sort, show=show, page=page,
-    )
-    return templates.TemplateResponse(request, "dashboard.html", {
-        **context,
-        "next_url": request.url.path + ("?" + request.url.query if request.url.query else ""),
-    })
-
-
-@app.get("/video/{video_id}")
-def video_detail(request: Request, video_id: int, session: Session = Depends(get_db)):
-    video = session.get(Video, video_id)
-    return templates.TemplateResponse(request, "video_detail.html", {"video": video})
-
-
-@app.post("/video/{video_id}/watched")
-def toggle_watched(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
-    video = _video_or_404(session, video_id)
-    video.watched = not video.watched
-    session.add(video)
-    session.commit()
-    return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
-
-
-@app.post("/video/{video_id}/archive")
-def toggle_archive(video_id: int, session: Session = Depends(get_db), next: str = Form("")):
-    video = _video_or_404(session, video_id)
-    video.archived = not video.archived
-    session.add(video)
-    session.commit()
-    return RedirectResponse(next if next.startswith("/dashboard") else f"/video/{video_id}", status_code=303)
-
-
-@app.post("/video/{video_id}/reprocess")
-def reprocess(video_id: int, session: Session = Depends(get_db)):
-    video = _video_or_404(session, video_id)
-    video.status = Status.PENDING
-    video.error_message = None
-    session.add(video)
-    session.commit()
-    return RedirectResponse(f"/video/{video_id}", status_code=303)
-
-
-def _video_or_404(session: Session, video_id: int) -> Video:
-    video = session.get(Video, video_id)
-    if video is None:
-        raise HTTPException(status_code=404, detail="No such video.")
-    return video
-
-
 def _optional_money(text: str) -> float | None:
     try:
         value = float(text.strip().lstrip("$"))
@@ -290,110 +230,6 @@ def _optional_money(text: str) -> float | None:
 @app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
-
-
-# ---------------- Sidequests (things you sent) ----------------
-AGENT_TYPES = ["repo", "research", "place", "travel", "project", "skill", "job", "other"]
-
-
-TYPE_LABELS = {"repo": "Repos", "research": "Research", "place": "Place", "travel": "Travel", "project": "Project",
-               "skill": "Skill", "job": "Job", "other": "Other"}
-QUEST_TABS = [("todo", "To do"), ("fyi", "Nothing to do"), ("done", "Done"), ("skipped", "Not for me")]
-
-
-@app.get("/agent")
-def agent_page(request: Request, session: Session = Depends(get_db), tab: str = "todo", group: str = ""):
-    """Old address of the home feed; kept so links in past notifications still work."""
-    return quests_page(request, session, tab, group)
-
-
-def quests_page(request: Request, session: Session, tab: str, group: str):
-    from app.agent import load_report
-    from app.pipeline import agent_spend_today
-
-    rows = session.exec(
-        select(Action, Video).join(Video, Video.id == Action.video_id)
-        .where((Video.source == "telegram") | (Action.result.is_not(None) & Action.verdict.is_not(None)))
-        .order_by(Action.updated_at.desc())).all()
-    items = []
-    for a, v in rows:
-        # load_report coerces or rejects whatever is stored, so one bad result can't 500 the page.
-        report = load_report(a.result) if a.result and a.verdict else None
-        why = a.error_message
-        if report is None and a.status in (ActionStatus.DRAFTED, ActionStatus.DONE):
-            why = "The saved report can't be read. Tap Retry to research it again."
-        g = group_of(v.category) if v.category else "Other"
-        items.append({"action": a, "video": v, "report": report, "why": why, "group": g,
-                      "slug": _GROUP_SLUGS.get(g, "other")})
-
-    def bucket(i):
-        st = i["action"].status
-        if st == ActionStatus.DONE:
-            return "done"
-        if st == ActionStatus.DISMISSED:
-            return "skipped"
-        if i["report"] and i["action"].verdict == "skip":
-            return "fyi"  # researched, nothing to act on: kept, but out of the To do list
-        return "todo"
-
-    tab = tab if tab in dict(QUEST_TABS) else "todo"
-    tab_counts = {t: sum(1 for i in items if bucket(i) == t) for t, _ in QUEST_TABS}
-    in_tab = [i for i in items if bucket(i) == tab]
-    group_counts = {}
-    for i in in_tab:
-        group_counts[i["group"]] = group_counts.get(i["group"], 0) + 1
-    groups = [(g, _GROUP_SLUGS.get(g, "other"), group_counts[g]) for g, _ in GROUPS if g in group_counts]
-    shown = [i for i in in_tab if not group or i["slug"] == group]
-    # A QUEUED item with a message was parked on purpose (agent paused): it isn't being worked
-    # on, so it goes with the items that need you, not under "Looking into it" (which refreshes).
-    parked = lambda a: a.status == ActionStatus.QUEUED and bool(a.error_message)  # noqa: E731
-    working = [i for i in shown if not i["report"] and not parked(i["action"])
-               and i["action"].status in (ActionStatus.IN_PROGRESS, ActionStatus.QUEUED)]
-    # A finished item whose stored report is unreadable is stuck too: it gets the Retry button.
-    stuck = [i for i in shown if not i["report"] and (parked(i["action"])
-             or i["action"].status in (ActionStatus.FAILED, ActionStatus.NEEDS_INPUT, ActionStatus.DRAFTED))]
-    reports = [i for i in shown if i["report"]]
-    tg = get_telegram_settings()
-    return templates.TemplateResponse(request, "agent.html", {
-        "tabs": QUEST_TABS, "tab": tab, "tab_counts": tab_counts, "groups": groups, "group": group,
-        "type_labels": TYPE_LABELS,
-        "working": working, "stuck": stuck, "done": reports, "total": len(items),
-        "spent_today": agent_spend_today(session), "agent_settings": get_agent_settings(),
-        "paused": get_action_settings()["agent_paused"],
-        "intake_ready": ntfy_intake.ready() or bool(tg["bot_token"] and tg["chat_id"]),
-        "has_research_key": _has_research_key(),
-        "project_status": {p.name: p.status for p in projects.cards(session)},
-        "tasks": quests.for_actions(session, [i["action"].id for i in reports]),
-        "activity": tracing.activity(session, [i["action"].id for i in reports]),
-        "needs_you": _needs_you(session, items),
-        "saved_nearby": {i["action"].id: quests.saved_places_in(session, (i["report"].get("trip") or {})
-                                                                 .get("destination_city", ""), i["action"].id)
-                         for i in reports if i["report"].get("trip")},
-        "coming_up": quests.upcoming(session, 5),
-    })
-
-
-def _needs_you(session: Session, items: list[dict]) -> list[dict]:
-    """Everything waiting on a tap, newest first: times to pick and issues to approve."""
-    from app.models import Task
-
-    by_id = {i["action"].id: i for i in items}
-    rows = session.exec(select(Task).where(Task.status.in_(["proposed", "failed"]))
-                        .where(Task.kind != "follow_up").order_by(Task.id.desc())).all()
-    out, seen = [], set()
-    for t in rows:
-        item = by_id.get(t.action_id)
-        if item is None or item["action"].status in (ActionStatus.DONE, ActionStatus.DISMISSED):
-            continue
-        key = (t.action_id, t.kind)
-        if key in seen:
-            continue  # several slots for one place are one thing to do
-        seen.add(key)
-        headline = (item["report"] or {}).get("headline") or item["video"].summary or ""
-        label = {"calendar": "Pick a time", "flights_calendar": "Add your flights"}.get(t.kind, "Approve an issue")
-        out.append({"action_id": t.action_id, "kind": t.kind, "failed": t.status == "failed",
-                    "label": label, "headline": headline})
-    return out[:6]
 
 
 def _has_research_key() -> bool:
@@ -452,7 +288,7 @@ def evals_page(request: Request, msg: str = ""):
     return templates.TemplateResponse(request, "evals.html", {
         "cases": cases, "reviewed": sum(1 for c in cases if c.get("reviewed")), "status": evals.status(),
         "history": evals.runs(10), "latest": {r["id"]: r for r in evals.latest_results()},
-        "metric_labels": EVAL_METRIC_LABELS, "types": list(TYPE_LABELS), "msg": msg,
+        "metric_labels": EVAL_METRIC_LABELS, "types": list(web.TYPE_LABELS), "msg": msg,
     })
 
 
@@ -469,7 +305,7 @@ def evals_case(case_id: str, action_type: str = Form(""), is_tech: str = Form(""
                projects: str = Form(""), notes: str = Form("")):
     from app import evals
 
-    evals.update_case(case_id, action_type=action_type if action_type in TYPE_LABELS else None,
+    evals.update_case(case_id, action_type=action_type if action_type in web.TYPE_LABELS else None,
                       is_tech=is_tech == "true", verdict=verdict if verdict in ("worth_it", "maybe", "skip") else None,
                       projects=[p.strip() for p in projects.split(",") if p.strip()], notes=notes.strip())
     return RedirectResponse(f"/evals#{case_id}", status_code=303)
@@ -739,7 +575,6 @@ def _memory_stats() -> dict:
 
 
 def _spend_days() -> list:
-    from app import tracing
     from app.db import get_session
 
     with get_session() as session:

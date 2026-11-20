@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% set nav = "ledger" %}
 {% from "_icons.html" import icon %}
 {% block title %}Trace · Sidequest{% endblock %}
 {% block content %}
-<a class="back" href="/#a{{ action.id }}">{{ icon("back") }} Back to sidequests</a>
+<p class="crumbs"><a href="/q/{{ action.id }}">{{ icon("back") }}Q-{{ "%03d"|format(action.id) }}</a> · <a href="/ledger">Ledger</a></p>
 <header class="page-head">
   <h1>What the agent did</h1>
   <p class="sub">{{ headline }}</p>

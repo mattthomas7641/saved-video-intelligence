@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_quest.html" import qnum, marker, row, objectives %}
+{% block title %}{% if tracked %}({{ tracked|length }}) {% endif %}Tracked · Sidequest{% endblock %}
+{% block pageclass %}page-home{% endblock %}
+{% block content %}
+
+{% if not has_key or not telegram_ready or paused %}
+<div class="notes">
+  {% if not has_key %}<p class="note is-bad">{{ icon("alert") }}No Gemini key, so nothing you send gets researched. <a href="/settings#research">Add one in Settings</a>.</p>{% endif %}
+  {% if not telegram_ready %}<p class="note">{{ icon("inbox") }}Connect the Telegram bot to send things in. <a href="/settings#telegram">Set it up</a>.</p>{% endif %}
+  {% if paused %}<p class="note">{{ icon("alert") }}Research is paused: things you send are saved but not researched. <a href="/settings#research">Resume</a>.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="home">
+  <section class="tracked" aria-labelledby="tracked-h">
+    <header class="sec-head">
+      <h1 id="tracked-h">{% if tracked %}{{ tracked|length }} waiting on you{% else %}Nothing waiting on you{% endif %}</h1>
+      {% if not tracked %}<p class="lede">When the agent proposes something (a time for a place, an issue to open, flights to add) it lands here for one tap.{% if bot %} Send anything to @{{ bot }}.{% endif %}</p>{% endif %}
+    </header>
+    {% for t in tracked %}{% set i = t.item %}
+    <article class="quest{% if not t.tasks %} quest-stuck{% endif %}">
+      <div class="quest-id">{{ marker("wait" if t.tasks else "stuck") }}{% if i %}{{ qnum(i.action) }}<span class="quest-type">{{ type_labels.get(i.type, "Other") }}</span>{% else %}<span class="qnum">Chat</span>{% endif %}</div>
+      <h2 class="quest-title">{% if i %}<a href="/q/{{ i.action.id }}">{{ i.title|nocite }}</a>{% else %}{{ t.tasks[0].title.split(" · ")[-1] }}{% endif %}</h2>
+      <p class="objective">{{ t.objective }}</p>
+      {% if t.tasks %}
+      {{ objectives(t.tasks, "/") }}
+      {% else %}
+      <p class="fine">{{ i.why|plain_error }}</p>
+      <div class="acts">
+        <form action="/agent/{{ i.action.id }}/rerun" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-go" type="submit">{{ icon("refresh") }}{{ "Research anyway" if t.objective == "Repeat?" else "Retry" }}</button></form>
+        <form action="/agent/{{ i.action.id }}/dismiss" method="post"><input type="hidden" name="next" value="/"><button class="btn btn-plain" type="submit">Not for me</button></form>
+        <a class="btn btn-plain" href="/runs/{{ i.action.id }}">Trace</a>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+
+  <aside class="waypoints" aria-labelledby="way-h">
+    <h2 id="way-h" class="sec-label">{{ icon("clock") }}Waypoints</h2>
+    {% if waypoints %}
+    <ol class="way-list">
+      {% for w in waypoints %}{% set t = w.task %}
+      <li class="way">
+        <span class="way-date"><b>{{ t.run_at|short_date }}</b></span>
+        <span class="way-body">
+          <span class="way-kind">{{ marker("way") }}{{ w.kind }}</span>
+          <span class="way-text">{% if t.action_id %}<a href="/q/{{ t.action_id }}">{{ w.text }}</a>{% else %}{{ w.text }}{% endif %}{% if w.last and w.last.lowest %} <span class="dim">· last ${{ "%.0f"|format(w.last.lowest) }}</span>{% endif %}</span>
+        </span>
+        {% if t.kind in ("follow_up", "fare_watch") %}
+        <form action="/tasks/{{ t.id }}/cancel" method="post"><input type="hidden" name="next" value="/"><button class="icon-btn" type="submit" title="Stop" aria-label="Stop: {{ w.text }}">{{ icon("x") }}</button></form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="fine">Nothing scheduled. Check-backs, fare watches and flight reminders show up here with their dates.</p>
+    {% endif %}
+
+    {% if working %}
+    <h2 class="sec-label">{{ icon("refresh") }}Researching now</h2>
+    <ul class="working">{% for i in working %}<li><span class="pulse" aria-hidden="true"></span>{{ i.title|truncate(70) }}</li>{% endfor %}</ul>
+    {% endif %}
+  </aside>
+
+  <section class="latest" aria-labelledby="latest-h">
+    <header class="sec-row"><h2 id="latest-h" class="sec-label">{{ icon("list") }}New in the log</h2><a class="more" href="/log">All {{ counts.log }} {{ icon("chev") }}</a></header>
+    {% if recent %}
+    <ol class="rows">{% for i in recent %}{{ row(i, activity.get(i.action.id), type_labels) }}{% endfor %}</ol>
+    {% else %}
+    <p class="fine">Reports appear here a minute or two after you send something.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% if working %}
+<script>
+  // Something is being researched: reload when it finishes (never mid-form).
+  (function () {
+    var stamp = null;
+    function check() {
+      fetch("/api/quests/status").then(function (r) { return r.json(); }).then(function (s) {
+        if (stamp === null) stamp = s.stamp;
+        else if (s.stamp !== stamp && !document.activeElement.closest("form")) { location.reload(); return; }
+        setTimeout(check, s.working ? 8000 : 20000);
+      }).catch(function () { setTimeout(check, 20000); });
+    }
+    setTimeout(check, 8000);
+  })();
+</script>
+{% endif %}
+{% endblock %}

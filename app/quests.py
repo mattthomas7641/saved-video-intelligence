@@ -60,7 +60,7 @@ def plan(session: Session, action, report: dict, now: datetime | None = None) ->
     now = now or datetime.utcnow()
     tasks: list[Task] = []
     place = report.get("place") or {}
-    link = f"{PUBLIC_BASE_URL}/#a{action.id}"
+    link = f"{PUBLIC_BASE_URL}/q/{action.id}"
     for slot in report.get("suggested_times") or []:
         start = calendar_busy.parse_local(slot.get("start", ""))
         if start is None or start < datetime.now(start.tzinfo):
@@ -532,7 +532,7 @@ def _report_url(action_id: int) -> str | None:
     from app.config import PUBLIC_BASE_URL
 
     local = "127.0.0.1" in PUBLIC_BASE_URL or "localhost" in PUBLIC_BASE_URL
-    return None if local else f"{PUBLIC_BASE_URL}/#a{action_id}"
+    return None if local else f"{PUBLIC_BASE_URL}/q/{action_id}"
 
 
 def _notify(title: str, message: str, click: str | None = None) -> None:

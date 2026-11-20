@@ -295,7 +295,7 @@ def test_home_page_renders_items_being_worked_on(session):
     session.add(Action(video_id=v.id, action_type=ActionType.REPO, status=ActionStatus.IN_PROGRESS))
     session.commit()
     r = TestClient(app, raise_server_exceptions=False).get("/")
-    assert r.status_code == 200 and "Looking into it" in r.text and "Repos" in r.text
+    assert r.status_code == 200 and "Researching now" in r.text
 
 
 def test_stuck_item_without_a_message_still_explains_itself(session):
