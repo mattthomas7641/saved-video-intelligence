@@ -7,7 +7,7 @@
 {% block content %}
 <article class="qpage">
   <header class="qhead">
-    <p class="crumbs"><a href="/log">{{ icon("back") }}Log</a><span class="sep" aria-hidden="true">/</span>{{ marker(i.state) }}{{ qnum(a) }}</p>
+    <p class="crumbs"><a href="/log">{{ icon("back") }}Log</a><span class="sep" aria-hidden="true">·</span>{{ marker(i.state) }}{{ qnum(a) }}</p>
     <h1 style="view-transition-name: q{{ a.id }}">{{ i.title|nocite }}</h1>
     <p class="did-line">{{ type_labels.get(i.type, "Other") }}{% if i.report %}<span class="sep" aria-hidden="true">·</span>{{ verdict(a.verdict) }}{% endif %}<span class="sep" aria-hidden="true">·</span>sent {{ a.created_at|short_date }}{% if i.state == "done" %}<span class="sep" aria-hidden="true">·</span><span class="tag">Done</span>{% elif i.state == "skipped" %}<span class="sep" aria-hidden="true">·</span><span class="tag">Not for me</span>{% endif %}</p>
     {% if r.telegram_text %}<div class="lede prose">{{ r.telegram_text|markdown }}</div>{% endif %}

@@ -99,7 +99,7 @@ html { scrollbar-color: var(--rule-2) transparent; }
 .empty { padding: 28px 0; color: var(--ink-2); max-width: 60ch; }
 .notes { display: grid; gap: 8px; margin-bottom: 24px; }
 .note, .notice { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: var(--hair); background: var(--sheet); font-size: .9375rem; }
-.note.is-bad { border-color: var(--bad); background: var(--bad-soft); color: var(--ink); }
+.note.is-bad { border-color: var(--ink); color: var(--ink); font-weight: 600; }
 .note.is-bad .icon { color: var(--bad); }
 
 /* ---------- markers ---------- */
@@ -125,7 +125,7 @@ html { scrollbar-color: var(--rule-2) transparent; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn-go, .btn-primary { background: var(--ink); color: var(--ground); }
-.btn-go:hover, .btn-primary:hover { background: #000; color: #fff; }
+.btn-go:hover, .btn-primary:hover { background: var(--ink-2); border-color: var(--ink-2); color: var(--sheet); }
 .btn-plain { border-color: var(--rule-2); background: transparent; }
 .btn-plain:hover { border-color: var(--ink); background: var(--sheet); color: var(--ink); }
 .btn-quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
@@ -151,7 +151,7 @@ label { font-size: .9375rem; }
   display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; font-size: .75rem; font-weight: 700;
   border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--ink-2); background: transparent; white-space: nowrap;
 }
-.tag-warn { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.tag-warn { border-color: var(--ink); color: var(--ink); }
 .tag-err { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
 .vd { font-weight: 700; font-size: .8125rem; }
 .vd-yes { color: var(--ink); }
@@ -182,7 +182,7 @@ label { font-size: .9375rem; }
 .objective { margin-top: 8px; display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--marker-ink); }
 .objective.is-bad { color: var(--bad); }
 .sep { display: inline-block; width: 3px; height: 3px; margin: 0 .5em; vertical-align: middle; background: var(--rule-2); font-size: 0; }
-.crumbs .sep { width: auto; height: auto; background: none; font-size: inherit; color: var(--rule-2); }
+
 .qnum-inline { display: none; }
 .ics { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 8px; font-size: .8125rem; font-weight: 600; color: var(--ink-2); text-decoration: none; border-radius: var(--r); }
 .ics:hover { background: var(--sheet); color: var(--ink); text-decoration: underline; }
