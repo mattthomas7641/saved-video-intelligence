@@ -24,6 +24,13 @@ links and screenshots cost less.
   calendar. A tool that fits a project comes with the GitHub issue to open there,
   opened only when you approve it. A story that's still developing gets checked
   again in a week or a month, and you hear about it only if something changed.
+- **Ask it anything in Telegram.** Plain messages go to a general assistant with
+  tools: Google Search and Maps, live flight search (Kiwi.com's MCP server, with
+  booking links), award seats and card transfer partners (seats.aero's MCP
+  server), your saved items, reminders, calendar proposals, fare and price
+  watches. "Cheapest flight to Miami on the 20th, and what can I do with 142k
+  Chase points?" costs about a cent. It never books, buys or sends on its own:
+  you get the link or an approve button.
 - **Trips and flight deals.** Send a booking confirmation and each flight gets a
   one-tap calendar event, a check-in reminder 24 hours before and a status check
   on the day, alongside the places you've saved in that city. Send a "cheap
@@ -206,7 +213,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (339), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (351), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout
@@ -232,6 +239,8 @@ app/
   quests.py          Follow-through: durable tasks, approvals, the scheduler
   calendar_busy.py   Busy times from your calendar's iCal feed; calendar links and .ics
   flights.py         Live Google Flights fares (via SerpApi) for deals and price watches
+  assistant.py       The "ask anything" chat agent (Telegram), its tools and profile
+  mcp_client.py      Allowlisted outside MCP servers (Kiwi.com flights, seats.aero awards)
   mcp_server.py      Sidequest as an MCP server (stdio and /mcp/)
   otel.py            Optional OpenTelemetry export of run traces
   download.py, ocr.py, transcribe.py   yt-dlp, tesseract, Whisper (non-Gemini providers)

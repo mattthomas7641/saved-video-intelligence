@@ -142,15 +142,18 @@ def test_blocked_download_falls_back_to_link(monkeypatch, session):
     assert action.status.value == "drafted" and seen["caption"] == "https://www.instagram.com/reel/abc/"
 
 
-def test_telegram_text_and_short_text(monkeypatch, session):
+def test_telegram_plain_text_goes_to_the_assistant_and_research_command_to_the_pipeline(monkeypatch, session):
     from app import telegram_bot as tb
     from app.config import save_telegram_settings
     save_telegram_settings(bot_token="1:a", chat_id=42)
-    sent, submitted = [], []
-    tg = SimpleNamespace(send=lambda chat, text, reply_to=None: sent.append(text) or 9)
+    sent, submitted, asked = [], [], []
+    tg = SimpleNamespace(send=lambda chat, text, reply_to=None, buttons=None: sent.append(text) or 9)
+    monkeypatch.setattr(tb, "_ask_async", lambda chat_id, text, reply_to, tg: asked.append(text))
     upd = lambda text: {"update_id": 1, "message": {"message_id": 1, "chat": {"id": 42}, "text": text}}  # noqa: E731
     tb.handle_update(upd("best tacos in south philly"), tg, submit=lambda *a: submitted.append(a))
     tb.handle_update(upd("hi"), tg, submit=lambda *a: submitted.append(a))
+    assert asked == ["best tacos in south philly", "hi"] and submitted == []
+    tb.handle_update(upd("/research best tacos in south philly"), tg, submit=lambda *a: submitted.append(a))
     assert len(submitted) == 1 and session.exec(select(Video)).one().tiktok_url.startswith("text:")
 
 

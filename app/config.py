@@ -15,6 +15,7 @@ Two deliberately separate mechanisms, not one:
 """
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -226,6 +227,28 @@ def new_mcp_token() -> str:
     token = secrets.token_urlsafe(32)
     _save_secret("MCP_TOKEN", token)
     return token
+
+
+def get_profile() -> dict:
+    """Facts the assistant keeps about you (points balances, cards, preferences), set by you
+    in chat ("I have 142k Chase points"). Never passwords or card numbers."""
+    return _load_secrets().get("PROFILE", {})
+
+
+_CARD_NUMBER = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
+
+def save_profile_fact(key: str, value: str) -> dict:
+    key, value = key.strip()[:60], value.strip()[:300]
+    if _CARD_NUMBER.search(value) or re.search(r"(?i)password|passcode|\bcvv\b|\bpin\b", key + " " + value):
+        raise ValueError("Not storing card numbers or passwords.")
+    profile = get_profile()
+    if value:
+        profile[key] = value
+    else:
+        profile.pop(key, None)
+    _save_secret("PROFILE", dict(list(profile.items())[-40:]))
+    return profile
 
 
 def get_quest_settings() -> dict:

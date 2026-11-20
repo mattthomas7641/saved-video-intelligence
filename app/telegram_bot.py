@@ -311,9 +311,9 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
             tg.send(chat_id, "Already paired. Share a TikTok here and I'll research it.")
         elif settings["pairing_code"] and code == settings["pairing_code"].upper():
             save_telegram_settings(chat_id=chat_id, pairing_code="")
-            tg.send(chat_id, "✅ Paired. From TikTok: Share → Telegram → this chat. Add a note if you want "
-                             "something specific checked (\"useful for my OS project?\").\n\n"
-                             "/status · /pause · /resume · reply /deep to a report to research it further")
+            tg.send(chat_id, "✅ Paired. Share links and screenshots here to have them researched, or just ask me "
+                             "anything: flights, plans, reminders, what you saved.\n\n"
+                             "/status · /pause · /resume · /new (fresh conversation) · /research <topic>")
         elif paired is None:
             tg.send(chat_id, "Not paired yet. Send /start followed by the code shown in the dashboard's Settings.")
         return
@@ -335,8 +335,23 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
     if text.startswith("/deep"):
         _deep(msg, chat_id, tg)
         return
+    if text.startswith("/new"):
+        from app import assistant
+        assistant.reset(str(chat_id))
+        tg.send(chat_id, "🆕 Fresh conversation.")
+        return
+    if text.startswith("/research"):
+        topic = text.removeprefix("/research").strip()
+        if not topic:
+            tg.send(chat_id, "Send /research followed by what to look into.")
+            return
+        video_id = intake.ingest_shared_text(topic)
+        status_id = tg.send(chat_id, "📥 Got it. Researching…", reply_to=msg.get("message_id"))
+        submit(video_id, chat_id, status_id)
+        return
     if text.startswith("/"):
-        tg.send(chat_id, "Share a TikTok (or any link) and I'll research it.\n/status · /pause · /resume · /deep")
+        tg.send(chat_id, "Share a link or screenshot to research it, or just ask me anything.\n"
+                         "/status · /pause · /resume · /new · /research <topic>")
         return
 
     url, note = extract_link(text)
@@ -347,14 +362,45 @@ def handle_update(update: dict, tg: TelegramClient, submit=None) -> None:
             return
     elif url:
         video_id = ingest_shared_link(url, note)
-    elif len(text.split()) >= 3:
-        video_id = intake.ingest_shared_text(text)
+    elif text:
+        # Anything else is a request for the assistant: "find flights to Tokyo in March", "remind me...".
+        _ask_async(chat_id, text, msg.get("message_id"), tg)
+        return
     else:
-        tg.send(chat_id, "Send me a link, a screenshot or a few words: anything you want looked into.")
+        tg.send(chat_id, "Send me a link, a screenshot, or just ask me something.")
         return
     status_id = tg.send(chat_id, "📥 Got it. Queued…", reply_to=msg.get("message_id"))
     if submit(video_id, chat_id, status_id) is False:  # shared again while the first run is still going
         tg.edit(chat_id, status_id, "⏳ Already on it: you sent this a moment ago. The result will land in that message.")
+
+
+_assistant_pool = None
+
+
+def _ask_async(chat_id: int, text: str, reply_to: int | None, tg: TelegramClient) -> None:
+    """Answer on a worker thread so the poller keeps taking messages."""
+    global _assistant_pool
+    from concurrent.futures import ThreadPoolExecutor
+
+    if _assistant_pool is None:
+        _assistant_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="assistant")
+    _assistant_pool.submit(answer, chat_id, text, reply_to, tg)
+
+
+def answer(chat_id: int, text: str, reply_to: int | None, tg: TelegramClient, ask=None) -> None:
+    from app import assistant
+
+    try:
+        tg.call("sendChatAction", chat_id=chat_id, action="typing")
+    except RuntimeError:
+        pass
+    try:
+        reply = (ask or assistant.ask)(str(chat_id), text)
+        tg.send(chat_id, assistant.telegram_html(reply.text), reply_to=reply_to, buttons=reply.buttons or None)
+    except Exception:  # noqa: BLE001
+        log.exception("Assistant failed to answer")
+        tg.send(chat_id, "⚠️ I couldn't answer that just now (details are in the app log). Try again in a moment.",
+                reply_to=reply_to)
 
 
 def _ingest_photo(sizes: list, tg: TelegramClient, caption: str) -> int | None:
