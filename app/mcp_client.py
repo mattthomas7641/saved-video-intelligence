@@ -23,7 +23,8 @@ log = logging.getLogger(__name__)
 
 SERVERS = {
     "kiwi": {"url": "https://mcp.kiwi.com", "tools": {"search-flight"},
-             "about": "Kiwi.com flight search (cash fares, with booking links)"},
+             "defaults": {"search-flight": {"currency": "USD"}},   # Kiwi prices in EUR unless asked
+             "about": "Kiwi.com flight search (cash fares in USD, with booking links)"},
     "seats": {"url": "https://seats.aero/mcp",
               "tools": {"get_flights", "get_flight_details", "list_transfer_partners",
                         "list_transfer_program_mileage_programs", "search_airports"},
@@ -112,6 +113,13 @@ async def _call(url: str, tool: str, args: dict) -> str:
     return ("ERROR: " if getattr(result, "is_error", False) else "") + text
 
 
+def _leaf(e: BaseException) -> BaseException:
+    """The real error inside anyio's exception groups."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    return e
+
+
 def call(name: str, args: dict, caller=None) -> dict:
     """Run an allowlisted tool. Returns {"result": text} or {"error": ...}."""
     server, _, tool = name.partition(SEP)
@@ -119,11 +127,17 @@ def call(name: str, args: dict, caller=None) -> dict:
     real = next((t for t in (conf or {}).get("tools", ()) if t.replace("-", "_") == tool), None)
     if conf is None or real is None:
         return {"error": f"{name} isn't an allowed tool."}
-    try:
-        text = caller(conf["url"], real, args) if caller else anyio.run(_call, conf["url"], real, args)
-    except Exception as e:  # noqa: BLE001
-        log.warning("MCP tool %s failed: %s", name, type(e).__name__)
-        return {"error": f"{name} failed ({type(e).__name__}); try another way."}
+    args = {**conf.get("defaults", {}).get(real, {}), **args}
+    text, err = None, None
+    for _ in range(2):   # one retry: a dropped connection shouldn't cost the answer
+        try:
+            text = caller(conf["url"], real, args) if caller else anyio.run(_call, conf["url"], real, args)
+            break
+        except Exception as e:  # noqa: BLE001
+            err = _leaf(e)
+            log.warning("MCP tool %s failed: %s: %s", name, type(err).__name__, str(err)[:200])
+    if text is None:
+        return {"error": f"{name} failed ({type(err).__name__}); try another way."}
     if text.startswith("ERROR: "):
         return {"error": text[7:RESULT_CHARS]}
     return {"result": text[:RESULT_CHARS]}

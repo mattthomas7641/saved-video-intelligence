@@ -126,3 +126,19 @@ def test_telegram_answer_sends_reply_with_buttons(monkeypatch):
     assert sent == [("<b>Yes</b>", [[{"text": "b"}]])]
     telegram_bot.answer(42, "q", 5, tg, ask=lambda chat, text: (_ for _ in ()).throw(RuntimeError("x")))
     assert "couldn't answer" in sent[-1][0]
+
+
+def test_mcp_call_adds_defaults_and_retries(monkeypatch):
+    monkeypatch.undo()
+    calls = []
+
+    def flaky(url, tool, args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise BaseExceptionGroup("tg", [ConnectionError("dropped")])
+        return "ok"
+
+    out = mcp_client.call("kiwi__search_flight", {"flyFrom": "PHL"}, caller=flaky)
+    assert out == {"result": "ok"} and calls[1]["currency"] == "USD" and len(calls) == 2
+    out = mcp_client.call("kiwi__search_flight", {"currency": "EUR"}, caller=lambda u, t, a: a["currency"])
+    assert out == {"result": "EUR"}   # an explicit choice wins

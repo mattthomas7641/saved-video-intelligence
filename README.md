@@ -36,9 +36,9 @@ links and screenshots cost less.
   weekend in Montreal, I have Chase points": a planner splits the request into
   2–5 independent parts, a specialist agent takes each one with only the
   read-only tools it needs, they run in parallel, and a coordinator merges the
-  results. Simple questions stay with one agent. Trips are a fixed team
-  (flights, points, stay, things to do), measured against a single agent with
-  `python -m app.trip_eval`.
+  results. Simple questions stay with one agent. For trips the team was
+  measured against a single agent and lost on cost and speed at equal quality
+  (below), so trips use one agent.
 - **Trips and flight deals.** Send a booking confirmation and each flight gets a
   one-tap calendar event, a check-in reminder 24 hours before and a status check
   on the day, alongside the places you've saved in that city. Send a "cheap
@@ -114,6 +114,23 @@ with those, not ground truth; at 12 cases one case is about 8 points.
 
 Flash-Lite on Flex costs a tenth as much for roughly one case in twelve worse, so
 background checks use it by default and Settings offers it for new shares.
+
+### Measured: one agent vs a team of agents (trip planning)
+
+Five trip requests (Miami, Chicago, Montreal with points, Nashville, Denver with
+points), each planned by one agent with every tool and by four specialists in
+parallel plus a coordinator (`python -m app.trip_eval`):
+
+| Setup | Plans | Judge grade (1-5) | Checks passed | $/plan | Median time |
+|---|---|---|---|---|---|
+| One agent, all tools | 5 | 5 | 100% | $0.014 | 26 s |
+| 4 specialists in parallel + coordinator | 5 | 5 | 100% | $0.029 | 48 s |
+
+Same quality, twice the cost, and slower: the coordinator is an extra
+sequential call and each specialist repeats context. So trips run as one
+agent, and the team is kept for broad requests the planner decides to split.
+Caveats: five cases, and the judge (Flash-Lite, absolute 1-5) gave every plan
+a 5, so it can't separate them; a stricter pairwise judge is the next step.
 
 ### Traces, memory, evals and MCP
 
@@ -221,7 +238,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Grok, Claude, Telegram, ntfy and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (366), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (367), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout

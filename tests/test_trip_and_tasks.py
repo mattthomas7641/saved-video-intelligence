@@ -110,7 +110,7 @@ def test_trip_eval_stops_at_the_cap(tmp_path, monkeypatch):
 
 
 def test_plan_trip_tool_from_the_assistant(monkeypatch):
-    monkeypatch.setattr(trip_planner, "plan", lambda request: trip_planner.Plan(f"plan for {request}", "parallel"))
+    monkeypatch.setattr(trip_planner, "plan", lambda request, mode="parallel": trip_planner.Plan(f"plan for {request}", mode))
     assert assistant._run_tool("plan_trip", {"request": "Miami"}, [])["plan"] == "plan for Miami"
 
 

@@ -69,9 +69,9 @@ _TOOLS = [
         "credit card they hold, a loyalty number, home airport, a preference (e.g. 'aisle seat', 'no red-eyes').",
         {"key": {"type": "string", "description": "Short label, e.g. 'Chase Ultimate Rewards points', 'cards'"},
          "value": {"type": "string", "description": "The value; empty to forget it"}}, ["key", "value"]),
-    _fn("plan_trip", "Plan a whole trip with a team of specialist agents working in parallel (flights, points, "
-        "where to stay, what to do), merged into one plan with links and a total. Use for 'plan a trip / weekend "
-        "/ vacation' requests; pass everything known (where, when, budget, who, flexibility). About 3-6 cents.",
+    _fn("plan_trip", "Plan a whole trip: flights (and points if they have a balance), where to stay and what to "
+        "do, in one plan with links and a total. Use for 'plan a trip / weekend / vacation' requests; pass "
+        "everything known (where, when, budget, who, flexibility). About 1-2 cents.",
         {"request": {"type": "string"}}, ["request"]),
     _fn("team_up", "Put a team of specialist agents on a request with several independent parts, working in "
         "parallel, then merge their findings: comparing products or options, planning an event or a week, "
@@ -311,7 +311,9 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
                     "note": "Send this answer to the user as it is (light edits only)."}
         if name == "plan_trip":
             from app import trip_planner
-            result = trip_planner.plan(str(args.get("request", "")))
+            # One agent, not the team: on the trip eval it matched the team's quality at half the
+            # cost and time (README, "Measured"). The team stays a measured option (mode="parallel").
+            result = trip_planner.plan(str(args.get("request", "")), mode="single")
             return {"plan": result.text, "note": "Send this plan to the user as it is (light edits only)."}
         if name == "research_in_depth":
             return _research(str(args.get("link_or_text", "")), str(args.get("note", "")))
