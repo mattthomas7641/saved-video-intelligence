@@ -182,6 +182,13 @@ using it. Things that could still reach it are handled explicitly:
   The GitHub token is yours to scope (Issues only); the calendar is read-only by
   construction (an iCal feed) and event titles never leave the app; MCP tools
   can't approve anything. Telegram answers one paired chat; pairing codes expire in 10 minutes.
+- **Prompt injection through what the agent reads** (web pages, MCP results):
+  the tools enforce the limits, not the prompt. A fact is saved to your profile
+  only if it appears in your own message; at most two paid research or team runs
+  start per message; specialists get read-only tools; outside MCP servers are
+  allowlisted per tool; anything outward-facing needs your tap.
+- **Untrusted media** (yt-dlp downloads, ffmpeg, tesseract) is handled by an
+  unprivileged user in the container, with your projects mounted read-only.
 - **Secrets** live in `data/secrets.json` (0600, atomic writes, never overwritten
   if unreadable) and never appear in logs or error messages.
 - **Dependencies** are pinned; `pip-audit` reports no known vulnerabilities.
@@ -199,7 +206,7 @@ environment, HTTPS and project cards built from GitHub instead of local folders.
 
 No test calls a real API: Gemini, Claude, Telegram, ntfy, Kiwi.com, seats.aero and GitHub are
 faked (`httpx.MockTransport`, fake SDK clients), so the suite is free and offline.
-CI runs lint, the tests (358), `pip-audit`, a Docker build and a container
+CI runs lint, the tests (360), `pip-audit`, a Docker build and a container
 smoke test on every push and pull request.
 
 ## Project layout

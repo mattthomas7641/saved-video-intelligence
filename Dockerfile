@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Untrusted media (yt-dlp downloads, ffmpeg, tesseract) shouldn't be handled as root.
+RUN useradd --create-home --uid 1000 sidequest && chown -R sidequest /app
+USER sidequest
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8787
 

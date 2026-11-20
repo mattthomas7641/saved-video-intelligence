@@ -13,6 +13,7 @@ A conversation is chained on Gemini's side with previous_interaction_id, so
 follow-ups ("and in April?") need no history stored here; after a quiet
 spell it starts fresh. Each message is one traced run inside the daily cap.
 """
+import contextvars
 import html
 import json
 import logging
@@ -31,6 +32,12 @@ IDLE = timedelta(minutes=45)       # a longer gap starts a new conversation
 REPLY_CHARS = 3500
 
 _sessions: dict[str, tuple[str, datetime]] = {}   # chat -> (last interaction id, when)
+
+# Guards against prompt injection from what the tools read (web pages, MCP results): the
+# current message's own text, and how many paid tools it has started. Enforced in _run_tool.
+_turn: contextvars.ContextVar[dict | None] = contextvars.ContextVar("assistant_turn", default=None)
+PAID_TOOLS = {"research_in_depth", "plan_trip", "team_up"}
+MAX_PAID_PER_MESSAGE = 2
 _lock = threading.Lock()
 
 
@@ -138,8 +145,12 @@ def ask(chat: str, text: str, client=None, run_tool=None) -> Reply:
     if prev and datetime.utcnow() - prev[1] < IDLE:
         params["previous_interaction_id"] = prev[0]
     buttons: list = []
-    with tracing.run("assistant", provider="gemini"):
-        interaction, cost = run_loop(client, text, params, lambda name, args: run_tool(name, args, buttons))
+    token = _turn.set({"text": text, "paid": 0})
+    try:
+        with tracing.run("assistant", provider="gemini"):
+            interaction, cost = run_loop(client, text, params, lambda name, args: run_tool(name, args, buttons))
+    finally:
+        _turn.reset(token)
     with _lock:
         _sessions[chat] = (interaction.id, datetime.utcnow())
     answer = (getattr(interaction, "output_text", "") or "").strip() or "Done."
@@ -195,6 +206,13 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
     from app.db import get_session
     from app.models import Task
 
+    turn = _turn.get()
+    if turn is not None and name in PAID_TOOLS:
+        turn["paid"] += 1
+        if turn["paid"] > MAX_PAID_PER_MESSAGE:
+            return {"error": f"Limit of {MAX_PAID_PER_MESSAGE} paid research runs per message reached."}
+    if turn is not None and name == "update_profile" and not _said_by_user(str(args.get("value", "")), turn["text"]):
+        return {"error": "Only save facts the user stated in their own message; ask them to confirm it."}
     try:
         if name == "search_my_stuff":
             from app.mcp_server import search_sidequests
@@ -285,6 +303,19 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
     except Exception as e:  # noqa: BLE001 - a tool failing must not end the conversation
         log.exception("Assistant tool %s failed", name)
         return {"error": f"{name} failed ({type(e).__name__})."}
+
+
+def _said_by_user(value: str, message: str) -> bool:
+    """True when the value to remember comes from the user's own message (a number in it, or a
+    word of 4+ letters), not from a web page or tool result the model read. Forgetting
+    (an empty value) is always allowed."""
+    if not value.strip():
+        return True
+    msg = message.lower().replace(",", "")
+    # "142,000" matches "142k": compare numbers by their significant digits.
+    numbers = [n.rstrip("0") or n for n in re.findall(r"\d{2,}", value.replace(",", ""))]
+    words = re.findall(r"[a-z]{4,}", value.lower())
+    return any(n in msg for n in numbers) or any(w in msg for w in words)
 
 
 def _research(link_or_text: str, note: str) -> dict:
