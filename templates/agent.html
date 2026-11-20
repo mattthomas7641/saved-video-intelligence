@@ -225,7 +225,7 @@
     <span class="ci">{{ icon("alert") }}</span>
     <span class="t">{{ v.summary or v.caption or v.tiktok_url }}<span class="why">{{ item.why|plain_error }}</span></span>
     <a class="btn btn-quiet" href="/runs/{{ a.id }}" title="What happened">Trace</a>
-    <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} Retry</button></form>
+    <form action="/agent/{{ a.id }}/rerun" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn" type="submit">{{ icon("refresh") }} {{ "Research anyway" if (item.why or "").startswith("Looks like a repeat") else "Retry" }}</button></form>
     <form action="/agent/{{ a.id }}/dismiss" method="post"><input type="hidden" name="next" value="{{ here }}"><button class="btn btn-quiet" type="submit" title="Not for me" aria-label="Not for me">{{ icon("archive") }}</button></form>
   </div>
   {% endfor %}

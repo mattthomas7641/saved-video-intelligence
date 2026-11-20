@@ -27,6 +27,17 @@ class PipelineError(RuntimeError):
     """A step failed in a way already put into plain words for the owner's card."""
 
 
+class AlreadySent(Exception):
+    """This exact item was researched before: its report is reused instead of paying again."""
+
+    def __init__(self, action_id: int):
+        super().__init__(f"Already researched as action {action_id}")
+        self.action_id = action_id
+
+
+DUP_SIMILARITY = 0.88   # recall similarity above which a new item is treated as a repeat (related ones score ~0.6-0.75)
+
+
 def collect_video(session: Session, video: Video, should_stop=lambda: False, transcribe: bool = True) -> None:
     """Download, transcribe and read on-screen text. Leaves the video TRANSCRIBED.
     With `transcribe=False` (Gemini watches the file itself) it only downloads,
@@ -204,11 +215,14 @@ def _action_for(session: Session, video: Video) -> Action:
 
 
 def process_shared_video(session: Session, video: Video, on_progress=lambda text: None,
-                         chat_id: int | None = None, message_id: int | None = None, deep: bool = False) -> Action:
+                         chat_id: int | None = None, message_id: int | None = None, deep: bool = False,
+                         force: bool = False) -> Action:
     """Download -> watch/analyze -> prefetch -> research for one shared item.
     Returns its Action, whose status/result/error_message say how it went. Raises
     FatalAnalysisError for problems only you can fix (no key, no credit).
-    `deep` forces web research on (the "Research deeper" button)."""
+    `deep` forces web research on (the "Research deeper" button). Unless `deep` or `force`
+    (a Retry or "Research anyway"), a repeat isn't researched again: the exact item sent twice
+    raises AlreadySent, and something that looks like a past report waits for your OK."""
     from app import agent as agent_mod
     from app import prefetch as prefetch_mod
     from app import projects as projects_mod
@@ -223,6 +237,11 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
     elif provider == "xai":
         from app import xai_client
         analyzer = xai_client.analyze_video  # shared videos never need Anthropic credit
+
+    existing = session.exec(select(Action).where(Action.video_id == video.id)).first()
+    if (not (deep or force) and existing and existing.result
+            and existing.status in (ActionStatus.DRAFTED, ActionStatus.DONE, ActionStatus.DISMISSED)):
+        raise AlreadySent(existing.id)   # sent the same thing again: free, nothing re-run
 
     if video.status in (Status.PENDING, Status.ERROR, Status.DOWNLOADING, Status.TRANSCRIBING, Status.DOWNLOADED):
         on_progress("Downloading…" if provider == "gemini" else "Downloading and transcribing…")
@@ -277,6 +296,16 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
         _touch_action(session, action)
         return action
 
+    related = _recall(session, video, action)
+    if not (deep or force) and related and related[0]["similarity"] >= DUP_SIMILARITY:
+        earlier = related[0]
+        action.status = ActionStatus.NEEDS_INPUT
+        action.error_message = (f"Looks like a repeat of what you sent {earlier['date']}: “{earlier['headline']}”. "
+                                f"Tap Research anyway to look into it again.")[:500]
+        action.brief = action.brief or video.summary or ""
+        _touch_action(session, action)
+        return action
+
     budget = get_agent_settings()["daily_cap_usd"] - agent_spend_today(session)  # analysis is already in the ledger
     action.status = ActionStatus.IN_PROGRESS
     action.error_message = None
@@ -299,7 +328,6 @@ def process_shared_video(session: Session, video: Video, on_progress=lambda text
                                     calendar="" if tech else _calendar_context())
         on_progress(f"Researching ({action_type}{', with web search' if web else ''})…")
         with tracing.run("research", action_id=action.id, video_id=video.id, provider=provider):
-            related = _recall(session, video, action)
             context.memory = memory_mod.context_block(related)
             findings = agent_mod.run(video, action_type, action.brief, budget - plan_cost, on_progress=on_progress,
                                      web=web, x_search=x_search, context=context, provider=provider, tech=tech)
@@ -375,7 +403,8 @@ def _recall(session: Session, video: Video, action: Action) -> list[dict]:
         return []
     try:
         query = "\n".join(x for x in [action.brief, video.summary, getattr(video, "user_note", None)] if x)
-        return memory_mod.recall(session, query, exclude_action_id=action.id)
+        with tracing.run("memory", action_id=action.id, video_id=video.id, provider="gemini"):
+            return memory_mod.recall(session, query, exclude_action_id=action.id)
     except Exception:  # noqa: BLE001
         log.exception("Memory recall failed for video %s; researching without it", video.id)
         return []

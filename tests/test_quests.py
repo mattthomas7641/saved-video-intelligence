@@ -391,3 +391,20 @@ def test_follow_up_update_goes_to_telegram(monkeypatch):
     monkeypatch.setattr(telegram_bot, "notify", lambda text, buttons=None: sent.append(text) or True)
     quests._notify("🔁 Update: It shipped", "Out today <b>", click=None)
     assert sent and "It shipped" in sent[0] and "&lt;b&gt;" in sent[0]
+
+
+def test_telegram_repeat_message_and_research_again_button(session, monkeypatch):
+    from app import intake, telegram_bot
+    from app.config import save_telegram_settings
+
+    save_telegram_settings(bot_token="123:abc", chat_id=42)
+    a = _action(session, PLACE)
+    tg = FakeTG()
+    telegram_bot.TelegramReporter(42, 7, tg).already_sent(a, session.get(Video, a.video_id))
+    _, edit = tg.calls[-1]
+    assert "You sent this on" in edit["text"] and "Great tacos" in edit["text"]
+    assert edit["buttons"][0][0]["callback_data"] == f"again:{a.id}"
+    reruns = []
+    monkeypatch.setattr(intake, "rerun", lambda action_id, deep=False: reruns.append((action_id, deep)) or True)
+    telegram_bot.handle_callback({"id": "q", "data": f"again:{a.id}", "message": {"chat": {"id": 42}}}, tg)
+    assert reruns == [(a.id, False)]

@@ -60,6 +60,10 @@ class Reporter:
     def failed(self, text: str) -> None:
         log.warning("Shared video failed: %s", text)
 
+    def already_sent(self, action, video) -> None:
+        """The same item again: its earlier report, reused. By default, like a finished one."""
+        self.finished(action, video)
+
 
 # ---------------- link handling ----------------
 
@@ -229,15 +233,15 @@ def in_flight() -> int:
         return len(_in_flight)
 
 
-def submit(video_id: int, reporter: Reporter, deep: bool = False) -> bool:
-    """Queue one video; False if it's already being worked on."""
+def submit(video_id: int, reporter: Reporter, deep: bool = False, force: bool = False) -> bool:
+    """Queue one video; False if it's already being worked on. `force` re-researches even a repeat."""
     with _in_flight_lock:
         if video_id in _in_flight:
             return False
         _in_flight.add(video_id)
     # A future nobody waits on swallows its exception; _process handles its own, but
     # if one still escapes it must at least reach the log.
-    _lane.submit(_process, video_id, reporter, deep).add_done_callback(_log_escaped)
+    _lane.submit(_process, video_id, reporter, deep, force).add_done_callback(_log_escaped)
     return True
 
 
@@ -255,15 +259,15 @@ def _report(reporter: Reporter, method: str, *args) -> None:
         log.exception("Reporter %s.%s failed", type(reporter).__name__, method)
 
 
-def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
+def _process(video_id: int, reporter: Reporter, deep: bool, force: bool = False) -> None:
     """Run one item through pipeline.process_shared_video and report back. Whatever goes
     wrong, the item's Action ends FAILED or NEEDS_INPUT with a plain-language reason,
     so it shows under "Couldn't finish" with a Retry button instead of spinning forever."""
     from app.analyze import FatalAnalysisError
     from app.db import get_session
-    from app.models import ActionStatus, Video
+    from app.models import Action, ActionStatus, Video
     from app.netutil import user_message
-    from app.pipeline import PipelineError, process_shared_video
+    from app.pipeline import AlreadySent, PipelineError, process_shared_video
 
     try:
         with get_session() as session:
@@ -277,7 +281,10 @@ def _process(video_id: int, reporter: Reporter, deep: bool) -> None:
                 with _tier_for_shares():
                     action = process_shared_video(session, video, lambda t: _report(reporter, "progress", t),
                                                   chat_id=reporter.chat_id, message_id=reporter.message_id,
-                                                  deep=deep)
+                                                  deep=deep, force=force)
+            except AlreadySent as e:
+                _report(reporter, "already_sent", session.get(Action, e.action_id), video)
+                return
             except FatalAnalysisError as e:
                 log.warning("Shared item %s stopped: %s", video_id, e)
                 session.rollback()
@@ -350,7 +357,7 @@ def rerun(action_id: int, deep: bool = False) -> bool | None:
         if not action:
             return None
         video_id, chat_id = action.video_id, action.telegram_chat_id
-    return submit(video_id, reporter_for(chat_id, deep), deep=deep)
+    return submit(video_id, reporter_for(chat_id, deep), deep=deep, force=True)  # asked for: never "a repeat"
 
 
 def reporter_for(chat_id: int | None, deep: bool = False) -> Reporter:

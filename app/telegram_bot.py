@@ -103,12 +103,26 @@ class TelegramReporter(intake.Reporter):
         text = format_result(action, video)
         if follow["lines"]:
             text = (text + "\n\n" + "\n".join(follow["lines"]))[:4000]
-        self._edit(text, follow["buttons"] + [[{"text": "🔎 Research deeper", "callback_data": f"deep:{action.id}"}]]
-                   if action.status.value == "drafted" else None)
+        if action.status.value == "drafted":
+            buttons = follow["buttons"] + [[{"text": "🔎 Research deeper", "callback_data": f"deep:{action.id}"}]]
+        elif (action.error_message or "").startswith("Looks like a repeat"):
+            buttons = [[{"text": "🔄 Research anyway", "callback_data": f"again:{action.id}"}]]
+        else:
+            buttons = None
+        self._edit(text, buttons)
 
     def failed(self, text: str) -> None:
         log.warning("Shared item failed: %s", text)
         self._edit(f"⚠️ {html.escape(text)}")
+
+    def already_sent(self, action, video) -> None:
+        from app.agent import load_report
+
+        r = load_report(action.result) or {}
+        when = f"{action.created_at:%b %-d}" if action.created_at else "before"
+        text = (f"🔁 You sent this on {when}, so here's that report again (no new cost).\n\n"
+                f"<b>{html.escape(r.get('headline', ''))}</b>\n{html.escape(r.get('telegram_text', ''))}")
+        self._edit(text[:4000], [[{"text": "🔄 Research it again", "callback_data": f"again:{action.id}"}]])
 
 
 def reporter_new_message(chat_id: int, text: str) -> intake.Reporter:
@@ -158,6 +172,8 @@ def format_result(action, video) -> str:
             lines += ["", "<b>Ideas</b>"] + [f"• {html.escape(i)}" for i in r["ideas"][:3]]
         lines += ["", _links_line(action, video)]
         return "\n".join(lines)[:4000]
+    if action.status.value == "needs_input" and (action.error_message or "").startswith("Looks like a repeat"):
+        return f"🔁 {html.escape(action.error_message)}"
     if action.status.value == "queued" and action.error_message:
         return f"⏸️ {html.escape(action.error_message)}\n{title}\n\n{_links_line(action, video)}"
     reason = html.escape(action.error_message or "Something went wrong.")
@@ -238,6 +254,9 @@ def handle_callback(query: dict, tg: TelegramClient) -> None:
     elif verb == "decline" and target is not None:
         quests.decline(target)
         answer = "OK, skipped"
+    elif verb == "again" and target is not None:
+        queued = intake.rerun(target)
+        answer = "Researching it again…" if queued else ("Already on it" if queued is False else "Report not found")
     elif verb == "deep" and target is not None:
         queued = intake.rerun(target, deep=True)
         answer = "Researching deeper…" if queued else ("Already on it" if queued is False else "Report not found")

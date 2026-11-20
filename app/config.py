@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     analysis_model_xai: str = Field(default="grok-4.3", alias="ANALYSIS_MODEL_XAI")
     projects_dir: str = Field(default="", alias="PROJECTS_DIR")
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
-    public_base_url: str = Field(default="http://127.0.0.1:8787", alias="PUBLIC_BASE_URL")
+    public_base_url: str = Field(default="http://127.0.0.1:8790", alias="PUBLIC_BASE_URL")
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
     stale_threshold_months: int = Field(default=3, alias="STALE_THRESHOLD_MONTHS")
     workers: int = Field(default=4, alias="WORKERS")

@@ -139,6 +139,10 @@ class NtfyReporter(intake.Reporter):
     def failed(self, text: str) -> None:
         notify("⚠️ Couldn't process that video", text)
 
+    def already_sent(self, action, video) -> None:
+        n = result_notification(action, video)
+        notify(**{**n, "title": "🔁 You sent this before: " + n["title"]})
+
 
 # ---------------- incoming ----------------
 

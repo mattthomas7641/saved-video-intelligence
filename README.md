@@ -146,7 +146,7 @@ cp .env.example .env        # required by docker compose; the defaults are fine
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:8787/settings`, then:
+Open `http://127.0.0.1:8790/settings`, then:
 
 1. **Send to Sidequest:** click **Create my private channel** and follow the steps
    shown (subscribe in the free ntfy app, build the 2-minute Shortcut).
@@ -162,10 +162,10 @@ Open `http://127.0.0.1:8787/settings`, then:
    read/write on your own repos, used only when you approve an issue; your home
    airport and a free SerpApi key for live flight fares.
 
-If something else already uses port 8787, start it with `SIDEQUEST_PORT=8790 docker compose up -d`.
+To use a different port, start it with `SIDEQUEST_PORT=<port> docker compose up -d`.
 
 To use it from your phone, put the Mac and phone on one
-[Tailscale](https://tailscale.com) network, run `tailscale serve --bg 8787`, and
+[Tailscale](https://tailscale.com) network, run `tailscale serve --bg 8790`, and
 set `PUBLIC_BASE_URL` to the `https://….ts.net` address so notification links open
 the report.
 
