@@ -71,7 +71,7 @@ _TOOLS = [
          "value": {"type": "string", "description": "The value; empty to forget it"}}, ["key", "value"]),
     _fn("plan_trip", "Plan a whole trip: flights (and points if they have a balance), where to stay and what to "
         "do, in one plan with links and a total. Use for 'plan a trip / weekend / vacation' requests; pass "
-        "everything known (where, when, budget, who, flexibility). About 1-2 cents.",
+        "everything known (where, when, budget, who, flexibility). About 3 cents, under a minute.",
         {"request": {"type": "string"}}, ["request"]),
     _fn("team_up", "Put a team of specialist agents on a request with several independent parts, working in "
         "parallel, then merge their findings: comparing products or options, planning an event or a week, "
@@ -275,9 +275,9 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
                     "note": "Send this answer to the user as it is (light edits only)."}
         if name == "plan_trip":
             from app import trip_planner
-            # One agent, not the team: on the trip eval it matched the team's quality at half the
-            # cost and time (README, "Measured"). The team stays a measured option (mode="parallel").
-            result = trip_planner.plan(str(args.get("request", "")), mode="single")
+            # The team: a pairwise judge preferred its plans 3-1 (1 tie) over one agent's, worth
+            # the extra ~1.5 cents and ~20 s for a trip (README, "Measured").
+            result = trip_planner.plan(str(args.get("request", "")), mode="parallel")
             return {"plan": result.text, "note": "Send this plan to the user as it is (light edits only)."}
         if name == "research_in_depth":
             return _research(str(args.get("link_or_text", "")), str(args.get("note", "")))
