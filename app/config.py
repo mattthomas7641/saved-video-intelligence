@@ -267,6 +267,9 @@ def get_quest_settings() -> dict:
         "signing_key": s.get("signing_key", ""),   # signs approve buttons in notifications (app/quests.py)
         "serpapi_key": s.get("serpapi_key", ""),   # live Google Flights fares (app/flights.py); 250 free a month
         "home_airport": s.get("home_airport", ""), # e.g. PHL: where fare checks and deals start from
+        "todoist_token": s.get("todoist_token", ""),   # your Todoist tasks (app/todoist.py)
+        "notion_token": s.get("notion_token", ""),     # notes in Notion (app/notion.py)
+        "notion_page": s.get("notion_page", ""),       # the Notion page notes are saved under
     }
 
 

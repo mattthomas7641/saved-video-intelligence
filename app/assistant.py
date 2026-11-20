@@ -69,6 +69,10 @@ _TOOLS = [
         "credit card they hold, a loyalty number, home airport, a preference (e.g. 'aisle seat', 'no red-eyes').",
         {"key": {"type": "string", "description": "Short label, e.g. 'Chase Ultimate Rewards points', 'cards'"},
          "value": {"type": "string", "description": "The value; empty to forget it"}}, ["key", "value"]),
+    _fn("plan_trip", "Plan a whole trip with a team of specialist agents working in parallel (flights, points, "
+        "where to stay, what to do), merged into one plan with links and a total. Use for 'plan a trip / weekend "
+        "/ vacation' requests; pass everything known (where, when, budget, who, flexibility). About 3-6 cents.",
+        {"request": {"type": "string"}}, ["request"]),
     _fn("research_in_depth", "Hand something to the full research pipeline (a link, a product, a place, a repo): "
         "it gets a complete report on the home page and in Telegram in a few minutes. Costs a few cents.",
         {"link_or_text": _S, "note": _S}, ["link_or_text"]),
@@ -79,7 +83,8 @@ _PROMPT = """You are Sidequest, one person's personal assistant, reached over Te
 How to work:
 - Use your tools instead of guessing: Google Search and Maps for anything current (hours, prices, news, availability), flight_prices for fares, search_my_stuff for anything they saved or sent before, list_todo for their open items.
 - Do the work, then answer. For a plan, give the plan; for a choice, recommend one and say why; for flights, give the best 2-3 options with prices and a link to finish on Google Flights or the airline.
-- Never spend money, book, buy, send messages or change anything outside Sidequest yourself. Propose it: calendar events with propose_calendar_event (they tap to add), fare and price watches, reminders. To book a flight, give them the exact option and the link to book it.
+- Tasks and notes: if Todoist is connected, "remind me to…/add to my list" without a specific time goes to Todoist (with a due date if they gave one); remind_me is for a timed ping in Telegram. Save notes they want to keep to Notion when connected.
+- Never spend money, book, buy, send messages or change anything outside Sidequest yourself (adding to their own Todoist or Notion is fine). Propose it: calendar events with propose_calendar_event (they tap to add), fare and price watches, reminders. To book a flight, give them the exact option and the link to book it.
 - Money, points and credit cards: give options and the math (cents per point, cash price vs points), not financial advice. Never ask for passwords or card numbers.
 - If something deserves a full write-up (a link they paste, a product, a repo), use research_in_depth.
 - Flights: search cash fares with kiwi__search_flight (its results carry booking links) or flight_prices; compare a few dates if they're flexible; show the best 2-3 with price, stops, times and the booking link. Booking itself happens on the link: say so plainly.
@@ -100,13 +105,33 @@ def _context() -> str:
             + ("\nProfile: " + "; ".join(f"{k}: {v}" for k, v in profile.items()) if profile else ""))
 
 
+_TODOIST_TOOLS = [
+    _fn("todoist_add_task", "Add a task to the user's Todoist (their own to-do app). Runs right away.",
+        {"content": _S, "description": _S, "due_string": {"type": "string", "description": "Natural language, "
+         "e.g. 'tomorrow 5pm', 'every friday'"}, "priority": {"type": "integer", "description": "1 normal - 4 urgent"}},
+        ["content"]),
+    _fn("todoist_list_tasks", "The user's Todoist tasks matching a Todoist filter (default 'today | overdue'; "
+        "e.g. '7 days', '#Work', 'p1').", {"query": _S}, []),
+    _fn("todoist_complete_task", "Mark a Todoist task done (by id from todoist_list_tasks).", {"task_id": _S},
+        ["task_id"]),
+]
+_NOTION_TOOLS = [
+    _fn("notion_save_note", "Save a note to the user's Notion (a new page under their notes page): ideas, packing "
+        "lists, research they want to keep. Runs right away.", {"title": _S, "text": _S}, ["title", "text"]),
+    _fn("notion_search_notes", "Search the user's Notion pages (only those shared with Sidequest).",
+        {"query": _S}, ["query"]),
+]
+
+
 def _tools() -> list[dict]:
-    from app import agent, flights, mcp_client
+    from app import agent, flights, mcp_client, notion, todoist
 
     builtins = [{"type": "google_search"}, {"type": "google_maps"}]
     extra = [agent._FLIGHTS_TOOL] if flights.enabled() else []
-    return (builtins + _TOOLS + [{"type": "function", "name": t["name"], "description": t["description"],
-                                  "parameters": t["input_schema"]} for t in extra] + mcp_client.tools())
+    return (builtins + _TOOLS + (_TODOIST_TOOLS if todoist.enabled() else [])
+            + (_NOTION_TOOLS if notion.enabled() else [])
+            + [{"type": "function", "name": t["name"], "description": t["description"],
+                "parameters": t["input_schema"]} for t in extra] + mcp_client.tools())
 
 
 def ask(chat: str, text: str, client=None, run_tool=None) -> Reply:
@@ -129,28 +154,39 @@ def ask(chat: str, text: str, client=None, run_tool=None) -> Reply:
     if prev and datetime.utcnow() - prev[1] < IDLE:
         params["previous_interaction_id"] = prev[0]
     buttons: list = []
-    cost = 0.0
     with tracing.run("assistant", provider="gemini"):
-        interaction = gemini_client._create(client, input=text, **params)
-        for _ in range(MAX_STEPS):
-            cost += gemini_client.interaction_cost(interaction, model)
-            calls = gemini_client._steps(interaction, "function_call")
-            if not calls:
-                break
-            results = []
-            for c in calls:
-                started = time.monotonic()
-                out = run_tool(c.name, dict(c.arguments or {}), buttons)
-                tracing.tool_call(c.name, dict(c.arguments or {}), ok="error" not in out,
-                                  ms=int((time.monotonic() - started) * 1000))
-                results.append({"type": "function_result", "name": c.name, "call_id": c.id,
-                                "result": [{"type": "text", "text": json.dumps(out)[:12000]}]})
-            interaction = gemini_client._create(client, input=results, previous_interaction_id=interaction.id,
-                                                **{k: v for k, v in params.items() if k != "previous_interaction_id"})
+        interaction, cost = run_loop(client, text, params, lambda name, args: run_tool(name, args, buttons))
     with _lock:
         _sessions[chat] = (interaction.id, datetime.utcnow())
     answer = (getattr(interaction, "output_text", "") or "").strip() or "Done."
     return Reply(answer[:REPLY_CHARS], buttons, round(cost, 5))
+
+
+def run_loop(client, text, params: dict, run_tool, max_steps: int = MAX_STEPS) -> tuple:
+    """One agent's tool loop on the Interactions API: call, run any function calls, send
+    the results back (chained by previous_interaction_id), until it answers in text.
+    Returns (final interaction, cost). Shared by the assistant and the trip planner's agents."""
+    from app import gemini_client
+
+    model = params["model"]
+    interaction = gemini_client._create(client, input=text, **params)
+    cost = gemini_client.interaction_cost(interaction, model)
+    for _ in range(max_steps):
+        calls = gemini_client._steps(interaction, "function_call")
+        if not calls:
+            break
+        results = []
+        for c in calls:
+            started = time.monotonic()
+            out = run_tool(c.name, dict(c.arguments or {}))
+            tracing.tool_call(c.name, dict(c.arguments or {}), ok="error" not in out,
+                              ms=int((time.monotonic() - started) * 1000))
+            results.append({"type": "function_result", "name": c.name, "call_id": c.id,
+                            "result": [{"type": "text", "text": json.dumps(out)[:12000]}]})
+        interaction = gemini_client._create(client, input=results, previous_interaction_id=interaction.id,
+                                            **{k: v for k, v in params.items() if k != "previous_interaction_id"})
+        cost += gemini_client.interaction_cost(interaction, model)
+    return interaction, cost
 
 
 def reset(chat: str) -> None:
@@ -248,6 +284,25 @@ def _run_tool(name: str, args: dict, buttons: list) -> dict:
         from app import mcp_client
         if mcp_client.handles(name):
             return mcp_client.call(name, args)
+        if name.startswith("todoist_"):
+            from app import todoist
+            if name == "todoist_add_task":
+                return todoist.add_task(str(args.get("content", "")), str(args.get("description", "")),
+                                        str(args.get("due_string", "")), int(args.get("priority") or 1))
+            if name == "todoist_list_tasks":
+                return todoist.list_tasks(str(args.get("query") or "today | overdue"))
+            if name == "todoist_complete_task":
+                return todoist.complete_task(str(args.get("task_id", "")))
+        if name == "notion_save_note":
+            from app import notion
+            return notion.save_note(str(args.get("title", "")), str(args.get("text", "")))
+        if name == "notion_search_notes":
+            from app import notion
+            return notion.search_notes(str(args.get("query", "")))
+        if name == "plan_trip":
+            from app import trip_planner
+            result = trip_planner.plan(str(args.get("request", "")))
+            return {"plan": result.text, "note": "Send this plan to the user as it is (light edits only)."}
         if name == "research_in_depth":
             return _research(str(args.get("link_or_text", "")), str(args.get("note", "")))
         return {"error": f"Unknown tool {name}."}

@@ -13,6 +13,7 @@ Recording uses a context variable, so the provider clients just call
 """
 import json
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -48,6 +49,7 @@ class Trace:
 
 
 _current: ContextVar[Trace | None] = ContextVar("sidequest_trace", default=None)
+_mutate = threading.Lock()   # parallel agents (app/trip_planner.py) record into one trace
 
 
 def current() -> Trace | None:
@@ -59,13 +61,14 @@ def model_call(model: str, cost_usd: float, input_tokens: int = 0, output_tokens
     t = _current.get()
     if t is None:
         return
-    t.model = t.model or model
-    t.cost_usd += cost_usd or 0.0
-    t.input_tokens += input_tokens or 0
-    t.output_tokens += output_tokens or 0
-    t.searches += searches or 0
-    _step(t, {"t": "model", "model": model, "cost": round(cost_usd or 0.0, 5), "in": input_tokens,
-              "out": output_tokens, "searches": searches, "ms": ms})
+    with _mutate:
+        t.model = t.model or model
+        t.cost_usd += cost_usd or 0.0
+        t.input_tokens += input_tokens or 0
+        t.output_tokens += output_tokens or 0
+        t.searches += searches or 0
+        _step(t, {"t": "model", "model": model, "cost": round(cost_usd or 0.0, 5), "in": input_tokens,
+                  "out": output_tokens, "searches": searches, "ms": ms})
 
 
 def tool_call(name: str, args: dict, ok: bool, ms: int, note: str = "") -> None:
@@ -73,7 +76,8 @@ def tool_call(name: str, args: dict, ok: bool, ms: int, note: str = "") -> None:
     if t is None:
         return
     summary = ", ".join(f"{k}={str(v)[:60]}" for k, v in (args or {}).items())[:ARG_CHARS]
-    _step(t, {"t": "tool", "name": name, "args": summary, "ok": ok, "ms": ms, "note": note[:ARG_CHARS]})
+    with _mutate:
+        _step(t, {"t": "tool", "name": name, "args": summary, "ok": ok, "ms": ms, "note": note[:ARG_CHARS]})
 
 
 def _step(t: Trace, step: dict) -> None:

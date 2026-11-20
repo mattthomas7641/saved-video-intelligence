@@ -572,6 +572,8 @@ def task_ics(task_id: int, session: Session = Depends(get_db)):
 @app.post("/settings/quests")
 def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str | None = Form(None),
                     serpapi_key: str | None = Form(None), home_airport: str | None = Form(None),
+                    todoist_token: str | None = Form(None), notion_token: str | None = Form(None),
+                    notion_page: str | None = Form(None),
                     follow_ups: bool = Form(False), flex_background: bool = Form(False),
                     flex_shares: bool = Form(False), economy: bool = Form(False)):
     """Blank secret fields keep what's saved (they're never shown back); Remove clears them."""
@@ -589,6 +591,16 @@ def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str
         updates["github_token"] = github_token.strip()
     if (serpapi_key or "").strip():
         updates["serpapi_key"] = serpapi_key.strip()
+    if (todoist_token or "").strip():
+        updates["todoist_token"] = todoist_token.strip()
+    if (notion_token or "").strip():
+        updates["notion_token"] = notion_token.strip()
+    if (notion_page or "").strip():
+        from app import notion
+        if notion.page_id(notion_page):
+            updates["notion_page"] = notion_page.strip()
+        else:
+            status = "notion_page_bad"
     if home_airport is not None:
         updates["home_airport"] = re.sub(r"[^A-Za-z]", "", home_airport)[:3].upper()
     save_quest_settings(**updates)
@@ -597,7 +609,7 @@ def settings_quests(calendar_ics_url: str | None = Form(None), github_token: str
 
 @app.post("/settings/quests/clear")
 def settings_quests_clear(what: str = Form("")):
-    if what in ("calendar_ics_url", "github_token", "serpapi_key"):
+    if what in ("calendar_ics_url", "github_token", "serpapi_key", "todoist_token", "notion_token"):
         save_quest_settings(**{what: ""})
     return RedirectResponse("/settings?key=quests_saved#follow", status_code=303)
 
