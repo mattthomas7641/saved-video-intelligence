@@ -27,7 +27,7 @@
       <div class="quest-main">
         <h2 class="quest-title">{% if i %}<a href="/q/{{ i.action.id }}" style="view-transition-name: q{{ i.action.id }}">{{ i.title|nocite }}</a>{% else %}{{ t.tasks[0].title.split(" · ")[-1] }}{% endif %}</h2>
         <p class="objective{% if not t.tasks %} is-bad{% endif %}">{{ t.objective }}</p>
-        {% if i %}<p class="fine">{{ type_labels.get(i.type, "Other") }}{% if not t.tasks %}<span class="sep" aria-hidden="true">·</span>{{ i.why|plain_error }}{% endif %}</p>{% endif %}
+        {% if i %}<p class="fine"><span class="qnum-inline">Q-{{ "%03d"|format(i.action.id) }}<span class="sep" aria-hidden="true">·</span></span>{{ type_labels.get(i.type, "Other") }}{% if not t.tasks %}<span class="sep" aria-hidden="true">·</span>{{ i.why|plain_error }}{% endif %}</p>{% endif %}
         {% if t.tasks %}
         {{ objectives(t.tasks, "/") }}
         {% else %}

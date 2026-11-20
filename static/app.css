@@ -181,9 +181,14 @@ label { font-size: .9375rem; }
 .quest-title a:hover { text-decoration: underline; color: var(--ink); }
 .objective { margin-top: 8px; display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--marker-ink); }
 .objective.is-bad { color: var(--bad); }
-.sep { margin-inline: .4em; color: var(--rule-2); }
+.sep { display: inline-block; width: 3px; height: 3px; margin: 0 .5em; vertical-align: middle; background: var(--rule-2); font-size: 0; }
+.crumbs .sep { width: auto; height: auto; background: none; font-size: inherit; color: var(--rule-2); }
+.qnum-inline { display: none; }
+.ics { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 8px; font-size: .8125rem; font-weight: 600; color: var(--ink-2); text-decoration: none; border-radius: var(--r); }
+.ics:hover { background: var(--sheet); color: var(--ink); text-decoration: underline; }
 .slot { display: inline-flex; align-items: center; gap: 2px; }
 .way-empty .way { min-height: 40px; }
+.way-empty .way-date { color: var(--ink-3); }
 .way-empty .way-text { font-size: .875rem; }
 .obj-detail { margin-top: 6px; color: var(--ink-2); }
 .quest .fine { margin-top: 8px; }
@@ -349,6 +354,8 @@ details > summary { cursor: pointer; }
   .qhead h1 { font-size: 1.5rem; }
   .quest { grid-template-columns: 14px minmax(0, 1fr); padding: 16px; }
   .quest > .qnum { display: none; }
+  .qnum-inline { display: inline; }
+  .ics { min-height: 44px; }
   .quest-main { grid-column: 2; }
   .quest-title { font-size: 1.125rem; }
   .acts .btn { flex: 1 1 auto; justify-content: center; }

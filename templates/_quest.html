@@ -54,7 +54,7 @@
 {% if cal %}
 <div class="acts">
   {% for t in cal %}
-  <span class="slot"><form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit" title="Opens Google Calendar with it filled in">{{ icon("calendar") }}{{ t.title.split(" · ")[0] }}</button></form><a class="icon-btn" href="/tasks/{{ t.id }}/event.ics" title="Apple Calendar (.ics)" aria-label="{{ t.title.split(' · ')[0] }} for Apple Calendar">{{ icon("upload") }}</a></span>
+  <span class="slot"><form action="/tasks/{{ t.id }}/approve" method="post" target="_blank"><input type="hidden" name="next" value="{{ back }}"><button class="btn btn-go" type="submit" title="Opens Google Calendar with it filled in">{{ icon("calendar") }}{{ t.title.split(" · ")[0] }}</button></form><a class="ics" href="/tasks/{{ t.id }}/event.ics" aria-label="{{ t.title.split(' · ')[0] }} as an Apple Calendar file">{{ icon("calendar") }}.ics</a></span>
   {% endfor %}
 </div>
 {% endif %}
